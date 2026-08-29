@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { studySchema } from "../namespaces.js";
 import { goalStatus } from "../domain-values.js";
 import { users } from "../identity/users.js";
@@ -22,5 +22,8 @@ export const learningGoals = studySchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("learning_goals_user_status_updated_idx").on(table.userId, table.status, table.updatedAt.desc())],
+  (table) => [
+    index("learning_goals_user_status_updated_idx").on(table.userId, table.status, table.updatedAt.desc()),
+    unique("learning_goals_user_id_uq").on(table.userId, table.id),
+  ],
 );

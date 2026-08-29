@@ -1,6 +1,6 @@
 DROP INDEX "knowledge"."artifact_concepts_identity_pk";--> statement-breakpoint
 DROP INDEX "knowledge"."concept_aliases_identity_pk";--> statement-breakpoint
-ALTER TABLE "knowledge"."artifact_concepts" ADD CONSTRAINT "artifact_concepts_artifact_resource_id_concept_id_relation_type_source_pk" PRIMARY KEY("artifact_resource_id","concept_id","relation_type","source");--> statement-breakpoint
+ALTER TABLE "knowledge"."artifact_concepts" ADD CONSTRAINT "artifact_concepts_legacy_pk" PRIMARY KEY("artifact_resource_id","concept_id","relation_type","source");--> statement-breakpoint
 ALTER TABLE "knowledge"."concept_aliases" ADD CONSTRAINT "concept_aliases_concept_id_normalized_alias_locale_pk" PRIMARY KEY("concept_id","normalized_alias","locale");
 --> statement-breakpoint
 ALTER TABLE identity.auth_sessions

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, char, check, index, integer, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, char, check, foreignKey, index, integer, jsonb, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { practiceSchema } from "../namespaces.js";
 import { exerciseKind } from "../domain-values.js";
 import { users } from "../identity/users.js";
@@ -72,11 +72,24 @@ export const exerciseBindings = practiceSchema.table(
   },
   (table) => [
     check("exercise_bindings_context_chk", sql`${table.studySessionId} IS NOT NULL OR ${table.resourceId} IS NOT NULL OR ${table.resourceChunkId} IS NOT NULL OR ${table.conceptId} IS NOT NULL`),
+    check("exercise_bindings_version_resource_pair_chk", sql`${table.resourceVersionId} IS NULL OR ${table.resourceId} IS NOT NULL`),
+    check("exercise_bindings_chunk_version_pair_chk", sql`${table.resourceChunkId} IS NULL OR ${table.resourceVersionId} IS NOT NULL`),
     check("exercise_bindings_time_span_chk", sql`${table.endMs} IS NULL OR (${table.startMs} IS NOT NULL AND ${table.endMs} >= ${table.startMs})`),
     check("exercise_bindings_confidence_chk", sql`${table.confidence} IS NULL OR ${table.confidence} BETWEEN 0 AND 1`),
     index("exercise_bindings_session_gate_idx").on(table.studySessionId, table.gatePosition),
     index("exercise_bindings_resource_start_idx").on(table.resourceId, table.startMs),
     index("exercise_bindings_concept_idx").on(table.conceptId),
+    unique("exercise_bindings_version_id_uq").on(table.exerciseVersionId, table.id),
+    foreignKey({
+      name: "exercise_bindings_resource_version_fkey",
+      columns: [table.resourceId, table.resourceVersionId],
+      foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "exercise_bindings_version_chunk_fkey",
+      columns: [table.resourceVersionId, table.resourceChunkId],
+      foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
+    }),
   ],
 );
 

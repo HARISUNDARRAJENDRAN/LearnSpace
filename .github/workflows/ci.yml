@@ -22,6 +22,13 @@ jobs:
 
   database:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
+      DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:55432/learnspace
+      DATABASE_APP_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
+      DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@localhost:55432/learnspace
+      DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@localhost:55432/learnspace
+      DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@localhost:55432/learnspace
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,13 +39,17 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm db:check
       - run: docker compose -f infra/postgres/docker-compose.yml up -d --wait
-      - run: pnpm db:bootstrap
-        env:
-          DATABASE_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
-          DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:55432/learnspace
-          DATABASE_APP_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
-          DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@localhost:55432/learnspace
-          DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@localhost:55432/learnspace
+      - run: pnpm db:migrate
+      - run: pnpm db:verify
+      - run: pnpm db:seed:dev
+      - run: pnpm db:test
+      - run: pnpm db:ledger > ledger.before
+      - run: pnpm db:migrate
+      - run: pnpm db:verify
+      - run: pnpm db:ledger > ledger.after
+      - run: diff -u ledger.before ledger.after
       - if: always()
         run: docker compose -f infra/postgres/docker-compose.yml down -v

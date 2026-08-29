@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, index, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { identitySchema } from "../namespaces.js";
 import { users } from "./users.js";
 
@@ -44,5 +44,6 @@ export const authSessions = identitySchema.table(
     index("auth_sessions_active_expiry_idx")
       .on(table.userId, table.expiresAt)
       .where(sql`${table.revokedAt} IS NULL`),
+    unique("auth_sessions_user_id_uq").on(table.userId, table.id),
   ],
 );

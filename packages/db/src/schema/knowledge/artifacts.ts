@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { knowledgeSchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { resources, resourceVersions } from "../catalog/resources.js";
@@ -30,7 +30,7 @@ export const artifactSources = knowledgeSchema.table(
   "artifact_sources",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    artifactResourceId: uuid("artifact_resource_id").notNull().references(() => artifactDetails.resourceId, { onDelete: "cascade" }),
+    artifactResourceId: uuid("artifact_resource_id").notNull(),
     sourceResourceId: uuid("source_resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     sourceVersionId: uuid("source_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
     sourceChunkId: uuid("source_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
@@ -47,13 +47,18 @@ export const artifactSources = knowledgeSchema.table(
       table.relationType,
     ),
     check("artifact_sources_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
+    foreignKey({
+      name: "artifact_sources_artifact_fkey",
+      columns: [table.artifactResourceId],
+      foreignColumns: [artifactDetails.resourceId],
+    }).onDelete("cascade"),
   ],
 );
 
 export const artifactConcepts = knowledgeSchema.table(
   "artifact_concepts",
   {
-    artifactResourceId: uuid("artifact_resource_id").notNull().references(() => artifactDetails.resourceId, { onDelete: "cascade" }),
+    artifactResourceId: uuid("artifact_resource_id").notNull(),
     conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
     relationType: text("relation_type").notNull(),
     confidence: real("confidence").notNull(),
@@ -61,8 +66,13 @@ export const artifactConcepts = knowledgeSchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    primaryKey({ columns: [table.artifactResourceId, table.conceptId, table.relationType, table.source] }),
+    primaryKey({ name: "artifact_concepts_pk", columns: [table.artifactResourceId, table.conceptId, table.relationType, table.source] }),
     index("artifact_concepts_concept_confidence_idx").on(table.conceptId, table.confidence.desc()),
     check("artifact_concepts_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
+    foreignKey({
+      name: "artifact_concepts_artifact_fkey",
+      columns: [table.artifactResourceId],
+      foreignColumns: [artifactDetails.resourceId],
+    }).onDelete("cascade"),
   ],
 );

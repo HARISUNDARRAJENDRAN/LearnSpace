@@ -43,7 +43,7 @@ export const resourceQualitySnapshots = discoverySchema.table(
     features: jsonb("features").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   },
   (table) => [
-    primaryKey({ columns: [table.resourceId, table.featureVersion, table.capturedAt] }),
+    primaryKey({ name: "resource_quality_snapshots_pk", columns: [table.resourceId, table.featureVersion, table.capturedAt] }),
     check("resource_quality_snapshots_score_chk", sql`${table.finalQualityScore} BETWEEN 0 AND 1`),
     index("resource_quality_snapshots_version_score_idx").on(table.featureVersion, table.finalQualityScore.desc(), table.capturedAt.desc()),
   ],

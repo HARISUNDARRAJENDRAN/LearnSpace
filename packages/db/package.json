@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:migrate": "tsx src/migrations/run.ts",
+    "db:ledger": "tsx src/migrations/ledger.ts",
     "db:verify": "tsx src/migrations/verify.ts",
     "db:test": "tsx src/tests/run.ts",
     "db:seed:dev": "tsx src/seeds/dev.ts",

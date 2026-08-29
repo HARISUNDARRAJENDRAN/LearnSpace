@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, index, integer, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { char, check, foreignKey, index, integer, jsonb, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { practiceSchema } from "../namespaces.js";
 import { attemptStatus } from "../domain-values.js";
 import { users } from "../identity/users.js";
@@ -37,6 +37,16 @@ export const exerciseAttempts = practiceSchema.table(
     check("exercise_attempts_count_order_chk", sql`${table.passedCaseCount} IS NULL OR ${table.totalCaseCount} IS NULL OR ${table.passedCaseCount} <= ${table.totalCaseCount}`),
     check("exercise_attempts_counters_chk", sql`${table.hintCount} >= 0 AND ${table.submissionCount} >= 0`),
     uniqueIndex("exercise_attempts_user_idempotency_uq").on(table.userId, table.idempotencyKey).where(sql`${table.idempotencyKey} IS NOT NULL`),
+    foreignKey({
+      name: "exercise_attempts_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "exercise_attempts_binding_version_fkey",
+      columns: [table.exerciseBindingId, table.exerciseVersionId],
+      foreignColumns: [exerciseBindings.id, exerciseBindings.exerciseVersionId],
+    }).onDelete("restrict"),
     index("exercise_attempts_user_created_idx").on(table.userId, table.createdAt.desc()),
     index("exercise_attempts_session_created_idx").on(table.studySessionId, table.createdAt),
     index("exercise_attempts_version_status_idx").on(table.exerciseVersionId, table.status),
@@ -57,6 +67,7 @@ export const codeSnapshots = practiceSchema.table(
   },
   (table) => [
     uniqueIndex("code_snapshots_attempt_sequence_uq").on(table.attemptId, table.sequenceNo),
+    unique("code_snapshots_attempt_id_uq").on(table.attemptId, table.id),
     index("code_snapshots_attempt_created_idx").on(table.attemptId, table.createdAt.desc()),
     check("code_snapshots_sequence_no_chk", sql`${table.sequenceNo} >= 0`),
   ],

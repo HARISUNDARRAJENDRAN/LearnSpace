@@ -21,6 +21,7 @@
         "DATABASE_ADMIN_URL",
         "DATABASE_APP_URL",
         "DATABASE_AI_URL",
+        "DATABASE_WORKER_URL",
         "DATABASE_RUNNER_URL",
         "DB_POOL_MAX",
         "DB_CONNECT_TIMEOUT_SECONDS",

@@ -22,6 +22,8 @@ export const embeddingProfiles = retrievalSchema.table(
   (table) => [
     uniqueIndex("embedding_profiles_provider_model_dimensions_uq").on(table.provider, table.modelName, table.dimensions),
     check("embedding_profiles_dimensions_chk", sql`${table.dimensions} > 0`),
+    check("embedding_profiles_active_dimensions_chk", sql`${table.dimensions} = 1536`),
+    check("embedding_profiles_distance_metric_chk", sql`${table.distanceMetric} = 'cosine'`),
   ],
 );
 

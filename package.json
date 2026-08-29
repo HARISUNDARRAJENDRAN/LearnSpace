@@ -15,6 +15,7 @@
     "db:generate": "pnpm --filter @learnspace/db db:generate",
     "db:check": "pnpm --filter @learnspace/db db:check",
     "db:migrate": "pnpm --filter @learnspace/db db:migrate",
+    "db:ledger": "pnpm --filter @learnspace/db db:ledger",
     "db:verify": "pnpm --filter @learnspace/db db:verify",
     "db:test": "pnpm --filter @learnspace/db db:test",
     "db:seed:dev": "pnpm --filter @learnspace/db db:seed:dev",

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, index, integer, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { discoverySchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { resources } from "../catalog/resources.js";
@@ -30,7 +30,7 @@ export const recommendationRuns = discoverySchema.table(
 export const recommendationCandidates = discoverySchema.table(
   "recommendation_candidates",
   {
-    recommendationRunId: uuid("recommendation_run_id").notNull().references(() => recommendationRuns.id, { onDelete: "cascade" }),
+    recommendationRunId: uuid("recommendation_run_id").notNull(),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
     candidateRank: integer("candidate_rank").notNull(),
     finalRank: integer("final_rank"),
@@ -49,6 +49,11 @@ export const recommendationCandidates = discoverySchema.table(
     primaryKey({ columns: [table.recommendationRunId, table.resourceId] }),
     uniqueIndex("recommendation_candidates_run_candidate_rank_uq").on(table.recommendationRunId, table.candidateRank),
     uniqueIndex("recommendation_candidates_run_final_rank_uq").on(table.recommendationRunId, table.finalRank).where(sql`${table.finalRank} IS NOT NULL`),
+    foreignKey({
+      name: "recommendation_candidates_run_fkey",
+      columns: [table.recommendationRunId],
+      foreignColumns: [recommendationRuns.id],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -56,7 +61,7 @@ export const recommendationImpressions = discoverySchema.table(
   "recommendation_impressions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    recommendationRunId: uuid("recommendation_run_id").notNull().references(() => recommendationRuns.id, { onDelete: "cascade" }),
+    recommendationRunId: uuid("recommendation_run_id").notNull(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
     position: integer("position").notNull(),
@@ -68,6 +73,11 @@ export const recommendationImpressions = discoverySchema.table(
   (table) => [
     uniqueIndex("recommendation_impressions_run_resource_position_uq").on(table.recommendationRunId, table.resourceId, table.position),
     index("recommendation_impressions_user_shown_idx").on(table.userId, table.shownAt.desc()),
+    foreignKey({
+      name: "recommendation_impressions_run_fkey",
+      columns: [table.recommendationRunId],
+      foreignColumns: [recommendationRuns.id],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -75,7 +85,7 @@ export const discoveryInteractions = discoverySchema.table(
   "discovery_interactions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    impressionId: uuid("impression_id").references(() => recommendationImpressions.id, { onDelete: "set null" }),
+    impressionId: uuid("impression_id"),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
     action: text("action").notNull(),
@@ -86,5 +96,10 @@ export const discoveryInteractions = discoverySchema.table(
   (table) => [
     index("discovery_interactions_user_occurred_idx").on(table.userId, table.occurredAt.desc()),
     index("discovery_interactions_resource_action_occurred_idx").on(table.resourceId, table.action, table.occurredAt.desc()),
+    foreignKey({
+      name: "discovery_interactions_impression_fkey",
+      columns: [table.impressionId],
+      foreignColumns: [recommendationImpressions.id],
+    }).onDelete("set null"),
   ],
 );

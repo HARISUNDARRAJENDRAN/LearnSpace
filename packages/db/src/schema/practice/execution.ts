@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, char, check, index, integer, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, char, check, foreignKey, index, integer, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { practiceSchema } from "../namespaces.js";
 import { executionStatus } from "../domain-values.js";
 import { concepts } from "../knowledge/concepts.js";
@@ -64,6 +64,11 @@ export const executionRuns = practiceSchema.table(
     check("execution_runs_case_counts_chk", sql`${table.passedCaseCount} IS NULL OR ${table.totalCaseCount} IS NULL OR (${table.passedCaseCount} >= 0 AND ${table.passedCaseCount} <= ${table.totalCaseCount})`),
     index("execution_runs_attempt_created_idx").on(table.attemptId, table.createdAt.desc()),
     index("execution_runs_status_created_idx").on(table.status, table.createdAt),
+    foreignKey({
+      name: "execution_runs_attempt_snapshot_fkey",
+      columns: [table.attemptId, table.codeSnapshotId],
+      foreignColumns: [codeSnapshots.attemptId, codeSnapshots.id],
+    }).onDelete("restrict"),
   ],
 );
 

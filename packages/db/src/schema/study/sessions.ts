@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, foreignKey, index, integer, jsonb, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { char, check, foreignKey, index, integer, jsonb, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { studySchema } from "../namespaces.js";
 import { sessionMode, sessionStatus } from "../domain-values.js";
 import { users } from "../identity/users.js";
@@ -16,9 +16,9 @@ export const studySessions = studySchema.table(
     title: text("title"),
     mode: sessionMode("mode").notNull(),
     status: sessionStatus("status").notNull().default("active"),
-    activeResourceId: uuid("active_resource_id").references(() => resources.id, { onDelete: "set null" }),
-    activeVersionId: uuid("active_version_id").references(() => resourceVersions.id, { onDelete: "set null" }),
-    activeChunkId: uuid("active_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
+    activeResourceId: uuid("active_resource_id"),
+    activeVersionId: uuid("active_version_id"),
+    activeChunkId: uuid("active_chunk_id"),
     activeAnchor: jsonb("active_anchor").$type<Record<string, unknown>>(),
     contextVersion: integer("context_version").notNull().default(0),
     lockVersion: integer("lock_version").notNull().default(0),
@@ -37,10 +37,23 @@ export const studySessions = studySchema.table(
     check("study_sessions_end_after_start_chk", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
     check("study_sessions_context_version_chk", sql`${table.contextVersion} >= 0`),
     check("study_sessions_lock_version_chk", sql`${table.lockVersion} >= 0`),
+    check("study_sessions_active_pin_pair_chk", sql`(${table.activeResourceId} IS NULL) = (${table.activeVersionId} IS NULL)`),
+    check("study_sessions_active_chunk_pair_chk", sql`${table.activeChunkId} IS NULL OR ${table.activeVersionId} IS NOT NULL`),
+    unique("study_sessions_user_id_uq").on(table.userId, table.id),
+    foreignKey({
+      name: "study_sessions_goal_user_fkey",
+      columns: [table.userId, table.learningGoalId],
+      foreignColumns: [learningGoals.userId, learningGoals.id],
+    }),
     foreignKey({
       name: "study_sessions_active_resource_version_fkey",
       columns: [table.activeResourceId, table.activeVersionId],
       foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
+    }).onDelete("set null"),
+    foreignKey({
+      name: "study_sessions_active_version_chunk_fkey",
+      columns: [table.activeVersionId, table.activeChunkId],
+      foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
     }).onDelete("set null"),
   ],
 );
@@ -90,13 +103,27 @@ export const sessionCheckpoints = studySchema.table(
     id: uuid("id").defaultRandom().primaryKey(),
     studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
     kind: text("kind").notNull(),
-    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
-    resourceVersionId: uuid("resource_version_id").references(() => resourceVersions.id, { onDelete: "set null" }),
-    resourceChunkId: uuid("resource_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
+    resourceId: uuid("resource_id"),
+    resourceVersionId: uuid("resource_version_id"),
+    resourceChunkId: uuid("resource_chunk_id"),
     anchor: jsonb("anchor").$type<Record<string, unknown>>(),
     label: text("label"),
     state: jsonb("state").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("session_checkpoints_session_created_idx").on(table.studySessionId, table.createdAt.desc())],
+  (table) => [
+    index("session_checkpoints_session_created_idx").on(table.studySessionId, table.createdAt.desc()),
+    check("session_checkpoints_resource_version_pair_chk", sql`(${table.resourceId} IS NULL) = (${table.resourceVersionId} IS NULL)`),
+    check("session_checkpoints_chunk_version_pair_chk", sql`${table.resourceChunkId} IS NULL OR ${table.resourceVersionId} IS NOT NULL`),
+    foreignKey({
+      name: "session_checkpoints_resource_version_fkey",
+      columns: [table.resourceId, table.resourceVersionId],
+      foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "session_checkpoints_version_chunk_fkey",
+      columns: [table.resourceVersionId, table.resourceChunkId],
+      foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
+    }).onDelete("restrict"),
+  ],
 );

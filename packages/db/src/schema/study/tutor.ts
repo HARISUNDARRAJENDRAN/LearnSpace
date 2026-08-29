@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { foreignKey, index, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { studySchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { studySessions } from "./sessions.js";
@@ -18,7 +18,14 @@ export const tutorThreads = studySchema.table(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("tutor_threads_session_updated_idx").on(table.studySessionId, table.updatedAt.desc())],
+  (table) => [
+    index("tutor_threads_session_updated_idx").on(table.studySessionId, table.updatedAt.desc()),
+    foreignKey({
+      name: "tutor_threads_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("cascade"),
+  ],
 );
 
 export const tutorMessages = studySchema.table(

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, index, integer, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { char, check, index, integer, jsonb, primaryKey, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { resourceVersions } from "../catalog/resources.js";
 import { concepts } from "../knowledge/concepts.js";
@@ -32,6 +32,7 @@ export const resourceChunks = retrievalSchema.table(
   (table) => [
     uniqueIndex("resource_chunks_version_ordinal_uq").on(table.resourceVersionId, table.ordinal),
     uniqueIndex("resource_chunks_version_content_ordinal_uq").on(table.resourceVersionId, table.contentSha256, table.ordinal),
+    unique("resource_chunks_version_id_uq").on(table.resourceVersionId, table.id),
     index("resource_chunks_version_start_idx").on(table.resourceVersionId, table.startMs).where(sql`${table.startMs} IS NOT NULL`),
     index("resource_chunks_version_page_idx").on(table.resourceVersionId, table.pageFrom).where(sql`${table.pageFrom} IS NOT NULL`),
     index("resource_chunks_parent_idx").on(table.parentChunkId),

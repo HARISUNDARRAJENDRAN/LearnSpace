@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, char, index, integer, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, char, foreignKey, index, integer, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { agentRuns } from "../agent/runs.js";
 import { resourceChunks } from "./chunks.js";
@@ -31,6 +31,11 @@ export const retrievalRuns = retrievalSchema.table(
   (table) => [
     index("retrieval_runs_session_created_idx").on(table.studySessionId, table.createdAt.desc()),
     index("retrieval_runs_user_created_idx").on(table.userId, table.createdAt.desc()),
+    foreignKey({
+      name: "retrieval_runs_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("cascade"),
   ],
 );
 
@@ -58,8 +63,8 @@ export const citations = retrievalSchema.table(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     retrievalRunId: uuid("retrieval_run_id").notNull().references(() => retrievalRuns.id, { onDelete: "cascade" }),
-    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
+    chunkId: uuid("chunk_id").notNull(),
+    resourceVersionId: uuid("resource_version_id").notNull(),
     agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
     messageId: uuid("message_id"),
     ordinal: integer("ordinal").notNull(),
@@ -73,5 +78,15 @@ export const citations = retrievalSchema.table(
     uniqueIndex("citations_retrieval_ordinal_uq").on(table.retrievalRunId, table.ordinal),
     index("citations_agent_run_idx").on(table.agentRunId),
     index("citations_message_idx").on(table.messageId),
+    foreignKey({
+      name: "citations_retrieved_chunk_fkey",
+      columns: [table.retrievalRunId, table.chunkId],
+      foreignColumns: [retrievedChunks.retrievalRunId, retrievedChunks.chunkId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "citations_version_chunk_fkey",
+      columns: [table.resourceVersionId, table.chunkId],
+      foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
+    }).onDelete("restrict"),
   ],
 );
