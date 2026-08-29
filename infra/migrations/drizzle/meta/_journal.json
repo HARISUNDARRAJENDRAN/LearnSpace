@@ -71,6 +71,13 @@
       "when": 1788013717511,
       "tag": "0009_whole_dragon_man",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1788017330343,
+      "tag": "0010_lucky_leech",
+      "breakpoints": true
     }
   ]
 }

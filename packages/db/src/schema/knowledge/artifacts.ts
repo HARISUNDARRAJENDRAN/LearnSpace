@@ -5,6 +5,7 @@ import { users } from "../identity/users.js";
 import { resources, resourceVersions } from "../catalog/resources.js";
 import { resourceChunks } from "../retrieval/chunks.js";
 import { studySessions } from "../study/sessions.js";
+import { agentRuns } from "../agent/runs.js";
 import { concepts } from "./concepts.js";
 
 export const artifactDetails = knowledgeSchema.table(
@@ -27,6 +28,16 @@ export const artifactDetails = knowledgeSchema.table(
       name: "artifact_details_user_session_fkey",
       columns: [table.userId, table.studySessionId],
       foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "artifact_details_source_agent_user_fkey",
+      columns: [table.userId, table.sourceAgentRunId],
+      foreignColumns: [agentRuns.userId, agentRuns.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "artifact_details_source_agent_session_fkey",
+      columns: [table.sourceAgentRunId, table.studySessionId],
+      foreignColumns: [agentRuns.id, agentRuns.studySessionId],
     }).onDelete("restrict"),
   ],
 );

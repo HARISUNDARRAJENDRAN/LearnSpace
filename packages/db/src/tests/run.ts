@@ -42,6 +42,35 @@ const ids = {
   authAccountB: "00000000-0000-0000-0000-000000000802",
   authSessionA: "00000000-0000-0000-0000-000000000803",
   authSessionB: "00000000-0000-0000-0000-000000000804",
+  hardeningBindingGlobal: "00000000-0000-0000-0000-000000000951",
+  hardeningBindingForeign: "00000000-0000-0000-0000-000000000952",
+  hardeningBindingOwn: "00000000-0000-0000-0000-000000000953",
+  hardeningBindingOutside: "00000000-0000-0000-0000-000000000954",
+  hardeningAttemptB: "00000000-0000-0000-0000-000000000955",
+  hardeningSnapshotB: "00000000-0000-0000-0000-000000000956",
+  hardeningExecutionB: "00000000-0000-0000-0000-000000000957",
+  hardeningDiagnosticA: "00000000-0000-0000-0000-000000000958",
+  hardeningDiagnosticB: "00000000-0000-0000-0000-000000000959",
+  hardeningDiagnosticSnapshot: "00000000-0000-0000-0000-000000000960",
+  hardeningDiagnosticExecution: "00000000-0000-0000-0000-000000000961",
+  hardeningHintA: "00000000-0000-0000-0000-000000000962",
+  hardeningHintDiagnostic: "00000000-0000-0000-0000-000000000963",
+  hardeningProgress: "00000000-0000-0000-0000-000000000964",
+  hardeningThreadA: "00000000-0000-0000-0000-000000000970",
+  hardeningThreadB: "00000000-0000-0000-0000-000000000971",
+  hardeningAgentRunA: "00000000-0000-0000-0000-000000000972",
+  hardeningAgentRunB: "00000000-0000-0000-0000-000000000973",
+  hardeningModelInvocationA: "00000000-0000-0000-0000-000000000974",
+  hardeningModelInvocationB: "00000000-0000-0000-0000-000000000975",
+  hardeningMessageA: "00000000-0000-0000-0000-000000000976",
+  hardeningMessageB: "00000000-0000-0000-0000-000000000977",
+  hardeningCrossSourceMessage: "00000000-0000-0000-0000-000000000978",
+  hardeningArtifactResource: "00000000-0000-0000-0000-000000000979",
+  hardeningArtifactSourceRun: "00000000-0000-0000-0000-000000000980",
+  hardeningCitationRun: "00000000-0000-0000-0000-000000000981",
+  hardeningCitation: "00000000-0000-0000-0000-000000000982",
+  hardeningDiagnosticModel: "00000000-0000-0000-0000-000000000985",
+  hardeningHintModel: "00000000-0000-0000-0000-000000000986",
 };
 
 const seededVector = `[${Array.from({ length: 1536 }, (_, index) => index === 0 ? "1" : "0").join(",")}]`;
@@ -650,6 +679,344 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM knowledge.artifact_sources WHERE artifact_resource_id = ${artifactResourceId}`;
     await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${artifactResourceId}`;
     await migrator`DELETE FROM catalog.resources WHERE id = ${artifactResourceId}`;
+  }],
+  ["final binding and observer provenance hardening", async () => {
+    await migrator`DELETE FROM practice.hint_events WHERE id IN (${ids.hardeningHintA}, ${ids.hardeningHintDiagnostic}, ${ids.hardeningHintModel})`;
+    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticSnapshot}, ${ids.hardeningDiagnosticExecution}, ${ids.hardeningDiagnosticModel})`;
+    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
+    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
+    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
+    await migrator`DELETE FROM practice.exercise_bindings WHERE id IN (${ids.hardeningBindingGlobal}, ${ids.hardeningBindingForeign}, ${ids.hardeningBindingOwn}, ${ids.hardeningBindingOutside})`;
+    await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}`;
+
+    await worker`
+      INSERT INTO practice.exercise_bindings (id, exercise_version_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
+      VALUES (${ids.hardeningBindingGlobal}, ${ids.exerciseVersion}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'global-worker', 0.8)
+    `;
+    await worker`
+      INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
+      VALUES (${ids.hardeningBindingForeign}, ${ids.exerciseVersion}, ${ids.sessionB}, ${ids.privateResourceB}, ${ids.privateVersionB}, ${ids.privateChunkB}, ${ids.concept}, true, 'session-b-worker', 0.8)
+    `;
+    await worker`
+      UPDATE practice.exercise_bindings
+      SET trigger_reason = 'global-worker-updated'
+      WHERE id = ${ids.hardeningBindingGlobal}
+    `;
+    const globalBinding = await migrator<{ trigger_reason: string }[]>`
+      SELECT trigger_reason FROM practice.exercise_bindings WHERE id = ${ids.hardeningBindingGlobal}
+    `;
+    assert.equal(globalBinding[0]?.trigger_reason, "global-worker-updated");
+
+    await expectRejected(
+      () => app.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+        await tx`
+          INSERT INTO practice.exercise_bindings (id, exercise_version_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
+          VALUES (${ids.hardeningBindingOutside}, ${ids.exerciseVersion}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'app-global', 0.8)
+        `;
+      }),
+      "application creating global exercise binding",
+    );
+    const globalUpdate = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        UPDATE practice.exercise_bindings
+        SET trigger_reason = 'app-forged-global-update'
+        WHERE id = ${ids.hardeningBindingGlobal}
+        RETURNING id
+      `;
+    });
+    assert.equal(globalUpdate.length, 0);
+    const globalDelete = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        DELETE FROM practice.exercise_bindings
+        WHERE id = ${ids.hardeningBindingGlobal}
+        RETURNING id
+      `;
+    });
+    assert.equal(globalDelete.length, 0);
+
+    const ownBinding = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
+        VALUES (${ids.hardeningBindingOwn}, ${ids.exerciseVersion}, ${ids.sessionA}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'own-session', 0.8)
+        RETURNING id
+      `;
+    });
+    assert.deepEqual(ownBinding.map((row) => row.id), [ids.hardeningBindingOwn]);
+    const ownBindingUpdate = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        UPDATE practice.exercise_bindings
+        SET trigger_reason = 'own-session-updated'
+        WHERE id = ${ids.hardeningBindingOwn}
+        RETURNING id
+      `;
+    });
+    assert.deepEqual(ownBindingUpdate.map((row) => row.id), [ids.hardeningBindingOwn]);
+    const foreignBindingUpdate = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        UPDATE practice.exercise_bindings
+        SET trigger_reason = 'cross-user-session-update'
+        WHERE id = ${ids.hardeningBindingForeign}
+        RETURNING id
+      `;
+    });
+    assert.equal(foreignBindingUpdate.length, 0);
+    const ownBindingDelete = await app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return tx<{ id: string }[]>`
+        DELETE FROM practice.exercise_bindings
+        WHERE id = ${ids.hardeningBindingOwn}
+        RETURNING id
+      `;
+    });
+    assert.deepEqual(ownBindingDelete.map((row) => row.id), [ids.hardeningBindingOwn]);
+    await expectRejected(
+      () => app.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+        await tx`
+          INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
+          VALUES (${ids.hardeningBindingOutside}, ${ids.exerciseVersion}, ${ids.sessionA}, ${ids.privateResourceB}, ${ids.privateVersionB}, ${ids.privateChunkB}, ${ids.concept}, true, 'outside-session', 0.8)
+        `;
+      }),
+      "binding resource outside study session",
+    );
+
+    await migrator`
+      INSERT INTO practice.exercise_attempts (id, user_id, study_session_id, exercise_binding_id, exercise_version_id, status, language, metadata)
+      VALUES (${ids.hardeningAttemptB}, ${ids.userA}, ${ids.sessionA}, ${ids.binding}, ${ids.exerciseVersion}, 'started', 'typescript', '{}'::jsonb)
+    `;
+    await migrator`
+      INSERT INTO practice.code_snapshots (id, attempt_id, sequence_no, kind, source_code, source_sha256)
+      VALUES (${ids.hardeningSnapshotB}, ${ids.hardeningAttemptB}, 0, 'edit', 'export const hardening = true;', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
+    `;
+    await migrator`
+      INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes)
+      VALUES (${ids.hardeningExecutionB}, ${ids.hardeningAttemptB}, ${ids.hardeningSnapshotB}, ${ids.testBundle}, '00000000-0000-0000-0000-000000000987', 'queued', 'db-test', 'sha256:seed-runtime', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', '8888888888888888888888888888888888888888888888888888888888888888', 1000, 2000, 134217728)
+    `;
+    await migrator`
+      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+      VALUES (${ids.hardeningDiagnosticA}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, 'logic', 'low', 0.8, '{}'::jsonb, 'same attempt diagnostic', 'db-test')
+    `;
+    await migrator`
+      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+      VALUES (${ids.hardeningDiagnosticB}, ${ids.hardeningAttemptB}, ${ids.hardeningExecutionB}, ${ids.hardeningSnapshotB}, 'logic', 'low', 0.8, '{}'::jsonb, 'second attempt diagnostic', 'db-test')
+    `;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+        VALUES (${ids.hardeningDiagnosticSnapshot}, ${ids.attemptA}, ${ids.executionRun}, ${ids.hardeningSnapshotB}, 'logic', 'high', 0.8, '{}'::jsonb, 'wrong snapshot attempt', 'db-test')
+      `,
+      "observer diagnostic using another attempt snapshot",
+    );
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+        VALUES (${ids.hardeningDiagnosticExecution}, ${ids.attemptA}, ${ids.hardeningExecutionB}, ${ids.snapshotA}, 'logic', 'high', 0.8, '{}'::jsonb, 'wrong execution attempt', 'db-test')
+      `,
+      "observer diagnostic using another attempt execution",
+    );
+    await migrator`
+      INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, hint_level, trigger_type, user_requested, content, policy_version)
+      VALUES (${ids.hardeningHintA}, ${ids.attemptA}, ${ids.hardeningDiagnosticA}, 1, 'observer', false, 'same attempt hint', 'db-test')
+    `;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, hint_level, trigger_type, user_requested, content, policy_version)
+        VALUES (${ids.hardeningHintDiagnostic}, ${ids.attemptA}, ${ids.hardeningDiagnosticB}, 1, 'observer', false, 'wrong attempt hint', 'db-test')
+      `,
+      "hint using another attempt diagnostic",
+    );
+
+    await migrator`
+      INSERT INTO study.user_resource_progress (user_id, resource_id, last_session_id, status, last_chunk_id)
+      VALUES (${ids.userA}, ${ids.publicResource}, ${ids.sessionA}, 'in_progress', ${ids.publicChunk})
+    `;
+    await expectRejected(
+      () => migrator`
+        UPDATE study.user_resource_progress
+        SET last_chunk_id = ${ids.privateChunkB}
+        WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}
+      `,
+      "progress using another resource chunk",
+    );
+    const validProgress = await migrator<{ last_chunk_id: string }[]>`
+      SELECT last_chunk_id FROM study.user_resource_progress
+      WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}
+    `;
+    assert.equal(validProgress[0]?.last_chunk_id, ids.publicChunk);
+    await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}`;
+    await migrator`DELETE FROM practice.exercise_bindings WHERE id IN (${ids.hardeningBindingGlobal}, ${ids.hardeningBindingForeign})`;
+  }],
+  ["final agent artifact and optional provenance hardening", async () => {
+    await migrator`DELETE FROM retrieval.citations WHERE id = ${ids.hardeningCitation}`;
+    await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${ids.hardeningCitationRun}`;
+    await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${ids.hardeningCitationRun}`;
+    await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${ids.hardeningArtifactResource}`;
+    await migrator`DELETE FROM catalog.resources WHERE id = ${ids.hardeningArtifactResource}`;
+    await migrator`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
+    await migrator`DELETE FROM study.tutor_messages WHERE id IN (${ids.hardeningMessageA}, ${ids.hardeningMessageB}, ${ids.hardeningCrossSourceMessage})`;
+    await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
+    await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
+    await migrator`DELETE FROM study.tutor_threads WHERE id IN (${ids.hardeningThreadA}, ${ids.hardeningThreadB})`;
+    await migrator`DELETE FROM practice.hint_events WHERE id IN (${ids.hardeningHintA}, ${ids.hardeningHintDiagnostic}, ${ids.hardeningHintModel})`;
+    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticSnapshot}, ${ids.hardeningDiagnosticExecution}, ${ids.hardeningDiagnosticModel})`;
+    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
+    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
+    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
+
+    await migrator`
+      INSERT INTO study.tutor_threads (id, user_id, study_session_id, mode, status, metadata)
+      VALUES
+        (${ids.hardeningThreadA}, ${ids.userA}, ${ids.sessionA}, 'text', 'active', '{}'::jsonb),
+        (${ids.hardeningThreadB}, ${ids.userB}, ${ids.sessionB}, 'text', 'active', '{}'::jsonb)
+    `;
+    await migrator`
+      INSERT INTO agent.agent_runs (id, user_id, study_session_id, tutor_thread_id, purpose, status, goal, policy_version, max_iterations, max_tool_calls, max_tokens)
+      VALUES
+        (${ids.hardeningAgentRunA}, ${ids.userA}, ${ids.sessionA}, ${ids.hardeningThreadA}, 'retrieval', 'executing', 'Hardening A', 'db-test', 5, 5, 1000),
+        (${ids.hardeningAgentRunB}, ${ids.userB}, ${ids.sessionB}, ${ids.hardeningThreadB}, 'retrieval', 'executing', 'Hardening B', 'db-test', 5, 5, 1000)
+    `;
+    await migrator`
+      INSERT INTO agent.model_invocations (id, agent_run_id, provider, model_name, purpose)
+      VALUES
+        (${ids.hardeningModelInvocationA}, ${ids.hardeningAgentRunA}, 'db-test', 'model-a', 'diagnostic'),
+        (${ids.hardeningModelInvocationB}, ${ids.hardeningAgentRunB}, 'db-test', 'model-b', 'diagnostic')
+    `;
+    await migrator`
+      INSERT INTO study.tutor_messages (id, thread_id, actor_type, agent_run_id, content_text, content)
+      VALUES
+        (${ids.hardeningMessageA}, ${ids.hardeningThreadA}, 'assistant', ${ids.hardeningAgentRunA}, 'message A', '{}'::jsonb),
+        (${ids.hardeningMessageB}, ${ids.hardeningThreadB}, 'assistant', ${ids.hardeningAgentRunB}, 'message B', '{}'::jsonb)
+    `;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO study.tutor_messages (id, thread_id, actor_type, agent_run_id, content_text, content)
+        VALUES (${ids.hardeningCrossSourceMessage}, ${ids.hardeningThreadA}, 'assistant', ${ids.hardeningAgentRunB}, 'wrong run thread', '{}'::jsonb)
+      `,
+      "tutor message using another thread's agent run",
+    );
+    await expectRejected(
+      () => migrator`
+        INSERT INTO study.tutor_messages (id, thread_id, actor_type, source_message_id, content_text, content)
+        VALUES (${ids.hardeningCrossSourceMessage}, ${ids.hardeningThreadA}, 'assistant', ${ids.hardeningMessageB}, 'wrong source thread', '{}'::jsonb)
+      `,
+      "tutor message using another thread's source message",
+    );
+
+    await migrator`
+      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+      VALUES (${ids.hardeningDiagnosticA}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, 'model', 'low', 0.8, '{}'::jsonb, 'diagnostic provenance anchor', 'db-test')
+    `;
+    await migrator`
+      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, model_invocation_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+      VALUES (${ids.hardeningDiagnosticModel}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, ${ids.hardeningModelInvocationA}, 'model', 'low', 0.8, '{}'::jsonb, 'model A diagnostic', 'db-test')
+    `;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, model_invocation_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
+        VALUES (${ids.hardeningDiagnosticSnapshot}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, ${ids.hardeningModelInvocationB}, 'model', 'high', 0.8, '{}'::jsonb, 'model B diagnostic', 'db-test')
+      `,
+      "observer diagnostic using another user's model invocation",
+    );
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, model_invocation_id, hint_level, trigger_type, user_requested, content, policy_version)
+        VALUES (${ids.hardeningHintModel}, ${ids.attemptA}, ${ids.hardeningDiagnosticA}, ${ids.hardeningModelInvocationB}, 1, 'model', false, 'model B hint', 'db-test')
+      `,
+      "hint using another user's model invocation",
+    );
+    await migrator`UPDATE practice.observer_diagnostics SET model_invocation_id = ${ids.hardeningModelInvocationA} WHERE id = ${ids.hardeningDiagnosticA}`;
+
+    await migrator`
+      INSERT INTO catalog.resources (id, owner_user_id, type, provider, external_id, title, visibility, status, metadata)
+      VALUES (${ids.hardeningArtifactResource}, ${ids.userA}, 'note', 'db-test', 'hardening-artifact', 'Hardening artifact', 'private', 'ready', '{}'::jsonb)
+    `;
+    await migrator`
+      INSERT INTO knowledge.artifact_details (resource_id, user_id, study_session_id, artifact_type, status, created_by, source_agent_run_id)
+      VALUES (${ids.hardeningArtifactResource}, ${ids.userA}, ${ids.sessionA}, 'note', 'active', 'agent', ${ids.hardeningAgentRunA})
+    `;
+    await expectRejected(
+      () => migrator`
+        UPDATE knowledge.artifact_details
+        SET source_agent_run_id = ${ids.hardeningAgentRunB}
+        WHERE resource_id = ${ids.hardeningArtifactResource}
+      `,
+      "artifact using another user's source agent run",
+    );
+
+    await migrator`
+      INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
+      VALUES (${ids.hardeningAgentRunA}, ${ids.privateResourceA}, 'private-source')
+    `;
+    await ai.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      await tx`
+        INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
+        VALUES (${ids.hardeningAgentRunA}, ${ids.publicResource}, 'public-source')
+      `;
+    });
+    await expectRejected(
+      () => ai.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+        await tx`
+          INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
+          VALUES (${ids.hardeningAgentRunA}, ${ids.privateResourceB}, 'foreign-private')
+        `;
+      }),
+      "agent artifact using another user's private resource",
+    );
+    await expectRejected(
+      () => ai.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+        await tx`
+          UPDATE agent.agent_artifacts
+          SET resource_id = ${ids.privateResourceB}
+          WHERE agent_run_id = ${ids.hardeningAgentRunA} AND resource_id = ${ids.privateResourceA} AND role = 'private-source'
+        `;
+      }),
+      "agent artifact update to another user's private resource",
+    );
+
+    await migrator`
+      INSERT INTO retrieval.retrieval_runs (id, user_id, study_session_id, query_text, query_sha256, embedding_profile_id, scope, strategy_version, status)
+      VALUES (${ids.hardeningCitationRun}, ${ids.userA}, ${ids.sessionA}, 'hardening citation', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'seed-1536', '{}'::jsonb, 'db-test', 'completed')
+    `;
+    await migrator`
+      INSERT INTO retrieval.retrieved_chunks (retrieval_run_id, chunk_id, candidate_rank, selected)
+      VALUES (${ids.hardeningCitationRun}, ${ids.publicChunk}, 1, true)
+    `;
+    await migrator`
+      INSERT INTO retrieval.citations (id, retrieval_run_id, chunk_id, resource_version_id, message_id, ordinal, anchor_snapshot)
+      VALUES (${ids.hardeningCitation}, ${ids.hardeningCitationRun}, ${ids.publicChunk}, ${ids.publicVersion}, ${ids.hardeningMessageA}, 1, '{}'::jsonb)
+    `;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO retrieval.citations (id, retrieval_run_id, chunk_id, resource_version_id, message_id, ordinal, anchor_snapshot)
+        VALUES ('00000000-0000-0000-0000-000000000988', ${ids.hardeningCitationRun}, ${ids.publicChunk}, ${ids.publicVersion}, ${ids.hardeningMessageB}, 2, '{}'::jsonb)
+      `,
+      "citation using another user's tutor message",
+    );
+
+    await migrator`DELETE FROM retrieval.citations WHERE id = ${ids.hardeningCitation}`;
+    await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${ids.hardeningCitationRun}`;
+    await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${ids.hardeningCitationRun}`;
+    await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${ids.hardeningArtifactResource}`;
+    await migrator`DELETE FROM catalog.resources WHERE id = ${ids.hardeningArtifactResource}`;
+    await migrator`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
+    await migrator`DELETE FROM study.tutor_messages WHERE id IN (${ids.hardeningMessageA}, ${ids.hardeningMessageB})`;
+    await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
+    await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
+    await migrator`DELETE FROM study.tutor_threads WHERE id IN (${ids.hardeningThreadA}, ${ids.hardeningThreadB})`;
+    await migrator`DELETE FROM practice.hint_events WHERE id = ${ids.hardeningHintA}`;
+    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticModel})`;
+    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
+    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
+    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
   }],
   ["agent and discovery provenance isolation", async () => {
     const threadA = "00000000-0000-0000-0000-000000000922";

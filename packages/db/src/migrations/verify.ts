@@ -65,7 +65,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "retrieval.citations": ["citations_owner_policy", "citations_worker_policy"],
   "practice.exercise_attempts": ["exercise_attempts_owner_policy"],
   "practice.exercises": ["exercises_select_policy", "exercises_insert_policy", "exercises_update_policy", "exercises_delete_policy", "exercises_worker_publication_policy"],
-  "practice.exercise_bindings": ["exercise_bindings_owner_policy"],
+  "practice.exercise_bindings": ["exercise_bindings_owner_policy", "exercise_bindings_owner_insert_policy", "exercise_bindings_owner_update_policy", "exercise_bindings_owner_delete_policy", "exercise_bindings_worker_policy", "exercise_bindings_worker_insert_policy", "exercise_bindings_worker_update_policy"],
   "practice.exercise_examples": ["exercise_examples_visible_policy"],
   "practice.code_snapshots": ["code_snapshots_owner_policy"],
   "practice.observer_diagnostics": ["observer_diagnostics_owner_policy"],
@@ -88,7 +88,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "agent.agent_steps": ["agent_steps_owner_policy"],
   "agent.tool_invocations": ["tool_invocations_owner_policy"],
   "agent.model_invocations": ["model_invocations_owner_policy"],
-  "agent.agent_artifacts": ["agent_artifacts_owner_policy"],
+  "agent.agent_artifacts": ["agent_artifacts_owner_select_policy", "agent_artifacts_owner_insert_policy", "agent_artifacts_owner_update_policy", "agent_artifacts_owner_delete_policy"],
   "discovery.recommendation_runs": ["recommendation_runs_owner_policy"],
   "discovery.recommendation_candidates": ["recommendation_candidates_owner_policy"],
   "discovery.recommendation_impressions": ["recommendation_impressions_owner_policy"],
@@ -125,6 +125,18 @@ const requiredConstraints = [
   "execution_runs_attempt_snapshot_fkey",
   "exercise_bindings_resource_version_fkey",
   "exercise_bindings_version_chunk_fkey",
+  "exercise_bindings_session_resource_fkey",
+  "execution_runs_attempt_id_uq",
+  "observer_diagnostics_attempt_id_uq",
+  "observer_diagnostics_attempt_snapshot_fkey",
+  "observer_diagnostics_attempt_execution_fkey",
+  "hint_events_attempt_diagnostic_fkey",
+  "artifact_details_source_agent_user_fkey",
+  "artifact_details_source_agent_session_fkey",
+  "agent_runs_thread_id_uq",
+  "tutor_messages_thread_id_uq",
+  "tutor_messages_source_message_fkey",
+  "tutor_messages_agent_run_fkey",
   "tutor_threads_user_session_fkey",
   "embedding_profiles_active_dimensions_chk",
   "embedding_profiles_distance_metric_chk",
@@ -234,11 +246,34 @@ try {
       ('practice', 'execution_runs', 'execution_runs_hashes_trg'),
       ('practice', 'exercise_attempts', 'exercise_attempts_binding_context_trg'),
       ('knowledge', 'mastery_signals', 'mastery_signals_source_trg'),
-      ('ops', 'outbox_events', 'outbox_events_append_only_trg')
+      ('ops', 'outbox_events', 'outbox_events_append_only_trg'),
+      ('study', 'user_resource_progress', 'user_resource_progress_chunk_resource_trg'),
+      ('practice', 'observer_diagnostics', 'observer_diagnostics_model_invocation_trg'),
+      ('practice', 'hint_events', 'hint_events_model_invocation_trg'),
+      ('retrieval', 'citations', 'citations_message_context_trg')
     )
       AND NOT t.tgisinternal
   `;
-  await requireCondition(triggerRows.length === 6, "target integrity triggers are incomplete");
+  await requireCondition(triggerRows.length === 10, "target integrity triggers are incomplete");
+
+  const validationFunctionRows = await sql<{ name: string; security_definer: boolean; settings: string[] | null }[]>`
+    SELECT
+      p.proname AS name,
+      p.prosecdef AS security_definer,
+      p.proconfig AS settings
+    FROM pg_proc AS p
+    JOIN pg_namespace AS n ON n.oid = p.pronamespace
+    WHERE (n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)) IN (
+      ('study', 'validate_user_resource_progress_chunk', ''),
+      ('practice', 'validate_model_invocation_attempt', ''),
+      ('retrieval', 'validate_citation_message_context', '')
+    )
+  `;
+  await requireCondition(
+    validationFunctionRows.length === 3 &&
+      validationFunctionRows.every((row) => row.security_definer && row.settings?.some((setting) => setting.startsWith("search_path=pg_catalog")) === true),
+    "validation functions are not safely configured",
+  );
 
   const rlsRows = await sql<RlsRow[]>`
     SELECT n.nspname || '.' || c.relname AS relation, c.relrowsecurity AS enabled, p.policyname AS policy_name
@@ -273,6 +308,34 @@ try {
       AND cmd = 'ALL'
   `);
   await requireCondition(allPolicies === 0, `found ${allPolicies} FOR ALL RLS policies`);
+
+  const invalidBindingWritePolicies = await count(`
+    SELECT count(*)::text AS count
+    FROM pg_policies
+    WHERE schemaname = 'practice'
+      AND tablename = 'exercise_bindings'
+      AND policyname IN ('exercise_bindings_owner_insert_policy', 'exercise_bindings_owner_update_policy', 'exercise_bindings_owner_delete_policy')
+      AND CASE
+        WHEN cmd IN ('INSERT', 'UPDATE') THEN position('study_session_id IS NOT NULL' IN coalesce(with_check, '')) = 0
+        WHEN cmd = 'DELETE' THEN position('study_session_id IS NOT NULL' IN coalesce(qual, '')) = 0
+        ELSE true
+      END
+  `);
+  await requireCondition(invalidBindingWritePolicies === 0, "exercise binding writes are not session-scoped");
+
+  const invalidArtifactWritePolicies = await count(`
+    SELECT count(*)::text AS count
+    FROM pg_policies
+    WHERE schemaname = 'agent'
+      AND tablename = 'agent_artifacts'
+      AND policyname IN ('agent_artifacts_owner_insert_policy', 'agent_artifacts_owner_update_policy', 'agent_artifacts_owner_delete_policy')
+      AND CASE
+        WHEN cmd IN ('INSERT', 'UPDATE') THEN position('resource.visibility' IN coalesce(with_check, '')) = 0 OR position('resource.owner_user_id' IN coalesce(with_check, '')) = 0
+        WHEN cmd = 'DELETE' THEN position('resource.visibility' IN coalesce(qual, '')) = 0 OR position('resource.owner_user_id' IN coalesce(qual, '')) = 0
+        ELSE true
+      END
+  `);
+  await requireCondition(invalidArtifactWritePolicies === 0, "agent artifact writes do not enforce resource authorization");
 
   const roleCount = await count(`
     SELECT count(*)::text AS count
@@ -461,6 +524,104 @@ try {
        OR NOT EXISTS (SELECT 1 FROM study.study_sessions s WHERE s.id = a.study_session_id AND s.user_id = a.user_id)
   `);
   await requireCondition(invalidAttempts === 0, `found ${invalidAttempts} invalid exercise attempts`);
+
+  const invalidBindingSessions = await count(`
+    SELECT count(*)::text AS count
+    FROM practice.exercise_bindings b
+    WHERE b.study_session_id IS NOT NULL
+      AND b.resource_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM study.session_resources sr
+        WHERE sr.study_session_id = b.study_session_id
+          AND sr.resource_id = b.resource_id
+      )
+  `);
+  await requireCondition(invalidBindingSessions === 0, `found ${invalidBindingSessions} exercise bindings outside their study session`);
+
+  const invalidDiagnostics = await count(`
+    SELECT count(*)::text AS count
+    FROM practice.observer_diagnostics d
+    LEFT JOIN practice.code_snapshots snapshot ON snapshot.id = d.code_snapshot_id AND snapshot.attempt_id = d.attempt_id
+    LEFT JOIN practice.execution_runs execution ON execution.id = d.execution_run_id AND execution.attempt_id = d.attempt_id
+    WHERE snapshot.id IS NULL
+       OR (d.execution_run_id IS NOT NULL AND execution.id IS NULL)
+  `);
+  await requireCondition(invalidDiagnostics === 0, `found ${invalidDiagnostics} observer diagnostics with incompatible attempts`);
+
+  const invalidHints = await count(`
+    SELECT count(*)::text AS count
+    FROM practice.hint_events h
+    LEFT JOIN practice.observer_diagnostics d ON d.id = h.diagnostic_id AND d.attempt_id = h.attempt_id
+    WHERE h.diagnostic_id IS NOT NULL AND d.id IS NULL
+  `);
+  await requireCondition(invalidHints === 0, `found ${invalidHints} hints with incompatible diagnostics`);
+
+  const invalidProgressChunks = await count(`
+    SELECT count(*)::text AS count
+    FROM study.user_resource_progress p
+    LEFT JOIN retrieval.resource_chunks c ON c.id = p.last_chunk_id
+    LEFT JOIN catalog.resource_versions v ON v.id = c.resource_version_id AND v.resource_id = p.resource_id
+    WHERE p.last_chunk_id IS NOT NULL AND v.id IS NULL
+  `);
+  await requireCondition(invalidProgressChunks === 0, `found ${invalidProgressChunks} progress rows with incompatible chunks`);
+
+  const invalidArtifactRuns = await count(`
+    SELECT count(*)::text AS count
+    FROM knowledge.artifact_details a
+    LEFT JOIN agent.agent_runs r
+      ON r.id = a.source_agent_run_id
+     AND r.user_id = a.user_id
+     AND (a.study_session_id IS NULL OR r.study_session_id IS NOT DISTINCT FROM a.study_session_id)
+    WHERE a.source_agent_run_id IS NOT NULL AND r.id IS NULL
+  `);
+  await requireCondition(invalidArtifactRuns === 0, `found ${invalidArtifactRuns} artifacts with incompatible source agent runs`);
+
+  const invalidTutorProvenance = await count(`
+    SELECT count(*)::text AS count
+    FROM study.tutor_messages m
+    LEFT JOIN study.tutor_messages source ON source.id = m.source_message_id AND source.thread_id = m.thread_id
+    LEFT JOIN agent.agent_runs run ON run.id = m.agent_run_id AND run.tutor_thread_id = m.thread_id
+    WHERE (m.source_message_id IS NOT NULL AND source.id IS NULL)
+       OR (m.agent_run_id IS NOT NULL AND run.id IS NULL)
+  `);
+  await requireCondition(invalidTutorProvenance === 0, `found ${invalidTutorProvenance} tutor messages with incompatible provenance`);
+
+  const invalidModelInvocations = await count(`
+    SELECT count(*)::text AS count
+    FROM (
+      SELECT d.attempt_id, d.model_invocation_id
+      FROM practice.observer_diagnostics d
+      UNION ALL
+      SELECT h.attempt_id, h.model_invocation_id
+      FROM practice.hint_events h
+    ) AS provenance_refs
+    JOIN practice.exercise_attempts a ON a.id = provenance_refs.attempt_id
+    LEFT JOIN agent.model_invocations invocation ON invocation.id = provenance_refs.model_invocation_id
+    LEFT JOIN agent.agent_runs run ON run.id = invocation.agent_run_id
+    WHERE provenance_refs.model_invocation_id IS NOT NULL
+      AND (
+        invocation.id IS NULL
+        OR run.user_id <> a.user_id
+        OR run.study_session_id IS DISTINCT FROM a.study_session_id
+      )
+  `);
+  await requireCondition(invalidModelInvocations === 0, `found ${invalidModelInvocations} model invocations with incompatible attempts`);
+
+  const invalidCitationMessages = await count(`
+    SELECT count(*)::text AS count
+    FROM retrieval.citations c
+    JOIN retrieval.retrieval_runs r ON r.id = c.retrieval_run_id
+    LEFT JOIN study.tutor_messages m ON m.id = c.message_id
+    LEFT JOIN study.tutor_threads t ON t.id = m.thread_id
+    WHERE c.message_id IS NOT NULL
+      AND (
+        m.id IS NULL
+        OR t.user_id <> r.user_id
+        OR t.study_session_id IS DISTINCT FROM r.study_session_id
+      )
+  `);
+  await requireCondition(invalidCitationMessages === 0, `found ${invalidCitationMessages} citations with incompatible tutor messages`);
 
   const invalidSnapshots = await count(`
     SELECT count(*)::text AS count

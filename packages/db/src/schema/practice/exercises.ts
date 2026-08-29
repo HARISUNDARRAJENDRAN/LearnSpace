@@ -6,7 +6,7 @@ import { users } from "../identity/users.js";
 import { concepts } from "../knowledge/concepts.js";
 import { resources, resourceVersions } from "../catalog/resources.js";
 import { resourceChunks } from "../retrieval/chunks.js";
-import { studySessions } from "../study/sessions.js";
+import { sessionResources, studySessions } from "../study/sessions.js";
 
 export const exercises = practiceSchema.table(
   "exercises",
@@ -90,6 +90,11 @@ export const exerciseBindings = practiceSchema.table(
       columns: [table.resourceVersionId, table.resourceChunkId],
       foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
     }),
+    foreignKey({
+      name: "exercise_bindings_session_resource_fkey",
+      columns: [table.studySessionId, table.resourceId],
+      foreignColumns: [sessionResources.studySessionId, sessionResources.resourceId],
+    }).onDelete("restrict"),
   ],
 );
 

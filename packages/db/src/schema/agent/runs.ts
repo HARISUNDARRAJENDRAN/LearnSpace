@@ -35,6 +35,7 @@ export const agentRuns = agentSchema.table(
     check("agent_runs_thread_session_pair_chk", sql`${table.tutorThreadId} IS NULL OR ${table.studySessionId} IS NOT NULL`),
     unique("agent_runs_user_id_uq").on(table.userId, table.id),
     unique("agent_runs_id_session_uq").on(table.id, table.studySessionId),
+    unique("agent_runs_thread_id_uq").on(table.tutorThreadId, table.id),
     foreignKey({
       name: "agent_runs_user_session_fkey",
       columns: [table.userId, table.studySessionId],

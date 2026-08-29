@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, char, check, foreignKey, index, integer, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { bigint, char, check, foreignKey, index, integer, jsonb, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { practiceSchema } from "../namespaces.js";
 import { executionStatus } from "../domain-values.js";
 import { concepts } from "../knowledge/concepts.js";
@@ -64,6 +64,7 @@ export const executionRuns = practiceSchema.table(
     check("execution_runs_case_counts_chk", sql`${table.passedCaseCount} IS NULL OR ${table.totalCaseCount} IS NULL OR (${table.passedCaseCount} >= 0 AND ${table.passedCaseCount} <= ${table.totalCaseCount})`),
     index("execution_runs_attempt_created_idx").on(table.attemptId, table.createdAt.desc()),
     index("execution_runs_status_created_idx").on(table.status, table.createdAt),
+    unique("execution_runs_attempt_id_uq").on(table.attemptId, table.id),
     foreignKey({
       name: "execution_runs_attempt_snapshot_fkey",
       columns: [table.attemptId, table.codeSnapshotId],
@@ -77,8 +78,8 @@ export const observerDiagnostics = practiceSchema.table(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "restrict" }),
-    executionRunId: uuid("execution_run_id").references(() => executionRuns.id, { onDelete: "set null" }),
-    codeSnapshotId: uuid("code_snapshot_id").notNull().references(() => codeSnapshots.id, { onDelete: "restrict" }),
+    executionRunId: uuid("execution_run_id"),
+    codeSnapshotId: uuid("code_snapshot_id").notNull(),
     conceptId: uuid("concept_id").references(() => concepts.id, { onDelete: "set null" }),
     category: text("category").notNull(),
     severity: text("severity").notNull(),
@@ -92,5 +93,16 @@ export const observerDiagnostics = practiceSchema.table(
   (table) => [
     check("observer_diagnostics_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
     index("observer_diagnostics_attempt_created_idx").on(table.attemptId, table.createdAt.desc()),
+    unique("observer_diagnostics_attempt_id_uq").on(table.attemptId, table.id),
+    foreignKey({
+      name: "observer_diagnostics_attempt_snapshot_fkey",
+      columns: [table.attemptId, table.codeSnapshotId],
+      foreignColumns: [codeSnapshots.attemptId, codeSnapshots.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "observer_diagnostics_attempt_execution_fkey",
+      columns: [table.attemptId, table.executionRunId],
+      foreignColumns: [executionRuns.attemptId, executionRuns.id],
+    }).onDelete("restrict"),
   ],
 );

@@ -43,5 +43,13 @@ export const tutorMessages = studySchema.table(
     sourceMessageId: uuid("source_message_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [index("tutor_messages_thread_created_idx").on(table.threadId, table.createdAt)],
+  (table) => [
+    index("tutor_messages_thread_created_idx").on(table.threadId, table.createdAt),
+    unique("tutor_messages_thread_id_uq").on(table.threadId, table.id),
+    foreignKey({
+      name: "tutor_messages_source_message_fkey",
+      columns: [table.threadId, table.sourceMessageId],
+      foreignColumns: [table.threadId, table.id],
+    }).onDelete("restrict"),
+  ],
 );
