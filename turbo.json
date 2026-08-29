@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    },
+    "lint": {
+      "dependsOn": ["^lint"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "env": [
+        "DATABASE_URL",
+        "DATABASE_ADMIN_URL",
+        "DATABASE_APP_URL",
+        "DATABASE_AI_URL",
+        "DATABASE_RUNNER_URL",
+        "DB_POOL_MAX",
+        "DB_CONNECT_TIMEOUT_SECONDS",
+        "DB_IDLE_TIMEOUT_SECONDS",
+        "DB_MAX_LIFETIME_SECONDS",
+        "DB_PREPARED_STATEMENTS",
+        "DB_STATEMENT_TIMEOUT_MS",
+        "DB_LOCK_TIMEOUT_MS"
+      ]
+    }
+  }
+}

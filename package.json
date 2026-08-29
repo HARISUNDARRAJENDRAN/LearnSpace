@@ -1,0 +1,29 @@
+{
+  "name": "learnspace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.24.0",
+  "engines": {
+    "node": ">=22.15.0",
+    "pnpm": ">=11.24.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:generate": "pnpm --filter @learnspace/db db:generate",
+    "db:check": "pnpm --filter @learnspace/db db:check",
+    "db:migrate": "pnpm --filter @learnspace/db db:migrate",
+    "db:verify": "pnpm --filter @learnspace/db db:verify",
+    "db:test": "pnpm --filter @learnspace/db db:test",
+    "db:seed:dev": "pnpm --filter @learnspace/db db:seed:dev",
+    "db:reset:local": "pnpm --filter @learnspace/db db:reset:local",
+    "db:studio": "pnpm --filter @learnspace/db db:studio",
+    "db:bootstrap": "pnpm db:migrate && pnpm db:verify && pnpm db:seed:dev && pnpm db:test"
+  },
+  "devDependencies": {
+    "turbo": "2.10.12",
+    "typescript": "7.0.2"
+  }
+}

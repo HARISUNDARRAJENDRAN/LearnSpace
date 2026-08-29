@@ -1,0 +1,12 @@
+{
+  "name": "@learnspace/runner",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "node -e \"console.log('runner boundary scaffold only')\""
+  }
+}

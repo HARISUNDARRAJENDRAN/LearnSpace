@@ -1,0 +1,36 @@
+{
+  "name": "@learnspace/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "tsx src/tests/run.ts",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:migrate": "tsx src/migrations/run.ts",
+    "db:verify": "tsx src/migrations/verify.ts",
+    "db:test": "tsx src/tests/run.ts",
+    "db:seed:dev": "tsx src/seeds/dev.ts",
+    "db:reset:local": "tsx src/scripts/reset-local.ts",
+    "db:studio": "drizzle-kit studio --config drizzle.config.ts"
+  },
+  "dependencies": {
+    "@learnspace/shared": "workspace:*",
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9",
+    "zod": "4.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "26.4.0",
+    "drizzle-kit": "0.31.10",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  }
+}

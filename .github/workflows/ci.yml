@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: docker compose -f infra/postgres/docker-compose.yml up -d --wait
+      - run: pnpm db:bootstrap
+        env:
+          DATABASE_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
+          DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:55432/learnspace
+          DATABASE_APP_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
+          DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@localhost:55432/learnspace
+          DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@localhost:55432/learnspace
+      - if: always()
+        run: docker compose -f infra/postgres/docker-compose.yml down -v
