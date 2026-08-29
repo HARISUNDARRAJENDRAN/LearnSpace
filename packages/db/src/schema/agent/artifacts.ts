@@ -6,8 +6,8 @@ import { agentRuns } from "./runs.js";
 export const agentArtifacts = agentSchema.table(
   "agent_artifacts",
   {
-    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     role: text("role").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -7,8 +7,8 @@ export const ingestionRuns = retrievalSchema.table(
   "ingestion_runs",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "cascade" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
+    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
     pipelineVersion: text("pipeline_version").notNull(),
     status: text("status").notNull(),
     requestedBy: text("requested_by").notNull(),
@@ -27,6 +27,6 @@ export const ingestionRuns = retrievalSchema.table(
       name: "ingestion_runs_resource_version_fkey",
       columns: [table.resourceId, table.resourceVersionId],
       foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
   ],
 );

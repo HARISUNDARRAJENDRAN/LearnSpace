@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
-import { index, integer, jsonb, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, integer, jsonb, smallint, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { opsSchema } from "../namespaces.js";
 import { outboxStatus } from "../domain-values.js";
+import { users } from "../identity/users.js";
+import { studySessions } from "../study/sessions.js";
 
 export const outboxEvents = opsSchema.table(
   "outbox_events",
@@ -12,8 +14,8 @@ export const outboxEvents = opsSchema.table(
     aggregateVersion: integer("aggregate_version"),
     eventType: text("event_type").notNull(),
     schemaVersion: smallint("schema_version").notNull(),
-    userId: uuid("user_id"),
-    studySessionId: uuid("study_session_id"),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
     status: outboxStatus("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),
@@ -31,5 +33,11 @@ export const outboxEvents = opsSchema.table(
     index("outbox_events_publish_idx").on(table.availableAt, table.createdAt).where(sql`${table.status} = 'pending'`),
     index("outbox_events_aggregate_idx").on(table.aggregateType, table.aggregateId, table.createdAt),
     index("outbox_events_correlation_idx").on(table.correlationId),
+    check("outbox_events_session_user_pair_chk", sql`${table.studySessionId} IS NULL OR ${table.userId} IS NOT NULL`),
+    foreignKey({
+      name: "outbox_events_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
   ],
 );

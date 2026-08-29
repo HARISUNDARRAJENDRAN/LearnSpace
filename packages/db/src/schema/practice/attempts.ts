@@ -10,8 +10,8 @@ export const exerciseAttempts = practiceSchema.table(
   "exercise_attempts",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     exerciseBindingId: uuid("exercise_binding_id").notNull().references(() => exerciseBindings.id, { onDelete: "restrict" }),
     exerciseVersionId: uuid("exercise_version_id").notNull().references(() => exerciseVersions.id, { onDelete: "restrict" }),
     status: attemptStatus("status").notNull().default("started"),
@@ -41,7 +41,7 @@ export const exerciseAttempts = practiceSchema.table(
       name: "exercise_attempts_user_session_fkey",
       columns: [table.userId, table.studySessionId],
       foreignColumns: [studySessions.userId, studySessions.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "exercise_attempts_binding_version_fkey",
       columns: [table.exerciseBindingId, table.exerciseVersionId],
@@ -57,7 +57,7 @@ export const codeSnapshots = practiceSchema.table(
   "code_snapshots",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "cascade" }),
+    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "restrict" }),
     sequenceNo: integer("sequence_no").notNull(),
     kind: text("kind").notNull(),
     sourceCode: text("source_code").notNull(),
@@ -70,5 +70,10 @@ export const codeSnapshots = practiceSchema.table(
     unique("code_snapshots_attempt_id_uq").on(table.attemptId, table.id),
     index("code_snapshots_attempt_created_idx").on(table.attemptId, table.createdAt.desc()),
     check("code_snapshots_sequence_no_chk", sql`${table.sequenceNo} >= 0`),
+    foreignKey({
+      name: "code_snapshots_parent_attempt_fkey",
+      columns: [table.attemptId, table.parentSnapshotId],
+      foreignColumns: [table.attemptId, table.id],
+    }).onDelete("restrict"),
   ],
 );

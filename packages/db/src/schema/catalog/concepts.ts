@@ -7,8 +7,8 @@ import { resources } from "./resources.js";
 export const resourceConcepts = catalogSchema.table(
   "resource_concepts",
   {
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
     source: text("source").notNull(),
     relevance: real("relevance").notNull(),
     isPrimary: boolean("is_primary").notNull().default(false),

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, index, jsonb, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, jsonb, smallint, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { activitySchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { concepts } from "../knowledge/concepts.js";
@@ -12,11 +12,11 @@ export const activityEvents = activitySchema.table(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     schemaVersion: smallint("schema_version").notNull(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "set null" }),
-    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
-    resourceVersionId: uuid("resource_version_id").references(() => resourceVersions.id, { onDelete: "set null" }),
-    resourceChunkId: uuid("resource_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "restrict" }),
+    resourceVersionId: uuid("resource_version_id").references(() => resourceVersions.id, { onDelete: "restrict" }),
+    resourceChunkId: uuid("resource_chunk_id").references(() => resourceChunks.id, { onDelete: "restrict" }),
     conceptId: uuid("concept_id").references(() => concepts.id, { onDelete: "set null" }),
     eventType: text("event_type").notNull(),
     actorType: text("actor_type").notNull(),
@@ -40,25 +40,27 @@ export const activityEvents = activitySchema.table(
     index("activity_events_concept_type_time_idx").on(table.conceptId, table.eventType, table.occurredAt.desc()),
     uniqueIndex("activity_events_user_idempotency_uq").on(table.userId, table.idempotencyKey).where(sql`${table.idempotencyKey} IS NOT NULL`),
     uniqueIndex("activity_events_source_client_event_uq").on(table.source, table.clientEventId).where(sql`${table.clientEventId} IS NOT NULL`),
+    unique("activity_events_user_id_uq").on(table.userId, table.id),
+    unique("activity_events_user_session_id_uq").on(table.userId, table.studySessionId, table.id),
     foreignKey({
       name: "activity_events_user_session_fkey",
       columns: [table.userId, table.studySessionId],
       foreignColumns: [studySessions.userId, studySessions.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "activity_events_session_resource_fkey",
       columns: [table.studySessionId, table.resourceId],
       foreignColumns: [sessionResources.studySessionId, sessionResources.resourceId],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "activity_events_resource_version_fkey",
       columns: [table.resourceId, table.resourceVersionId],
       foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "activity_events_version_chunk_fkey",
       columns: [table.resourceVersionId, table.resourceChunkId],
       foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
   ],
 );

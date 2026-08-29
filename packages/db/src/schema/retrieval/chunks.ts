@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, index, integer, jsonb, primaryKey, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { char, check, foreignKey, index, integer, jsonb, primaryKey, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { resourceVersions } from "../catalog/resources.js";
 import { concepts } from "../knowledge/concepts.js";
@@ -9,7 +9,7 @@ export const resourceChunks = retrievalSchema.table(
   "resource_chunks",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "cascade" }),
+    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
     parentChunkId: uuid("parent_chunk_id"),
     ordinal: integer("ordinal").notNull(),
     chunkType: text("chunk_type").notNull(),
@@ -33,6 +33,11 @@ export const resourceChunks = retrievalSchema.table(
     uniqueIndex("resource_chunks_version_ordinal_uq").on(table.resourceVersionId, table.ordinal),
     uniqueIndex("resource_chunks_version_content_ordinal_uq").on(table.resourceVersionId, table.contentSha256, table.ordinal),
     unique("resource_chunks_version_id_uq").on(table.resourceVersionId, table.id),
+    foreignKey({
+      name: "resource_chunks_parent_version_fkey",
+      columns: [table.resourceVersionId, table.parentChunkId],
+      foreignColumns: [table.resourceVersionId, table.id],
+    }).onDelete("restrict"),
     index("resource_chunks_version_start_idx").on(table.resourceVersionId, table.startMs).where(sql`${table.startMs} IS NOT NULL`),
     index("resource_chunks_version_page_idx").on(table.resourceVersionId, table.pageFrom).where(sql`${table.pageFrom} IS NOT NULL`),
     index("resource_chunks_parent_idx").on(table.parentChunkId),
@@ -49,8 +54,8 @@ export const resourceChunks = retrievalSchema.table(
 export const chunkConcepts = retrievalSchema.table(
   "chunk_concepts",
   {
-    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "cascade" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
     relationType: text("relation_type").notNull(),
     confidence: real("confidence").notNull(),
     source: text("source").notNull(),

@@ -10,9 +10,9 @@ import { concepts } from "./concepts.js";
 export const artifactDetails = knowledgeSchema.table(
   "artifact_details",
   {
-    resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "cascade" }),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "set null" }),
+    resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "restrict" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
     artifactType: text("artifact_type").notNull(),
     status: text("status").notNull().default("active"),
     createdBy: text("created_by").notNull(),
@@ -23,6 +23,11 @@ export const artifactDetails = knowledgeSchema.table(
   (table) => [
     index("artifact_details_user_updated_idx").on(table.userId, table.updatedAt.desc()),
     index("artifact_details_session_created_idx").on(table.studySessionId, table.createdAt),
+    foreignKey({
+      name: "artifact_details_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -33,7 +38,7 @@ export const artifactSources = knowledgeSchema.table(
     artifactResourceId: uuid("artifact_resource_id").notNull(),
     sourceResourceId: uuid("source_resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     sourceVersionId: uuid("source_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
-    sourceChunkId: uuid("source_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
+    sourceChunkId: uuid("source_chunk_id").references(() => resourceChunks.id, { onDelete: "restrict" }),
     relationType: text("relation_type").notNull(),
     anchor: jsonb("anchor").$type<Record<string, unknown>>(),
     confidence: real("confidence").notNull().default(1),
@@ -51,7 +56,17 @@ export const artifactSources = knowledgeSchema.table(
       name: "artifact_sources_artifact_fkey",
       columns: [table.artifactResourceId],
       foreignColumns: [artifactDetails.resourceId],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "artifact_sources_resource_version_fkey",
+      columns: [table.sourceResourceId, table.sourceVersionId],
+      foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "artifact_sources_version_chunk_fkey",
+      columns: [table.sourceVersionId, table.sourceChunkId],
+      foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -59,7 +74,7 @@ export const artifactConcepts = knowledgeSchema.table(
   "artifact_concepts",
   {
     artifactResourceId: uuid("artifact_resource_id").notNull(),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
     relationType: text("relation_type").notNull(),
     confidence: real("confidence").notNull(),
     source: text("source").notNull(),
@@ -73,6 +88,6 @@ export const artifactConcepts = knowledgeSchema.table(
       name: "artifact_concepts_artifact_fkey",
       columns: [table.artifactResourceId],
       foreignColumns: [artifactDetails.resourceId],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
   ],
 );

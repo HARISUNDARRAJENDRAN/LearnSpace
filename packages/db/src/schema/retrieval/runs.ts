@@ -12,9 +12,9 @@ export const retrievalRuns = retrievalSchema.table(
   "retrieval_runs",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "set null" }),
-    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
+    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "restrict" }),
     queryText: text("query_text").notNull(),
     querySha256: char("query_sha256", { length: 64 }).notNull(),
     embeddingProfileId: text("embedding_profile_id").references(() => embeddingProfiles.id, { onDelete: "set null" }),
@@ -31,19 +31,25 @@ export const retrievalRuns = retrievalSchema.table(
   (table) => [
     index("retrieval_runs_session_created_idx").on(table.studySessionId, table.createdAt.desc()),
     index("retrieval_runs_user_created_idx").on(table.userId, table.createdAt.desc()),
+    uniqueIndex("retrieval_runs_id_agent_run_uq").on(table.id, table.agentRunId),
     foreignKey({
       name: "retrieval_runs_user_session_fkey",
       columns: [table.userId, table.studySessionId],
       foreignColumns: [studySessions.userId, studySessions.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "retrieval_runs_user_agent_run_fkey",
+      columns: [table.userId, table.agentRunId],
+      foreignColumns: [agentRuns.userId, agentRuns.id],
+    }).onDelete("restrict"),
   ],
 );
 
 export const retrievedChunks = retrievalSchema.table(
   "retrieved_chunks",
   {
-    retrievalRunId: uuid("retrieval_run_id").notNull().references(() => retrievalRuns.id, { onDelete: "cascade" }),
-    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "cascade" }),
+    retrievalRunId: uuid("retrieval_run_id").notNull().references(() => retrievalRuns.id, { onDelete: "restrict" }),
+    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
     candidateRank: integer("candidate_rank").notNull(),
     finalRank: integer("final_rank"),
     lexicalScore: real("lexical_score"),
@@ -62,10 +68,10 @@ export const citations = retrievalSchema.table(
   "citations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    retrievalRunId: uuid("retrieval_run_id").notNull().references(() => retrievalRuns.id, { onDelete: "cascade" }),
+    retrievalRunId: uuid("retrieval_run_id").notNull().references(() => retrievalRuns.id, { onDelete: "restrict" }),
     chunkId: uuid("chunk_id").notNull(),
     resourceVersionId: uuid("resource_version_id").notNull(),
-    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    agentRunId: uuid("agent_run_id").references(() => agentRuns.id, { onDelete: "restrict" }),
     messageId: uuid("message_id"),
     ordinal: integer("ordinal").notNull(),
     anchorSnapshot: jsonb("anchor_snapshot").$type<Record<string, unknown>>().notNull(),
@@ -82,11 +88,16 @@ export const citations = retrievalSchema.table(
       name: "citations_retrieved_chunk_fkey",
       columns: [table.retrievalRunId, table.chunkId],
       foreignColumns: [retrievedChunks.retrievalRunId, retrievedChunks.chunkId],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "citations_version_chunk_fkey",
       columns: [table.resourceVersionId, table.chunkId],
       foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "citations_retrieval_agent_fkey",
+      columns: [table.retrievalRunId, table.agentRunId],
+      foreignColumns: [retrievalRuns.id, retrievalRuns.agentRunId],
     }).onDelete("restrict"),
   ],
 );

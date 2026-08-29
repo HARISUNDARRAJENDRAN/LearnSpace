@@ -11,8 +11,8 @@ export const studySessions = studySchema.table(
   "study_sessions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    learningGoalId: uuid("learning_goal_id").references(() => learningGoals.id, { onDelete: "set null" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    learningGoalId: uuid("learning_goal_id").references(() => learningGoals.id, { onDelete: "restrict" }),
     title: text("title"),
     mode: sessionMode("mode").notNull(),
     status: sessionStatus("status").notNull().default("active"),
@@ -49,19 +49,19 @@ export const studySessions = studySchema.table(
       name: "study_sessions_active_resource_version_fkey",
       columns: [table.activeResourceId, table.activeVersionId],
       foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
     foreignKey({
       name: "study_sessions_active_version_chunk_fkey",
       columns: [table.activeVersionId, table.activeChunkId],
       foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
   ],
 );
 
 export const sessionResources = studySchema.table(
   "session_resources",
   {
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
     role: text("role").notNull(),
@@ -87,7 +87,7 @@ export const sessionContextSnapshots = studySchema.table(
   "session_context_snapshots",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     version: integer("version").notNull(),
     sourceEventId: uuid("source_event_id"),
     context: jsonb("context").$type<Record<string, unknown>>().notNull(),
@@ -101,7 +101,7 @@ export const sessionCheckpoints = studySchema.table(
   "session_checkpoints",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     kind: text("kind").notNull(),
     resourceId: uuid("resource_id"),
     resourceVersionId: uuid("resource_version_id"),

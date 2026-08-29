@@ -30,7 +30,7 @@ export const embeddingProfiles = retrievalSchema.table(
 export const chunkEmbeddings = retrievalSchema.table(
   "chunk_embeddings",
   {
-    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "cascade" }),
+    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
     embeddingProfileId: text("embedding_profile_id").notNull().references(() => embeddingProfiles.id, { onDelete: "restrict" }),
     embedding: vector("embedding", { dimensions: ACTIVE_EMBEDDING_DIMENSIONS }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

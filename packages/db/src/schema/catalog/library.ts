@@ -6,8 +6,8 @@ import { resources } from "./resources.js";
 export const libraryItems = catalogSchema.table(
   "library_items",
   {
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("saved"),
     source: text("source").notNull().default("user"),
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),

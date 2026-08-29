@@ -8,7 +8,7 @@ export const hintEvents = practiceSchema.table(
   "hint_events",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "cascade" }),
+    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "restrict" }),
     diagnosticId: uuid("diagnostic_id").references(() => observerDiagnostics.id, { onDelete: "set null" }),
     hintLevel: integer("hint_level").notNull(),
     triggerType: text("trigger_type").notNull(),

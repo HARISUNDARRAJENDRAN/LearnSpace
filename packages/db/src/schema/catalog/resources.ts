@@ -9,7 +9,7 @@ export const resources = catalogSchema.table(
   "resources",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "restrict" }),
     type: resourceType("type").notNull(),
     provider: text("provider").notNull(),
     externalId: text("external_id"),
@@ -52,7 +52,7 @@ export const resourceVersions = catalogSchema.table(
   "resource_versions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     versionNo: integer("version_no").notNull(),
     sourceSha256: char("source_sha256", { length: 64 }).notNull(),
     contentSha256: char("content_sha256", { length: 64 }),
@@ -84,7 +84,7 @@ export const resourceAssets = catalogSchema.table(
   "resource_assets",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "cascade" }),
+    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
     assetType: text("asset_type").notNull(),
     ordinal: integer("ordinal").notNull(),
     objectKey: text("object_key").notNull(),

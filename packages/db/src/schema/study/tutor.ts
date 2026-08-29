@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { foreignKey, index, jsonb, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { foreignKey, index, jsonb, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { studySchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { studySessions } from "./sessions.js";
@@ -8,8 +8,8 @@ export const tutorThreads = studySchema.table(
   "tutor_threads",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     mode: text("mode").notNull(),
     status: text("status").notNull().default("active"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
@@ -20,11 +20,13 @@ export const tutorThreads = studySchema.table(
   },
   (table) => [
     index("tutor_threads_session_updated_idx").on(table.studySessionId, table.updatedAt.desc()),
+    unique("tutor_threads_user_id_uq").on(table.userId, table.id),
+    unique("tutor_threads_id_session_uq").on(table.id, table.studySessionId),
     foreignKey({
       name: "tutor_threads_user_session_fkey",
       columns: [table.userId, table.studySessionId],
       foreignColumns: [studySessions.userId, studySessions.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
   ],
 );
 
@@ -32,7 +34,7 @@ export const tutorMessages = studySchema.table(
   "tutor_messages",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    threadId: uuid("thread_id").notNull().references(() => tutorThreads.id, { onDelete: "cascade" }),
+    threadId: uuid("thread_id").notNull().references(() => tutorThreads.id, { onDelete: "restrict" }),
     actorType: text("actor_type").notNull(),
     agentRunId: uuid("agent_run_id"),
     contentText: text("content_text"),

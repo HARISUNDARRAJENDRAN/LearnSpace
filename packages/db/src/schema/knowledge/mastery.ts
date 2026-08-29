@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, jsonb, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, integer, jsonb, primaryKey, real, smallint, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { knowledgeSchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { activityEvents } from "../activity/events.js";
@@ -12,9 +12,9 @@ export const masterySignals = knowledgeSchema.table(
   "mastery_signals",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "set null" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
     sourceEventId: uuid("source_event_id").notNull().references(() => activityEvents.id, { onDelete: "restrict" }),
     signalType: text("signal_type").notNull(),
     value: real("value").notNull(),
@@ -32,14 +32,24 @@ export const masterySignals = knowledgeSchema.table(
     check("mastery_signals_weight_chk", sql`${table.weight} BETWEEN 0 AND 1`),
     index("mastery_signals_user_concept_observed_idx").on(table.userId, table.conceptId, table.observedAt.desc()),
     index("mastery_signals_source_event_idx").on(table.sourceEventId),
+    foreignKey({
+      name: "mastery_signals_user_source_event_fkey",
+      columns: [table.userId, table.sourceEventId],
+      foreignColumns: [activityEvents.userId, activityEvents.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "mastery_signals_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
   ],
 );
 
 export const conceptMastery = knowledgeSchema.table(
   "concept_mastery",
   {
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
     score: real("score").notNull(),
     uncertainty: real("uncertainty").notNull(),
     stage: text("stage").notNull(),
@@ -66,8 +76,8 @@ export const conceptMastery = knowledgeSchema.table(
 export const reviewSchedules = knowledgeSchema.table(
   "review_schedules",
   {
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
     algorithm: text("algorithm").notNull(),
     algorithmVersion: text("algorithm_version").notNull(),
     state: jsonb("state").$type<Record<string, unknown>>().notNull(),
@@ -85,8 +95,8 @@ export const unresolvedQuestions = knowledgeSchema.table(
   "unresolved_questions",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
     resourceChunkId: uuid("resource_chunk_id").references(() => resourceChunks.id, { onDelete: "set null" }),
     conceptId: uuid("concept_id").references(() => concepts.id, { onDelete: "set null" }),

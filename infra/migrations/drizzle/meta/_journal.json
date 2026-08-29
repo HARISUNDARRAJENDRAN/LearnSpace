@@ -36,6 +36,41 @@
       "when": 1787997434059,
       "tag": "0004_quiet_grandmaster",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788004771963,
+      "tag": "0005_smart_havok",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788005212830,
+      "tag": "0006_smooth_gladiator",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788005850262,
+      "tag": "0007_certain_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788009898058,
+      "tag": "0008_wide_jack_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1788013717511,
+      "tag": "0009_whole_dragon_man",
+      "breakpoints": true
     }
   ]
 }

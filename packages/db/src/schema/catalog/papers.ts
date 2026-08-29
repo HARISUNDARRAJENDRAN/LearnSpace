@@ -4,7 +4,7 @@ import { catalogSchema } from "../namespaces.js";
 import { resources } from "./resources.js";
 
 export const paperDetails = catalogSchema.table("paper_details", {
-  resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "cascade" }),
+  resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "restrict" }),
   arxivId: text("arxiv_id").unique(),
   doi: text("doi").unique(),
   abstract: text("abstract"),
@@ -36,7 +36,7 @@ export const authors = catalogSchema.table(
 export const paperAuthors = catalogSchema.table(
   "paper_authors",
   {
-    paperResourceId: uuid("paper_resource_id").notNull().references(() => paperDetails.resourceId, { onDelete: "cascade" }),
+    paperResourceId: uuid("paper_resource_id").notNull().references(() => paperDetails.resourceId, { onDelete: "restrict" }),
     authorId: uuid("author_id").notNull().references(() => authors.id, { onDelete: "restrict" }),
     ordinal: integer("ordinal").notNull(),
     affiliation: text("affiliation"),
@@ -51,7 +51,7 @@ export const paperReferences = catalogSchema.table(
   "paper_references",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    paperResourceId: uuid("paper_resource_id").notNull().references(() => paperDetails.resourceId, { onDelete: "cascade" }),
+    paperResourceId: uuid("paper_resource_id").notNull().references(() => paperDetails.resourceId, { onDelete: "restrict" }),
     ordinal: integer("ordinal").notNull(),
     rawReference: text("raw_reference").notNull(),
     citedResourceId: uuid("cited_resource_id").references(() => resources.id, { onDelete: "set null" }),

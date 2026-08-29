@@ -29,14 +29,15 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "identity.auth_accounts": ["identity_auth_accounts_select_policy", "identity_auth_accounts_insert_policy", "identity_auth_accounts_update_policy", "identity_auth_accounts_delete_policy"],
   "identity.auth_sessions": ["identity_auth_sessions_select_policy", "identity_auth_sessions_insert_policy", "identity_auth_sessions_update_policy", "identity_auth_sessions_delete_policy"],
   "identity.user_settings": ["user_settings_owner_policy"],
-  "catalog.resources": ["resources_owner_or_visible_policy", "resources_worker_policy"],
-  "catalog.resource_versions": ["resource_versions_visible_policy", "resource_versions_worker_policy"],
-  "catalog.resource_assets": ["resource_assets_visible_policy", "resource_assets_worker_policy"],
-  "catalog.library_items": ["library_items_owner_policy"],
-  "catalog.collections": ["collections_owner_or_visible_policy"],
-  "catalog.collection_sections": ["collection_sections_owner_policy"],
-  "catalog.collection_items": ["collection_items_owner_policy"],
-  "catalog.collection_enrollments": ["collection_enrollments_owner_policy"],
+  "catalog.resources": ["resources_owner_or_visible_policy", "resources_owner_insert_policy", "resources_owner_update_policy", "resources_owner_delete_policy", "resources_worker_policy", "resources_worker_insert_policy", "resources_worker_update_policy"],
+  "catalog.resource_versions": ["resource_versions_visible_policy", "resource_versions_worker_policy", "resource_versions_worker_insert_policy", "resource_versions_worker_update_policy"],
+  "catalog.resource_assets": ["resource_assets_visible_policy", "resource_assets_worker_policy", "resource_assets_worker_insert_policy", "resource_assets_worker_update_policy"],
+  "catalog.authors": ["authors_visible_policy", "authors_worker_policy", "authors_worker_insert_policy", "authors_worker_update_policy"],
+  "catalog.library_items": ["library_items_owner_policy", "library_items_owner_insert_policy", "library_items_owner_update_policy", "library_items_owner_delete_policy"],
+  "catalog.collections": ["collections_owner_or_visible_policy", "collections_owner_insert_policy", "collections_owner_update_policy", "collections_owner_delete_policy", "collections_worker_policy", "collections_worker_insert_policy", "collections_worker_update_policy"],
+  "catalog.collection_sections": ["collection_sections_visible_policy", "collection_sections_owner_insert_policy", "collection_sections_owner_update_policy", "collection_sections_owner_delete_policy", "collection_sections_worker_policy", "collection_sections_worker_insert_policy", "collection_sections_worker_update_policy"],
+  "catalog.collection_items": ["collection_items_visible_policy", "collection_items_owner_insert_policy", "collection_items_owner_update_policy", "collection_items_owner_delete_policy", "collection_items_worker_policy", "collection_items_worker_insert_policy", "collection_items_worker_update_policy"],
+  "catalog.collection_enrollments": ["collection_enrollments_owner_policy", "collection_enrollments_owner_insert_policy", "collection_enrollments_owner_update_policy", "collection_enrollments_owner_delete_policy"],
   "catalog.video_details": ["video_details_visible_policy", "video_details_worker_policy"],
   "catalog.video_metric_snapshots": ["video_metric_snapshots_visible_policy", "video_metric_snapshots_worker_policy"],
   "catalog.paper_details": ["paper_details_visible_policy", "paper_details_worker_policy"],
@@ -54,9 +55,12 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "study.tutor_threads": ["tutor_threads_owner_policy"],
   "study.tutor_messages": ["tutor_messages_owner_policy"],
   "activity.activity_events": ["activity_events_owner_policy", "activity_events_worker_policy"],
-  "retrieval.resource_chunks": ["resource_chunks_visible_policy", "resource_chunks_worker_policy"],
-  "retrieval.chunk_embeddings": ["chunk_embeddings_visible_policy", "chunk_embeddings_worker_policy"],
-  "retrieval.retrieval_runs": ["retrieval_runs_owner_policy", "retrieval_runs_worker_policy"],
+  "retrieval.resource_chunks": ["resource_chunks_visible_policy", "resource_chunks_worker_policy", "resource_chunks_worker_insert_policy", "resource_chunks_worker_update_policy"],
+  "retrieval.chunk_embeddings": ["chunk_embeddings_visible_policy", "chunk_embeddings_worker_policy", "chunk_embeddings_worker_insert_policy", "chunk_embeddings_worker_update_policy"],
+  "retrieval.embedding_profiles": ["embedding_profiles_visible_policy", "embedding_profiles_worker_policy", "embedding_profiles_worker_insert_policy", "embedding_profiles_worker_update_policy"],
+  "retrieval.chunk_concepts": ["chunk_concepts_visible_policy", "chunk_concepts_worker_policy", "chunk_concepts_worker_insert_policy", "chunk_concepts_worker_update_policy"],
+  "retrieval.ingestion_runs": ["ingestion_runs_visible_policy", "ingestion_runs_worker_policy", "ingestion_runs_worker_insert_policy", "ingestion_runs_worker_update_policy"],
+  "retrieval.retrieval_runs": ["retrieval_runs_owner_policy", "retrieval_runs_owner_insert_policy", "retrieval_runs_worker_policy", "retrieval_runs_worker_insert_policy", "retrieval_runs_worker_update_policy"],
   "retrieval.retrieved_chunks": ["retrieved_chunks_owner_policy", "retrieved_chunks_worker_policy"],
   "retrieval.citations": ["citations_owner_policy", "citations_worker_policy"],
   "practice.exercise_attempts": ["exercise_attempts_owner_policy"],
@@ -66,7 +70,12 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "practice.code_snapshots": ["code_snapshots_owner_policy"],
   "practice.observer_diagnostics": ["observer_diagnostics_owner_policy"],
   "practice.hint_events": ["hint_events_owner_policy"],
-  "practice.execution_runs": ["execution_runs_app_select_policy", "execution_runs_app_enqueue_policy", "execution_runs_ai_select_policy", "execution_runs_runner_select_policy", "execution_runs_runner_update_policy"],
+  "practice.exercise_versions": ["exercise_versions_visible_policy", "exercise_versions_worker_policy", "exercise_versions_worker_insert_policy", "exercise_versions_worker_update_policy"],
+  "practice.test_bundles": ["test_bundles_worker_policy", "test_bundles_worker_insert_policy", "test_bundles_worker_update_policy"],
+  "practice.execution_runs": ["execution_runs_app_select_policy", "execution_runs_ai_select_policy", "execution_runs_runner_select_policy", "execution_runs_runner_update_policy"],
+  "knowledge.concepts": ["concepts_visible_policy", "concepts_worker_insert_policy", "concepts_worker_update_policy"],
+  "knowledge.concept_aliases": ["concept_aliases_visible_policy", "concept_aliases_worker_insert_policy", "concept_aliases_worker_update_policy"],
+  "knowledge.concept_relations": ["concept_relations_visible_policy", "concept_relations_worker_insert_policy", "concept_relations_worker_update_policy"],
   "knowledge.user_knowledge_edges": ["user_knowledge_edges_owner_policy"],
   "knowledge.mastery_signals": ["mastery_signals_owner_policy", "mastery_signals_worker_policy"],
   "knowledge.concept_mastery": ["concept_mastery_owner_policy", "concept_mastery_worker_policy"],
@@ -84,12 +93,14 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "discovery.recommendation_candidates": ["recommendation_candidates_owner_policy"],
   "discovery.recommendation_impressions": ["recommendation_impressions_owner_policy"],
   "discovery.discovery_interactions": ["discovery_interactions_owner_policy"],
-  "discovery.user_concept_affinity": ["user_concept_affinity_owner_policy", "user_concept_affinity_worker_policy"],
+  "discovery.resource_quality_snapshots": ["resource_quality_visible_policy", "resource_quality_worker_policy", "resource_quality_worker_insert_policy", "resource_quality_worker_update_policy"],
+  "discovery.user_concept_affinity": ["user_concept_affinity_owner_policy", "user_concept_affinity_owner_insert_policy", "user_concept_affinity_owner_update_policy", "user_concept_affinity_owner_delete_policy", "user_concept_affinity_worker_policy", "user_concept_affinity_worker_insert_policy", "user_concept_affinity_worker_update_policy"],
   "projection.dashboard_state": ["dashboard_state_owner_policy", "dashboard_state_worker_policy"],
   "projection.user_learning_daily": ["user_learning_daily_owner_policy", "user_learning_daily_worker_policy"],
   "projection.session_summary": ["session_summary_owner_policy", "session_summary_worker_policy"],
   "ops.idempotency_records": ["idempotency_records_select_policy"],
-  "ops.outbox_events": ["outbox_events_owner_policy", "outbox_events_worker_policy"],
+  "ops.outbox_events": ["outbox_events_owner_policy", "outbox_events_owner_insert_policy", "outbox_events_worker_policy", "outbox_events_worker_update_policy"],
+  "ops.jobs": ["jobs_worker_policy", "jobs_worker_insert_policy", "jobs_worker_update_policy", "jobs_worker_delete_policy"],
 };
 
 const requiredConstraints = [
@@ -220,11 +231,14 @@ try {
     WHERE (n.nspname, c.relname, t.tgname) IN (
       ('catalog', 'resource_versions', 'resource_versions_immutable_trg'),
       ('catalog', 'resources', 'resources_current_version_ready_trg'),
-      ('practice', 'execution_runs', 'execution_runs_hashes_trg')
+      ('practice', 'execution_runs', 'execution_runs_hashes_trg'),
+      ('practice', 'exercise_attempts', 'exercise_attempts_binding_context_trg'),
+      ('knowledge', 'mastery_signals', 'mastery_signals_source_trg'),
+      ('ops', 'outbox_events', 'outbox_events_append_only_trg')
     )
       AND NOT t.tgisinternal
   `;
-  await requireCondition(triggerRows.length === 3, "target integrity triggers are incomplete");
+  await requireCondition(triggerRows.length === 6, "target integrity triggers are incomplete");
 
   const rlsRows = await sql<RlsRow[]>`
     SELECT n.nspname || '.' || c.relname AS relation, c.relrowsecurity AS enabled, p.policyname AS policy_name
@@ -252,6 +266,13 @@ try {
     await requireCondition(current.enabled === true, `RLS is disabled on ${relation}`);
     await requireCondition(expectedPolicies.every((policy) => current.policies.has(policy)), `RLS policy manifest is incomplete on ${relation}`);
   }
+  const allPolicies = await count(`
+    SELECT count(*)::text AS count
+    FROM pg_policies
+    WHERE schemaname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
+      AND cmd = 'ALL'
+  `);
+  await requireCondition(allPolicies === 0, `found ${allPolicies} FOR ALL RLS policies`);
 
   const roleCount = await count(`
     SELECT count(*)::text AS count
@@ -277,25 +298,96 @@ try {
   `;
   await requireCondition(views.length === 5, "security views are incomplete");
 
-  const privilegeRows = await sql<{ app_can_read_solutions: boolean; app_can_read_tests: boolean; ai_can_read_tests: boolean; app_can_update_execution: boolean; app_can_insert_execution: boolean; runner_can_read_tests: boolean; runner_can_update_execution: boolean; worker_can_update_events: boolean }[]>`
+  const privilegeRows = await sql<{
+    app_can_read_solutions: boolean;
+    app_can_read_tests: boolean;
+    ai_can_read_tests: boolean;
+    app_can_update_execution: boolean;
+    app_can_insert_execution: boolean;
+    app_can_enqueue_execution: boolean;
+    runner_can_read_tests: boolean;
+    runner_can_update_execution: boolean;
+    runner_can_update_execution_result: boolean;
+    worker_can_update_events: boolean;
+    app_can_update_outbox: boolean;
+    worker_can_update_outbox_status: boolean;
+    app_can_update_mastery: boolean;
+    ai_can_update_mastery: boolean;
+    app_can_create_public_schema: boolean;
+    app_can_use_vector: boolean;
+    app_can_execute_vector_distance: boolean;
+    runtime_vector_roles: string;
+    embedding_storage_type: string;
+    worker_can_publish_collections: boolean;
+  }[]>`
     SELECT
-      has_table_privilege('learnspace_app', 'practice.exercise_versions', 'SELECT') AS app_can_read_solutions,
+      has_column_privilege('learnspace_app', 'practice.exercise_versions', 'solution_outline', 'SELECT') AS app_can_read_solutions,
       has_table_privilege('learnspace_app', 'practice.test_bundles', 'SELECT') AS app_can_read_tests,
       has_table_privilege('learnspace_ai', 'practice.test_bundles', 'SELECT') AS ai_can_read_tests,
       has_table_privilege('learnspace_app', 'practice.execution_runs', 'UPDATE') AS app_can_update_execution,
       has_table_privilege('learnspace_app', 'practice.execution_runs', 'INSERT') AS app_can_insert_execution,
+      has_function_privilege('learnspace_app', 'practice.enqueue_execution(uuid,uuid,uuid)', 'EXECUTE') AS app_can_enqueue_execution,
       has_table_privilege('learnspace_runner', 'practice.test_bundles', 'SELECT') AS runner_can_read_tests,
-      has_table_privilege('learnspace_runner', 'practice.execution_runs', 'UPDATE') AS runner_can_update_execution,
-      has_table_privilege('learnspace_worker', 'activity.activity_events', 'UPDATE') AS worker_can_update_events
+      has_column_privilege('learnspace_runner', 'practice.execution_runs', 'status', 'UPDATE') AS runner_can_update_execution,
+      has_column_privilege('learnspace_runner', 'practice.execution_runs', 'result', 'UPDATE') AS runner_can_update_execution_result,
+      has_table_privilege('learnspace_worker', 'activity.activity_events', 'UPDATE') AS worker_can_update_events,
+      has_table_privilege('learnspace_app', 'ops.outbox_events', 'UPDATE') AS app_can_update_outbox,
+      has_column_privilege('learnspace_worker', 'ops.outbox_events', 'status', 'UPDATE') AS worker_can_update_outbox_status,
+      has_table_privilege('learnspace_app', 'knowledge.mastery_signals', 'UPDATE') AS app_can_update_mastery,
+      has_table_privilege('learnspace_ai', 'knowledge.mastery_signals', 'UPDATE') AS ai_can_update_mastery,
+      has_schema_privilege('learnspace_app', 'public', 'CREATE') AS app_can_create_public_schema,
+      has_type_privilege('learnspace_app', 'public.vector', 'USAGE') AS app_can_use_vector,
+      has_function_privilege('learnspace_app', 'public.cosine_distance(vector,vector)', 'EXECUTE') AS app_can_execute_vector_distance,
+      (
+        SELECT count(*)::text
+        FROM pg_roles AS runtime_role
+        WHERE runtime_role.rolname IN ('learnspace_app', 'learnspace_ai', 'learnspace_worker', 'learnspace_runner', 'learnspace_readonly')
+          AND has_schema_privilege(runtime_role.rolname, 'public', 'USAGE')
+          AND NOT has_schema_privilege(runtime_role.rolname, 'public', 'CREATE')
+          AND has_type_privilege(runtime_role.rolname, 'public.vector', 'USAGE')
+          AND has_function_privilege(runtime_role.rolname, 'public.cosine_distance(vector,vector)', 'EXECUTE')
+      ) AS runtime_vector_roles,
+      (
+        SELECT format_type(a.atttypid, a.atttypmod)
+        FROM pg_attribute AS a
+        JOIN pg_class AS c ON c.oid = a.attrelid
+        JOIN pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'retrieval' AND c.relname = 'chunk_embeddings' AND a.attname = 'embedding' AND NOT a.attisdropped
+      ) AS embedding_storage_type
+      ,has_table_privilege('learnspace_worker', 'catalog.collection_sections', 'INSERT')
+       AND has_table_privilege('learnspace_worker', 'catalog.collection_items', 'INSERT') AS worker_can_publish_collections
   `;
   await requireCondition(privilegeRows[0]?.app_can_read_solutions === false, "application role can read hidden exercise solutions");
   await requireCondition(privilegeRows[0]?.app_can_read_tests === false, "application role can read hidden test bundles");
   await requireCondition(privilegeRows[0]?.ai_can_read_tests === false, "AI role can read hidden test bundles");
   await requireCondition(privilegeRows[0]?.app_can_update_execution === false, "application role can forge execution results");
-  await requireCondition(privilegeRows[0]?.app_can_insert_execution === true, "application role cannot enqueue executions");
+  await requireCondition(privilegeRows[0]?.app_can_insert_execution === false, "application role can insert execution rows directly");
+  await requireCondition(privilegeRows[0]?.app_can_enqueue_execution === true, "application role cannot enqueue executions through the trusted boundary");
   await requireCondition(privilegeRows[0]?.runner_can_read_tests === true, "runner role cannot read execution fixtures");
   await requireCondition(privilegeRows[0]?.runner_can_update_execution === true, "runner role cannot update execution results");
+  await requireCondition(privilegeRows[0]?.runner_can_update_execution_result === true, "runner role cannot update execution result columns");
   await requireCondition(privilegeRows[0]?.worker_can_update_events === false, "worker role can mutate append-only activity events");
+  await requireCondition(privilegeRows[0]?.app_can_update_outbox === false, "application role can mutate outbox delivery state");
+  await requireCondition(privilegeRows[0]?.worker_can_update_outbox_status === true, "worker role cannot claim outbox delivery state");
+  await requireCondition(privilegeRows[0]?.app_can_update_mastery === false, "application role can mutate append-only mastery signals");
+  await requireCondition(privilegeRows[0]?.ai_can_update_mastery === false, "AI role can mutate append-only mastery signals");
+  await requireCondition(privilegeRows[0]?.app_can_create_public_schema === false, "application role can create objects in public schema");
+  await requireCondition(privilegeRows[0]?.app_can_use_vector === true, "application role cannot use vector types");
+  await requireCondition(privilegeRows[0]?.app_can_execute_vector_distance === true, "application role cannot execute vector distance functions");
+  await requireCondition(privilegeRows[0]?.runtime_vector_roles === "5", "runtime roles do not have the required vector privileges");
+  await requireCondition(privilegeRows[0]?.embedding_storage_type === "vector(1536)", "physical embedding storage is not vector(1536)");
+  await requireCondition(privilegeRows[0]?.worker_can_publish_collections === true, "worker role cannot publish collection content");
+
+  const longIdentifiers = await count(`
+    SELECT count(*)::text AS count
+    FROM (
+      SELECT conname::text AS name FROM pg_constraint
+      UNION ALL
+      SELECT indexrelname::text AS name FROM pg_stat_user_indexes
+    ) AS identifiers
+    WHERE length(name) > 63
+  `);
+  await requireCondition(longIdentifiers === 0, `found ${longIdentifiers} PostgreSQL identifiers longer than 63 bytes`);
 
   const invalidCurrentVersions = await count(`
     SELECT count(*)::text AS count

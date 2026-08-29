@@ -9,7 +9,7 @@ export const collections = catalogSchema.table(
   "collections",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "cascade" }),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "restrict" }),
     kind: text("kind").notNull(),
     slug: text("slug"),
     visibility: resourceVisibility("visibility").notNull().default("private"),
@@ -32,7 +32,7 @@ export const collectionSections = catalogSchema.table(
   "collection_sections",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
     description: text("description"),
     position: integer("position").notNull(),
@@ -45,7 +45,7 @@ export const collectionItems = catalogSchema.table(
   "collection_items",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    sectionId: uuid("section_id").notNull().references(() => collectionSections.id, { onDelete: "cascade" }),
+    sectionId: uuid("section_id").notNull().references(() => collectionSections.id, { onDelete: "restrict" }),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     position: integer("position").notNull(),
     required: boolean("required").notNull().default(true),
@@ -64,9 +64,9 @@ export const collectionEnrollments = catalogSchema.table(
   "collection_enrollments",
   {
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("active"),
-    currentItemId: uuid("current_item_id").references(() => collectionItems.id, { onDelete: "set null" }),
+    currentItemId: uuid("current_item_id").references(() => collectionItems.id, { onDelete: "restrict" }),
     progressPct: real("progress_pct").notNull().default(0),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     completedAt: timestamp("completed_at", { withTimezone: true }),

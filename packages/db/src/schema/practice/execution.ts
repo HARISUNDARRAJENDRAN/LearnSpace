@@ -10,7 +10,7 @@ export const testBundles = practiceSchema.table(
   "test_bundles",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    exerciseVersionId: uuid("exercise_version_id").notNull().references(() => exerciseVersions.id, { onDelete: "cascade" }),
+    exerciseVersionId: uuid("exercise_version_id").notNull().references(() => exerciseVersions.id, { onDelete: "restrict" }),
     kind: text("kind").notNull(),
     objectKey: text("object_key").notNull(),
     sha256: char("sha256", { length: 64 }).notNull(),
@@ -32,7 +32,7 @@ export const executionRuns = practiceSchema.table(
   "execution_runs",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "cascade" }),
+    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "restrict" }),
     codeSnapshotId: uuid("code_snapshot_id").notNull().references(() => codeSnapshots.id, { onDelete: "restrict" }),
     testBundleId: uuid("test_bundle_id").notNull().references(() => testBundles.id, { onDelete: "restrict" }),
     requestId: uuid("request_id").notNull(),
@@ -76,7 +76,7 @@ export const observerDiagnostics = practiceSchema.table(
   "observer_diagnostics",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "cascade" }),
+    attemptId: uuid("attempt_id").notNull().references(() => exerciseAttempts.id, { onDelete: "restrict" }),
     executionRunId: uuid("execution_run_id").references(() => executionRuns.id, { onDelete: "set null" }),
     codeSnapshotId: uuid("code_snapshot_id").notNull().references(() => codeSnapshots.id, { onDelete: "restrict" }),
     conceptId: uuid("concept_id").references(() => concepts.id, { onDelete: "set null" }),

@@ -38,7 +38,7 @@ export const userLearningDaily = projectionSchema.table(
 export const sessionSummary = projectionSchema.table(
   "session_summary",
   {
-    studySessionId: uuid("study_session_id").primaryKey().references(() => studySessions.id, { onDelete: "cascade" }),
+    studySessionId: uuid("study_session_id").primaryKey().references(() => studySessions.id, { onDelete: "restrict" }),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
     resourceCount: integer("resource_count").notNull(),
     questionCount: integer("question_count").notNull(),

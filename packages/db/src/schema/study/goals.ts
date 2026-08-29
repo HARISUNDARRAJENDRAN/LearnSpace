@@ -9,7 +9,7 @@ export const learningGoals = studySchema.table(
   "learning_goals",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
     primaryConceptId: uuid("primary_concept_id").references(() => concepts.id, { onDelete: "set null" }),
     title: text("title").notNull(),
     intent: text("intent"),

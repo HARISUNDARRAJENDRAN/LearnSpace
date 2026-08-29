@@ -9,8 +9,8 @@ export const recommendationRuns = discoverySchema.table(
   "recommendation_runs",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "set null" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
     surface: text("surface").notNull(),
     queryText: text("query_text"),
     strategyVersion: text("strategy_version").notNull(),
@@ -24,6 +24,12 @@ export const recommendationRuns = discoverySchema.table(
   (table) => [
     index("recommendation_runs_user_created_idx").on(table.userId, table.createdAt.desc()),
     index("recommendation_runs_surface_created_idx").on(table.surface, table.createdAt.desc()),
+    uniqueIndex("recommendation_runs_user_id_uq").on(table.userId, table.id),
+    foreignKey({
+      name: "recommendation_runs_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -31,7 +37,7 @@ export const recommendationCandidates = discoverySchema.table(
   "recommendation_candidates",
   {
     recommendationRunId: uuid("recommendation_run_id").notNull(),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     candidateRank: integer("candidate_rank").notNull(),
     finalRank: integer("final_rank"),
     score: real("score").notNull(),
@@ -53,7 +59,7 @@ export const recommendationCandidates = discoverySchema.table(
       name: "recommendation_candidates_run_fkey",
       columns: [table.recommendationRunId],
       foreignColumns: [recommendationRuns.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
   ],
 );
 
@@ -62,8 +68,8 @@ export const recommendationImpressions = discoverySchema.table(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     recommendationRunId: uuid("recommendation_run_id").notNull(),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     position: integer("position").notNull(),
     surface: text("surface").notNull(),
     shownAt: timestamp("shown_at", { withTimezone: true }).notNull().defaultNow(),
@@ -73,11 +79,22 @@ export const recommendationImpressions = discoverySchema.table(
   (table) => [
     uniqueIndex("recommendation_impressions_run_resource_position_uq").on(table.recommendationRunId, table.resourceId, table.position),
     index("recommendation_impressions_user_shown_idx").on(table.userId, table.shownAt.desc()),
+    uniqueIndex("recommendation_impressions_id_user_resource_uq").on(table.id, table.userId, table.resourceId),
     foreignKey({
       name: "recommendation_impressions_run_fkey",
       columns: [table.recommendationRunId],
       foreignColumns: [recommendationRuns.id],
-    }).onDelete("cascade"),
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "recommendation_impressions_run_user_fkey",
+      columns: [table.recommendationRunId, table.userId],
+      foreignColumns: [recommendationRuns.id, recommendationRuns.userId],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "recommendation_impressions_run_resource_fkey",
+      columns: [table.recommendationRunId, table.resourceId],
+      foreignColumns: [recommendationCandidates.recommendationRunId, recommendationCandidates.resourceId],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -86,8 +103,8 @@ export const discoveryInteractions = discoverySchema.table(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     impressionId: uuid("impression_id"),
-    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
     action: text("action").notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     correlationId: uuid("correlation_id"),
@@ -100,6 +117,11 @@ export const discoveryInteractions = discoverySchema.table(
       name: "discovery_interactions_impression_fkey",
       columns: [table.impressionId],
       foreignColumns: [recommendationImpressions.id],
-    }).onDelete("set null"),
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "discovery_interactions_impression_context_fkey",
+      columns: [table.impressionId, table.userId, table.resourceId],
+      foreignColumns: [recommendationImpressions.id, recommendationImpressions.userId, recommendationImpressions.resourceId],
+    }).onDelete("restrict"),
   ],
 );

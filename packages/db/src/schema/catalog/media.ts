@@ -3,7 +3,7 @@ import { catalogSchema } from "../namespaces.js";
 import { resources } from "./resources.js";
 
 export const videoDetails = catalogSchema.table("video_details", {
-  resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "cascade" }),
+  resourceId: uuid("resource_id").primaryKey().references(() => resources.id, { onDelete: "restrict" }),
   youtubeId: text("youtube_id").notNull().unique(),
   channelId: text("channel_id"),
   channelTitle: text("channel_title"),
@@ -21,7 +21,7 @@ export const videoDetails = catalogSchema.table("video_details", {
 export const videoMetricSnapshots = catalogSchema.table(
   "video_metric_snapshots",
   {
-    resourceId: uuid("resource_id").notNull().references(() => videoDetails.resourceId, { onDelete: "cascade" }),
+    resourceId: uuid("resource_id").notNull().references(() => videoDetails.resourceId, { onDelete: "restrict" }),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     viewCount: bigint("view_count", { mode: "number" }),
     likeCount: bigint("like_count", { mode: "number" }),

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, index, integer, jsonb, numeric, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { char, foreignKey, index, integer, jsonb, numeric, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { agentSchema } from "../namespaces.js";
 import { agentRuns, agentSteps } from "./runs.js";
 
@@ -7,8 +7,8 @@ export const toolInvocations = agentSchema.table(
   "tool_invocations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
-    agentStepId: uuid("agent_step_id").notNull().references(() => agentSteps.id, { onDelete: "cascade" }),
+    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "restrict" }),
+    agentStepId: uuid("agent_step_id").notNull().references(() => agentSteps.id, { onDelete: "restrict" }),
     toolName: text("tool_name").notNull(),
     toolVersion: text("tool_version"),
     status: text("status").notNull(),
@@ -26,6 +26,11 @@ export const toolInvocations = agentSchema.table(
   (table) => [
     index("tool_invocations_run_created_idx").on(table.agentRunId, table.createdAt),
     index("tool_invocations_name_status_created_idx").on(table.toolName, table.status, table.createdAt),
+    foreignKey({
+      name: "tool_invocations_run_step_fkey",
+      columns: [table.agentRunId, table.agentStepId],
+      foreignColumns: [agentSteps.agentRunId, agentSteps.id],
+    }).onDelete("restrict"),
   ],
 );
 
@@ -33,8 +38,8 @@ export const modelInvocations = agentSchema.table(
   "model_invocations",
   {
     id: uuid("id").defaultRandom().primaryKey(),
-    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "cascade" }),
-    agentStepId: uuid("agent_step_id").references(() => agentSteps.id, { onDelete: "set null" }),
+    agentRunId: uuid("agent_run_id").notNull().references(() => agentRuns.id, { onDelete: "restrict" }),
+    agentStepId: uuid("agent_step_id").references(() => agentSteps.id, { onDelete: "restrict" }),
     provider: text("provider").notNull(),
     modelName: text("model_name").notNull(),
     purpose: text("purpose").notNull(),
@@ -58,5 +63,10 @@ export const modelInvocations = agentSchema.table(
   (table) => [
     index("model_invocations_run_created_idx").on(table.agentRunId, table.createdAt),
     index("model_invocations_provider_model_created_idx").on(table.provider, table.modelName, table.createdAt),
+    foreignKey({
+      name: "model_invocations_run_step_fkey",
+      columns: [table.agentRunId, table.agentStepId],
+      foreignColumns: [agentSteps.agentRunId, agentSteps.id],
+    }).onDelete("restrict"),
   ],
 );

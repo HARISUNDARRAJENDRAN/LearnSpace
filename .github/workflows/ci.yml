@@ -40,16 +40,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm build
       - run: pnpm db:check
       - run: docker compose -f infra/postgres/docker-compose.yml up -d --wait
       - run: pnpm db:migrate
       - run: pnpm db:verify
       - run: pnpm db:seed:dev
       - run: pnpm db:test
-      - run: pnpm db:ledger > ledger.before
+      - run: pnpm db:ledger > before
       - run: pnpm db:migrate
       - run: pnpm db:verify
-      - run: pnpm db:ledger > ledger.after
-      - run: diff -u ledger.before ledger.after
+      - run: pnpm db:ledger > after
+      - run: diff -u before after
       - if: always()
         run: docker compose -f infra/postgres/docker-compose.yml down -v
