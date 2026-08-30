@@ -7,6 +7,7 @@ import {
   verifyVerificationToken,
 } from "../lib/auth/crypto";
 import { safeRedirectPath } from "../lib/auth/validation";
+import { readJson } from "../lib/auth/request";
 
 const secret = "test-auth-secret-that-is-long-enough-for-hmac";
 
@@ -50,4 +51,11 @@ test("redirect targets remain local application paths", () => {
   assert.equal(safeRedirectPath("//example.com"), "/app");
   assert.equal(safeRedirectPath("/\\\\example.com"), "/app");
   assert.equal(safeRedirectPath("/api/auth/session"), "/app");
+});
+
+test("malformed JSON is reported as a client error", async () => {
+  await assert.rejects(
+    () => readJson(new Request("http://localhost", { method: "POST", body: "{" })),
+    { code: "INVALID_JSON", status: 400 },
+  );
 });

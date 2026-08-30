@@ -23,8 +23,9 @@ jobs:
   database:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
+      DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
       DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:55432/learnspace
+      DATABASE_AUTH_URL: postgres://learnspace_auth:learnspace_auth@localhost:55432/learnspace
       DATABASE_APP_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
       DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@localhost:55432/learnspace
       DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@localhost:55432/learnspace

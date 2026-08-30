@@ -1,4 +1,13 @@
 import type { SessionContext } from "./repository";
+import { AuthError } from "./errors";
+
+export async function readJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    throw new AuthError("INVALID_JSON", "Send a valid JSON request body.");
+  }
+}
 
 export function getSessionContext(request: Request): SessionContext {
   const userAgent = request.headers.get("user-agent");

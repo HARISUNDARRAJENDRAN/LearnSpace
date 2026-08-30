@@ -4,7 +4,7 @@ const nextConfig = {
   webpack(config) {
     config.resolve.extensionAlias = {
       ...config.resolve.extensionAlias,
-      ".js": [".ts", ".tsx", ".js"],
+      ".js": [".js", ".ts", ".tsx"],
     };
     return config;
   },

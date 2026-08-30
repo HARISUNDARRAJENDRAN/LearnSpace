@@ -1,9 +1,9 @@
 import { defineConfig } from "drizzle-kit";
 
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required for Drizzle Kit");
+  throw new Error("DATABASE_MIGRATOR_URL is required for Drizzle Kit");
 }
 
 export default defineConfig({

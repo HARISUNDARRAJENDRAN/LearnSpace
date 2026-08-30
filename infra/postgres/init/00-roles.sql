@@ -8,6 +8,9 @@ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'learnspace_app') THEN
     CREATE ROLE learnspace_app LOGIN PASSWORD 'learnspace_app' NOSUPERUSER NOCREATEDB NOCREATEROLE;
   END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'learnspace_auth') THEN
+    CREATE ROLE learnspace_auth LOGIN PASSWORD 'learnspace_auth' NOSUPERUSER NOCREATEDB NOCREATEROLE;
+  END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'learnspace_ai') THEN
     CREATE ROLE learnspace_ai LOGIN PASSWORD 'learnspace_ai' NOSUPERUSER NOCREATEDB NOCREATEROLE;
   END IF;
@@ -24,12 +27,14 @@ END
 $$;
 
 ALTER DATABASE learnspace OWNER TO learnspace_migrator;
-GRANT CONNECT ON DATABASE learnspace TO learnspace_app, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
+GRANT CONNECT ON DATABASE learnspace TO learnspace_app, learnspace_auth, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 
 ALTER ROLE learnspace_app SET statement_timeout = '3s';
 ALTER ROLE learnspace_app SET lock_timeout = '500ms';
+ALTER ROLE learnspace_auth SET statement_timeout = '3s';
+ALTER ROLE learnspace_auth SET lock_timeout = '500ms';
 ALTER ROLE learnspace_ai SET statement_timeout = '5s';
 ALTER ROLE learnspace_worker SET statement_timeout = '30s';
 ALTER ROLE learnspace_runner SET statement_timeout = '10s';

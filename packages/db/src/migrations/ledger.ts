@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import postgres from "postgres";
 
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required");
+  throw new Error("DATABASE_MIGRATOR_URL is required");
 }
 
 const sql = postgres(databaseUrl, {

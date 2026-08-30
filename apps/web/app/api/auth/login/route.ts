@@ -4,7 +4,7 @@ import { verifyPassword } from "../../../../lib/auth/crypto";
 import { setSessionCookie } from "../../../../lib/auth/cookies";
 import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
 import { createSession, findUserByEmail } from "../../../../lib/auth/repository";
-import { getSessionContext } from "../../../../lib/auth/request";
+import { getSessionContext, readJson } from "../../../../lib/auth/request";
 import { safeRedirectPath, loginInputSchema } from "../../../../lib/auth/validation";
 
 export const runtime = "nodejs";
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const input = loginInputSchema.parse(await request.json());
+    const input = loginInputSchema.parse(await readJson(request));
     const user = await findUserByEmail(input.email);
     if (!user?.passwordHash || !(await verifyPassword(input.password, user.passwordHash))) {
       throw new AuthError("INVALID_CREDENTIALS", "Email or password is incorrect.", 401);

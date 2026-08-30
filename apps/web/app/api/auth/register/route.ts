@@ -8,6 +8,7 @@ import { createVerificationToken, hashPassword } from "../../../../lib/auth/cryp
 import { sendVerificationEmail } from "../../../../lib/auth/email";
 import { AuthError, authErrorResponse, isUniqueViolation } from "../../../../lib/auth/errors";
 import { createEmailUser, findUserByEmail } from "../../../../lib/auth/repository";
+import { readJson } from "../../../../lib/auth/request";
 import { safeRedirectPath, registerInputSchema } from "../../../../lib/auth/validation";
 
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const input = registerInputSchema.parse(await request.json());
+    const input = registerInputSchema.parse(await readJson(request));
     const secret = getAuthSecret();
     assertEmailDeliveryConfigured();
 

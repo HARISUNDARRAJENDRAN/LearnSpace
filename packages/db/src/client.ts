@@ -6,7 +6,7 @@ import * as schema from "./schema/index.js";
 
 const databaseEnv = z.object({
   DATABASE_URL: z.string().url(),
-  DATABASE_AUTH_URL: z.string().url().optional(),
+  DATABASE_AUTH_URL: z.string().url(),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
   DB_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(10),
   DB_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().nonnegative().default(20),
@@ -33,10 +33,7 @@ const clientOptions = {
 };
 
 export const sqlClient = postgres(env.DATABASE_URL, clientOptions);
-const authDatabaseUrl = env.DATABASE_AUTH_URL ?? env.DATABASE_URL;
-export const authSqlClient = authDatabaseUrl === env.DATABASE_URL
-  ? sqlClient
-  : postgres(authDatabaseUrl, clientOptions);
+export const authSqlClient = postgres(env.DATABASE_AUTH_URL, clientOptions);
 
 export const db = drizzle(sqlClient, {
   schema,
@@ -65,6 +62,6 @@ export async function withUserTransaction<T>(
 export async function closeDb(): Promise<void> {
   await Promise.all([
     sqlClient.end({ timeout: 5 }),
-    authSqlClient === sqlClient ? Promise.resolve() : authSqlClient.end({ timeout: 5 }),
+    authSqlClient.end({ timeout: 5 }),
   ]);
 }

@@ -4,10 +4,10 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import postgres from "postgres";
 
-const databaseUrl = process.env.DATABASE_URL;
+const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
 
 if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required");
+  throw new Error("DATABASE_MIGRATOR_URL is required");
 }
 
 const sql = postgres(databaseUrl, {
@@ -340,12 +340,12 @@ try {
   const roleCount = await count(`
     SELECT count(*)::text AS count
     FROM pg_roles
-    WHERE rolname IN ('learnspace_migrator', 'learnspace_app', 'learnspace_ai', 'learnspace_worker', 'learnspace_runner', 'learnspace_readonly')
+    WHERE rolname IN ('learnspace_migrator', 'learnspace_app', 'learnspace_auth', 'learnspace_ai', 'learnspace_worker', 'learnspace_runner', 'learnspace_readonly')
       AND NOT rolsuper
       AND NOT rolcreatedb
       AND NOT rolcreaterole
   `);
-  await requireCondition(roleCount === 6, "least-privilege database roles are incomplete");
+  await requireCondition(roleCount === 7, "least-privilege database roles are incomplete");
 
   const views = await sql<NameRow[]>`
     SELECT schemaname || '.' || viewname AS name

@@ -15,6 +15,9 @@ drizzle-meta/
 artifacts/
 
 # TypeScript source directories must not collect compiler output.
-apps/web/**/*.js
-apps/web/**/*.js.map
-apps/web/**/*.d.ts.map
+**/*.js
+**/*.js.map
+**/*.d.ts
+**/*.d.ts.map
+.vercel
+.env*.local

@@ -4,8 +4,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
-GRANT USAGE ON SCHEMA public TO learnspace_app, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
-GRANT USAGE ON TYPE public.vector TO learnspace_app, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
+GRANT USAGE ON SCHEMA public TO learnspace_migrator, learnspace_app, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
+GRANT USAGE ON TYPE public.vector TO learnspace_migrator, learnspace_app, learnspace_ai, learnspace_worker, learnspace_runner, learnspace_readonly;
 
 DO $$
 DECLARE

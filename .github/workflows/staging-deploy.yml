@@ -1,0 +1,45 @@
+name: Staging deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: learnspace-staging
+  cancel-in-progress: false
+
+jobs:
+  migrate-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      DB_POOL_MAX: "1"
+      DB_CONNECT_TIMEOUT_SECONDS: "10"
+      DB_IDLE_TIMEOUT_SECONDS: "20"
+      DB_MAX_LIFETIME_SECONDS: "300"
+      DB_PREPARED_STATEMENTS: "false"
+      DB_STATEMENT_TIMEOUT_MS: "3000"
+      DB_LOCK_TIMEOUT_MS: "500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm db:check
+      - run: pnpm db:migrate
+      - run: pnpm db:verify
+      - run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --token "$VERCEL_TOKEN" --cwd apps/web
+      - run: pnpm dlx vercel@51.7.0 build --prod --token "$VERCEL_TOKEN" --cwd apps/web
+      - run: pnpm dlx vercel@51.7.0 deploy --prebuilt --prod --yes --token "$VERCEL_TOKEN" --cwd apps/web
