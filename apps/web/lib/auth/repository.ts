@@ -1,5 +1,11 @@
-import { authAccounts, authSessions, userSettings, users } from "@learnspace/db/schema";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import {
+  authAccounts,
+  authChallenges,
+  authSessions,
+  userSettings,
+  users,
+} from "@learnspace/db/schema";
+import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   createOpaqueToken,
@@ -28,10 +34,11 @@ export type PublicUser = Pick<
 
 export async function findUserByEmail(email: string): Promise<UserRecord | null> {
   const database = await getAuthDatabase();
+  const normalizedEmail = email.trim().toLowerCase();
   const rows = await database
     .select()
     .from(users)
-    .where(sql`lower(${users.email}) = ${email}`)
+    .where(sql`lower(${users.email}) = ${normalizedEmail}`)
     .limit(1);
   return rows[0] ?? null;
 }
@@ -88,99 +95,244 @@ export async function upsertGoogleUser(input: {
   profile: Record<string, unknown>;
 }): Promise<UserRecord> {
   const database = await getAuthDatabase();
-  const accountRows = await database
-    .select({ id: authAccounts.id, userId: authAccounts.userId })
-    .from(authAccounts)
-    .where(
-      and(
-        eq(authAccounts.provider, "google"),
-        eq(authAccounts.providerAccountId, input.providerAccountId),
-      ),
-    )
-    .limit(1);
-  const existingAccount = accountRows[0];
+  const email = input.email.trim().toLowerCase();
+  const providerLock = `learnspace:google-account:${input.providerAccountId}`;
+  const emailLock = `learnspace:google-email:${email}`;
 
-  if (existingAccount) {
-    const user = await findUserById(existingAccount.userId);
-    if (!user) {
-      throw new Error("Google account is linked to a missing user");
+  return database.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${providerLock}))`);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${emailLock}))`);
+
+    const accountRows = await tx
+      .select({ id: authAccounts.id, userId: authAccounts.userId })
+      .from(authAccounts)
+      .where(
+        and(
+          eq(authAccounts.provider, "google"),
+          eq(authAccounts.providerAccountId, input.providerAccountId),
+        ),
+      )
+      .limit(1);
+    const existingAccount = accountRows[0];
+    let user: UserRecord | null = null;
+
+    if (existingAccount) {
+      const userRows = await tx.select().from(users).where(eq(users.id, existingAccount.userId)).limit(1);
+      user = userRows[0] ?? null;
+      if (!user) {
+        throw new Error("Google account is linked to a missing user");
+      }
+    } else {
+      const userRows = await tx
+        .select()
+        .from(users)
+        .where(sql`lower(${users.email}) = ${email}`)
+        .limit(1);
+      user = userRows[0] ?? null;
     }
 
-    await database
-      .update(users)
-      .set({
-        emailVerified: true,
-        displayName: input.displayName ?? user.displayName,
-        avatarUrl: input.avatarUrl ?? user.avatarUrl,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, user.id));
-    await database
-      .update(authAccounts)
-      .set({
-        providerEmail: input.email,
-        emailVerified: true,
-        profile: input.profile,
-        updatedAt: new Date(),
-      })
-      .where(eq(authAccounts.id, existingAccount.id));
-    return (await findUserById(user.id)) ?? user;
-  }
-
-  const existingUser = await findUserByEmail(input.email);
-  const userId = existingUser?.id ?? randomUUID();
-
-  if (existingUser) {
-    await database
-      .update(users)
-      .set({
-        emailVerified: true,
-        displayName: input.displayName ?? existingUser.displayName,
-        avatarUrl: input.avatarUrl ?? existingUser.avatarUrl,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, existingUser.id));
-  } else {
-    await database.transaction(async (tx) => {
+    const userId = user?.id ?? randomUUID();
+    if (!user) {
       await tx.insert(users).values({
         id: userId,
-        email: input.email,
+        email,
         emailVerified: true,
         passwordHash: null,
         status: "active",
-        displayName: input.displayName ?? input.email.split("@")[0],
+        displayName: input.displayName ?? email.split("@")[0],
         avatarUrl: input.avatarUrl ?? null,
         locale: "en",
         timezone: "UTC",
         subscriptionTier: "free",
       });
       await tx.insert(userSettings).values({ userId });
-    });
-  }
+    }
 
-  await database.insert(authAccounts).values({
-    userId,
-    provider: "google",
-    providerAccountId: input.providerAccountId,
-    providerEmail: input.email,
-    emailVerified: true,
-    profile: input.profile,
+    const now = new Date();
+    const invalidatePassword = Boolean(user && !user.emailVerified && user.passwordHash);
+    await tx
+      .update(users)
+      .set({
+        emailVerified: true,
+        ...(invalidatePassword ? { passwordHash: null } : {}),
+        displayName: input.displayName ?? user?.displayName ?? email.split("@")[0],
+        avatarUrl: input.avatarUrl ?? user?.avatarUrl ?? null,
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId));
+
+    if (invalidatePassword) {
+      await tx
+        .update(authAccounts)
+        .set({ emailVerified: true, updatedAt: now })
+        .where(
+          and(
+            eq(authAccounts.userId, userId),
+            eq(authAccounts.provider, "email"),
+          ),
+        );
+    }
+
+    if (existingAccount) {
+      await tx
+        .update(authAccounts)
+        .set({
+          providerEmail: email,
+          emailVerified: true,
+          profile: input.profile,
+          updatedAt: now,
+        })
+        .where(eq(authAccounts.id, existingAccount.id));
+    } else {
+      await tx.insert(authAccounts).values({
+        userId,
+        provider: "google",
+        providerAccountId: input.providerAccountId,
+        providerEmail: email,
+        emailVerified: true,
+        profile: input.profile,
+      });
+    }
+
+    const updatedRows = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
+    const updatedUser = updatedRows[0];
+    if (!updatedUser) {
+      throw new Error("Google user could not be loaded");
+    }
+    return updatedUser;
   });
-
-  const user = await findUserById(userId);
-  if (!user) {
-    throw new Error("Google user could not be loaded");
-  }
-  return user;
 }
 
-export async function markEmailVerified(userId: string): Promise<UserRecord | null> {
+export type AuthChallengePurpose = "email_verification" | "password_reset";
+
+export async function createAuthChallenge(
+  userId: string,
+  purpose: AuthChallengePurpose,
+  expiresAt: Date,
+): Promise<string> {
   const database = await getAuthDatabase();
-  await database
-    .update(users)
-    .set({ emailVerified: true, updatedAt: new Date() })
-    .where(eq(users.id, userId));
-  return findUserById(userId);
+  const token = createOpaqueToken();
+  const now = new Date();
+
+  await database.transaction(async (tx) => {
+    const lockKey = `learnspace:auth-challenge:${userId}:${purpose}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}))`);
+    await tx
+      .update(authChallenges)
+      .set({ supersededAt: now })
+      .where(
+        and(
+          eq(authChallenges.userId, userId),
+          eq(authChallenges.purpose, purpose),
+          isNull(authChallenges.consumedAt),
+          isNull(authChallenges.supersededAt),
+        ),
+      );
+    await tx.insert(authChallenges).values({
+      userId,
+      purpose,
+      tokenHash: hashToken(token),
+      expiresAt,
+    });
+  });
+
+  return token;
+}
+
+export async function consumeEmailVerificationChallenge(
+  token: string,
+): Promise<{ user: UserRecord; alreadyVerified: boolean } | null> {
+  const database = await getAuthDatabase();
+  const now = new Date();
+
+  return database.transaction(async (tx) => {
+    const challengeRows = await tx
+      .update(authChallenges)
+      .set({ consumedAt: now })
+      .where(
+        and(
+          eq(authChallenges.tokenHash, hashToken(token)),
+          eq(authChallenges.purpose, "email_verification"),
+          isNull(authChallenges.consumedAt),
+          isNull(authChallenges.supersededAt),
+          gt(authChallenges.expiresAt, now),
+        ),
+      )
+      .returning({ userId: authChallenges.userId });
+    const challenge = challengeRows[0];
+    if (!challenge) {
+      return null;
+    }
+
+    const userRows = await tx.select().from(users).where(eq(users.id, challenge.userId)).limit(1);
+    const user = userRows[0];
+    if (!user) {
+      return null;
+    }
+
+    await tx
+      .update(users)
+      .set({ emailVerified: true, updatedAt: now })
+      .where(eq(users.id, user.id));
+    await tx
+      .update(authAccounts)
+      .set({ emailVerified: true, updatedAt: now })
+      .where(
+        and(
+          eq(authAccounts.userId, user.id),
+          eq(authAccounts.provider, "email"),
+        ),
+      );
+    const verifiedRows = await tx.select().from(users).where(eq(users.id, user.id)).limit(1);
+    const verifiedUser = verifiedRows[0];
+    if (!verifiedUser) {
+      return null;
+    }
+    return { user: verifiedUser, alreadyVerified: user.emailVerified };
+  });
+}
+
+export async function resetPasswordWithChallenge(
+  token: string,
+  passwordHash: string,
+): Promise<boolean> {
+  const database = await getAuthDatabase();
+  const now = new Date();
+
+  return database.transaction(async (tx) => {
+    const challengeRows = await tx
+      .update(authChallenges)
+      .set({ consumedAt: now })
+      .where(
+        and(
+          eq(authChallenges.tokenHash, hashToken(token)),
+          eq(authChallenges.purpose, "password_reset"),
+          isNull(authChallenges.consumedAt),
+          isNull(authChallenges.supersededAt),
+          gt(authChallenges.expiresAt, now),
+        ),
+      )
+      .returning({ userId: authChallenges.userId });
+    const challenge = challengeRows[0];
+    if (!challenge) {
+      return false;
+    }
+
+    await tx
+      .update(users)
+      .set({ passwordHash, updatedAt: now })
+      .where(eq(users.id, challenge.userId));
+    await tx
+      .update(authSessions)
+      .set({ revokedAt: now, revocationReason: "password_reset" })
+      .where(
+        and(
+          eq(authSessions.userId, challenge.userId),
+          isNull(authSessions.revokedAt),
+        ),
+      );
+    return true;
+  });
 }
 
 export async function createSession(
@@ -234,7 +386,15 @@ export async function findSessionByToken(
   await database
     .update(authSessions)
     .set({ lastSeenAt: new Date() })
-    .where(eq(authSessions.id, session.id));
+    .where(
+      and(
+        eq(authSessions.id, session.id),
+        or(
+          isNull(authSessions.lastSeenAt),
+          lt(authSessions.lastSeenAt, sql`now() - interval '5 minutes'`),
+        ),
+      ),
+    );
 
   return { session, user };
 }

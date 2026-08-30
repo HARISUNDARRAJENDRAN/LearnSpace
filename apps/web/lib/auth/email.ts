@@ -9,11 +9,12 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#039;");
 }
 
-export async function sendVerificationEmail(input: {
+async function deliverEmail(input: {
   email: string;
-  displayName: string;
-  verificationUrl: string;
-}): Promise<{ verificationUrl?: string }> {
+  subject: string;
+  text: string;
+  html: string;
+}): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
 
@@ -27,18 +28,9 @@ export async function sendVerificationEmail(input: {
       body: JSON.stringify({
         from,
         to: [input.email],
-        subject: "Verify your LearnSpace email",
-        text:
-          "Hi " +
-          input.displayName +
-          ",\n\nVerify your LearnSpace email here:\n" +
-          input.verificationUrl,
-        html:
-          "<p>Hi " +
-          escapeHtml(input.displayName) +
-          ",</p><p>Verify your LearnSpace email to start learning.</p><p><a href=\"" +
-          escapeHtml(input.verificationUrl) +
-          "\">Verify email</a></p>",
+        subject: input.subject,
+        text: input.text,
+        html: input.html,
       }),
     });
 
@@ -50,7 +42,7 @@ export async function sendVerificationEmail(input: {
       );
     }
 
-    return {};
+    return true;
   }
 
   if (process.env.NODE_ENV === "production") {
@@ -61,8 +53,59 @@ export async function sendVerificationEmail(input: {
     );
   }
 
-  console.info("[auth] development verification URL: " + input.verificationUrl);
-  return process.env.AUTH_EXPOSE_VERIFICATION_LINK === "false"
+  return false;
+}
+
+function exposeDevelopmentLink(): boolean {
+  return process.env.NODE_ENV !== "production" && process.env.AUTH_EXPOSE_VERIFICATION_LINK !== "false";
+}
+
+export async function sendVerificationEmail(input: {
+  email: string;
+  displayName: string;
+  verificationUrl: string;
+}): Promise<{ verificationUrl?: string }> {
+  const delivered = await deliverEmail({
+    email: input.email,
+    subject: "Verify your LearnSpace email",
+    text:
+      "Hi " +
+      input.displayName +
+      ",\n\nVerify your LearnSpace email here:\n" +
+      input.verificationUrl,
+    html:
+      "<p>Hi " +
+      escapeHtml(input.displayName) +
+      ",</p><p>Verify your LearnSpace email to start learning.</p><p><a href=\"" +
+      escapeHtml(input.verificationUrl) +
+      "\">Verify email</a></p>",
+  });
+
+  return delivered || !exposeDevelopmentLink()
     ? {}
     : { verificationUrl: input.verificationUrl };
+}
+
+export async function sendPasswordResetEmail(input: {
+  email: string;
+  displayName: string;
+  resetUrl: string;
+}): Promise<{ resetUrl?: string }> {
+  const delivered = await deliverEmail({
+    email: input.email,
+    subject: "Reset your LearnSpace password",
+    text:
+      "Hi " +
+      input.displayName +
+      ",\n\nReset your LearnSpace password here:\n" +
+      input.resetUrl,
+    html:
+      "<p>Hi " +
+      escapeHtml(input.displayName) +
+      ",</p><p>Reset your LearnSpace password using this link.</p><p><a href=\"" +
+      escapeHtml(input.resetUrl) +
+      "\">Reset password</a></p>",
+  });
+
+  return delivered || !exposeDevelopmentLink() ? {} : { resetUrl: input.resetUrl };
 }

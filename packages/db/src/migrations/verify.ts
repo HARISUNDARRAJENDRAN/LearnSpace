@@ -29,6 +29,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "identity.auth_accounts": ["identity_auth_accounts_select_policy", "identity_auth_accounts_insert_policy", "identity_auth_accounts_update_policy", "identity_auth_accounts_delete_policy"],
   "identity.auth_sessions": ["identity_auth_sessions_select_policy", "identity_auth_sessions_insert_policy", "identity_auth_sessions_update_policy", "identity_auth_sessions_delete_policy"],
   "identity.user_settings": ["user_settings_owner_policy"],
+  "identity.auth_challenges": ["identity_auth_challenges_auth_role_select_policy", "identity_auth_challenges_auth_role_insert_policy", "identity_auth_challenges_auth_role_update_policy"],
   "catalog.resources": ["resources_owner_or_visible_policy", "resources_owner_insert_policy", "resources_owner_update_policy", "resources_owner_delete_policy", "resources_worker_policy", "resources_worker_insert_policy", "resources_worker_update_policy"],
   "catalog.resource_versions": ["resource_versions_visible_policy", "resource_versions_worker_policy", "resource_versions_worker_insert_policy", "resource_versions_worker_update_policy"],
   "catalog.resource_assets": ["resource_assets_visible_policy", "resource_assets_worker_policy", "resource_assets_worker_insert_policy", "resource_assets_worker_update_policy"],
@@ -105,6 +106,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
 
 const requiredConstraints = [
   "auth_sessions_rotated_user_fkey",
+  "auth_challenges_user_id_users_id_fk",
   "study_sessions_goal_user_fkey",
   "study_sessions_active_resource_version_fkey",
   "study_sessions_active_version_chunk_fkey",
@@ -215,7 +217,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 79, `expected 79 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 80, `expected 80 target tables, found ${tableCount}`);
 
   const generatedFtsCount = await count(`
     SELECT count(*)::text AS count

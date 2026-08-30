@@ -3,20 +3,31 @@ import { z } from "zod";
 export class AuthError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly retryAfterSeconds: number | undefined;
 
-  constructor(code: string, message: string, status = 400) {
+  constructor(code: string, message: string, status = 400, retryAfterSeconds?: number) {
     super(message);
     this.name = "AuthError";
     this.code = code;
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
+}
+
+function responseInit(error: AuthError): ResponseInit {
+  return {
+    status: error.status,
+    ...(error.retryAfterSeconds !== undefined
+      ? { headers: { "Retry-After": String(error.retryAfterSeconds) } }
+      : {}),
+  };
 }
 
 export function authErrorResponse(error: unknown): Response {
   if (error instanceof AuthError) {
     return Response.json(
       { error: { code: error.code, message: error.message } },
-      { status: error.status },
+      responseInit(error),
     );
   }
 

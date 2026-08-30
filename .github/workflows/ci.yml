@@ -17,12 +17,14 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm build
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run build
 
   database:
     runs-on: ubuntu-latest
     env:
+      DATABASE_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
       DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
       DATABASE_ADMIN_URL: postgres://postgres:postgres@localhost:55432/learnspace
       DATABASE_AUTH_URL: postgres://learnspace_auth:learnspace_auth@localhost:55432/learnspace
@@ -40,18 +42,22 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm build
-      - run: pnpm db:check
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run build
+      - run: pnpm run db:check
       - run: docker compose -f infra/postgres/docker-compose.yml up -d --wait
-      - run: pnpm db:migrate
-      - run: pnpm db:verify
-      - run: pnpm db:seed:dev
-      - run: pnpm db:test
-      - run: pnpm db:ledger > before
-      - run: pnpm db:migrate
-      - run: pnpm db:verify
-      - run: pnpm db:ledger > after
+      - run: pnpm run db:migrate
+      - run: pnpm run db:verify
+      - run: pnpm run db:seed:dev
+      - run: pnpm run test
+      - run: pnpm run db:test
+      - run: pnpm --filter @learnspace/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @learnspace/web run test:e2e
+      - run: pnpm run db:ledger > before
+      - run: pnpm run db:migrate
+      - run: pnpm run db:verify
+      - run: pnpm run db:ledger > after
       - run: diff -u before after
       - if: always()
         run: docker compose -f infra/postgres/docker-compose.yml down -v

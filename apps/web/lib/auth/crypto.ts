@@ -1,19 +1,9 @@
 import { createHash, createHmac, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
-import { z } from "zod";
 
 const passwordKeyLength = 64;
 const passwordCost = 16_384;
 const passwordBlockSize = 8;
 const passwordParallelization = 1;
-
-const verificationPayloadSchema = z.object({
-  userId: z.string().uuid(),
-  email: z.string().email(),
-  next: z.string(),
-  exp: z.number().int().positive(),
-});
-
-export type VerificationPayload = z.infer<typeof verificationPayloadSchema>;
 
 function derivePasswordKey(password: string, salt: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -88,41 +78,4 @@ export function safeEqualText(left: string, right: string): boolean {
     leftBuffer.length === rightBuffer.length &&
     timingSafeEqual(leftBuffer, rightBuffer)
   );
-}
-
-export function createVerificationToken(
-  payload: VerificationPayload,
-  secret: string,
-): string {
-  const encodedPayload = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const signature = createHmac("sha256", secret)
-    .update(encodedPayload)
-    .digest("base64url");
-  return encodedPayload + "." + signature;
-}
-
-export function verifyVerificationToken(
-  token: string,
-  secret: string,
-): VerificationPayload | null {
-  const [encodedPayload, signature] = token.split(".");
-  if (!encodedPayload || !signature) {
-    return null;
-  }
-
-  const expectedSignature = createHmac("sha256", secret)
-    .update(encodedPayload)
-    .digest("base64url");
-  if (!safeEqualText(signature, expectedSignature)) {
-    return null;
-  }
-
-  try {
-    const payload = verificationPayloadSchema.parse(
-      JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")),
-    );
-    return payload.exp > Date.now() ? payload : null;
-  } catch {
-    return null;
-  }
 }

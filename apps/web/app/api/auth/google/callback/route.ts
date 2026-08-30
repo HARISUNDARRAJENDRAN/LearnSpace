@@ -1,6 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { getGoogleConfig, getAuthSecret } from "../../../../../lib/auth/config";
+import {
+  getGoogleConfig,
+  getGoogleOAuthEndpoints,
+  getAuthSecret,
+} from "../../../../../lib/auth/config";
 import {
   createSession,
   upsertGoogleUser,
@@ -79,7 +83,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const google = getGoogleConfig(request);
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    const endpoints = getGoogleOAuthEndpoints();
+    const tokenResponse = await fetch(endpoints.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -95,10 +100,9 @@ export async function GET(request: NextRequest) {
     }
     const tokenData = googleTokenResponseSchema.parse(await tokenResponse.json());
 
-    const profileResponse = await fetch(
-      "https://openidconnect.googleapis.com/v1/userinfo",
-      { headers: { Authorization: `Bearer ${tokenData.access_token}` } },
-    );
+    const profileResponse = await fetch(endpoints.userInfoUrl, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
     if (!profileResponse.ok) {
       throw new Error("Google profile request failed");
     }

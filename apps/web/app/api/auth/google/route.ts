@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getGoogleConfig } from "../../../../lib/auth/config";
+import { getGoogleConfig, getGoogleOAuthEndpoints } from "../../../../lib/auth/config";
 import { createOpaqueToken } from "../../../../lib/auth/crypto";
 import { setOauthStateCookie } from "../../../../lib/auth/cookies";
+import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
+import { enforceRateLimit } from "../../../../lib/auth/rate-limit";
 import { safeRedirectPath } from "../../../../lib/auth/validation";
 
 export const runtime = "nodejs";
@@ -17,11 +19,18 @@ function redirectToLogin(request: NextRequest, error?: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
+    await enforceRateLimit({
+      request,
+      bucket: "google-initiation",
+      limit: 10,
+      windowSeconds: 10 * 60,
+    });
     const google = getGoogleConfig(request);
+    const endpoints = getGoogleOAuthEndpoints();
     const state = createOpaqueToken();
     const next = safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined);
     const stateCookieValue = `${state}.${encodeURIComponent(next)}`;
-    const authorizationUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    const authorizationUrl = new URL(endpoints.authorizationUrl);
     authorizationUrl.searchParams.set("client_id", google.clientId);
     authorizationUrl.searchParams.set("redirect_uri", google.redirectUri);
     authorizationUrl.searchParams.set("response_type", "code");
@@ -32,7 +41,10 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(authorizationUrl);
     setOauthStateCookie(response, stateCookieValue);
     return response;
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthError && error.status === 429) {
+      return authErrorResponse(error);
+    }
     return redirectToLogin(request, "google-unavailable");
   }
 }

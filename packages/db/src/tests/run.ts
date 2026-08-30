@@ -115,6 +115,7 @@ async function visibleIds(database: SqlClient, userId: string | null, relation: 
 }
 
 const migrator = client(databaseUrl);
+const auth = client(roleUrl("DATABASE_AUTH_URL", "learnspace_auth"));
 const app = client(roleUrl("DATABASE_APP_URL", "learnspace_app"));
 const ai = client(roleUrl("DATABASE_AI_URL", "learnspace_ai"));
 const worker = client(roleUrl("DATABASE_WORKER_URL", "learnspace_worker"));
@@ -167,6 +168,73 @@ const tests: Array<[string, () => Promise<void>]> = [
       `;
     });
     assert.equal(crossUserAuthSessionDelete.length, 0);
+  }],
+  ["auth role has only auth privileges", async () => {
+    const [privileges] = await auth<{
+      users_select: boolean;
+      users_email_insert: boolean;
+      users_delete: boolean;
+      users_password_update: boolean;
+      users_email_update: boolean;
+      sessions_user_insert: boolean;
+      sessions_revoke_update: boolean;
+      sessions_user_update: boolean;
+      challenges_user_insert: boolean;
+      challenges_consume_update: boolean;
+      challenges_user_update: boolean;
+    }[]>`SELECT
+      has_table_privilege(current_user, 'identity.users', 'SELECT') AS users_select,
+      has_column_privilege(current_user, 'identity.users', 'email', 'INSERT') AS users_email_insert,
+      has_table_privilege(current_user, 'identity.users', 'DELETE') AS users_delete,
+      has_column_privilege(current_user, 'identity.users', 'password_hash', 'UPDATE') AS users_password_update,
+      has_column_privilege(current_user, 'identity.users', 'email', 'UPDATE') AS users_email_update,
+      has_column_privilege(current_user, 'identity.auth_sessions', 'user_id', 'INSERT') AS sessions_user_insert,
+      has_column_privilege(current_user, 'identity.auth_sessions', 'revoked_at', 'UPDATE') AS sessions_revoke_update,
+      has_column_privilege(current_user, 'identity.auth_sessions', 'user_id', 'UPDATE') AS sessions_user_update,
+      has_column_privilege(current_user, 'identity.auth_challenges', 'user_id', 'INSERT') AS challenges_user_insert,
+      has_column_privilege(current_user, 'identity.auth_challenges', 'consumed_at', 'UPDATE') AS challenges_consume_update,
+      has_column_privilege(current_user, 'identity.auth_challenges', 'user_id', 'UPDATE') AS challenges_user_update
+    `;
+    assert.equal(privileges?.users_select, true);
+    assert.equal(privileges?.users_email_insert, true);
+    assert.equal(privileges?.users_delete, false);
+    assert.equal(privileges?.users_password_update, true);
+    assert.equal(privileges?.users_email_update, false);
+    assert.equal(privileges?.sessions_user_insert, true);
+    assert.equal(privileges?.sessions_revoke_update, true);
+    assert.equal(privileges?.sessions_user_update, false);
+    assert.equal(privileges?.challenges_user_insert, true);
+    assert.equal(privileges?.challenges_consume_update, true);
+    assert.equal(privileges?.challenges_user_update, false);
+
+    for (const relation of [
+      "catalog.resources",
+      "study.study_sessions",
+      "activity.activity_events",
+      "retrieval.resource_chunks",
+      "practice.exercise_attempts",
+      "knowledge.concepts",
+      "agent.agent_runs",
+      "discovery.recommendation_runs",
+      "ops.jobs",
+    ]) {
+      await expectRejected(
+        () => auth.unsafe(`SELECT 1 FROM ${relation} LIMIT 1`),
+        `auth role unrelated access: ${relation}`,
+      );
+    }
+    await expectRejected(
+      () => auth`DELETE FROM identity.users WHERE false`,
+      "auth role deleting users",
+    );
+    await expectRejected(
+      () => auth`UPDATE identity.users SET email = email WHERE false`,
+      "auth role changing user email",
+    );
+    await expectRejected(
+      () => auth`UPDATE identity.auth_challenges SET user_id = user_id WHERE false`,
+      "auth role changing challenge owner",
+    );
   }],
   ["restricted service access and execution authority", async () => {
     await expectRejected(
@@ -1376,6 +1444,7 @@ try {
 } finally {
   await Promise.all([
     migrator.end({ timeout: 5 }),
+    auth.end({ timeout: 5 }),
     app.end({ timeout: 5 }),
     ai.end({ timeout: 5 }),
     worker.end({ timeout: 5 }),

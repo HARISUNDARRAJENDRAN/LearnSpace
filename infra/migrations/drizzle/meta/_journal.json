@@ -85,6 +85,13 @@
       "when": 1788081000000,
       "tag": "0011_secure_auth_role",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1788103244475,
+      "tag": "0012_naive_gamma_corps",
+      "breakpoints": true
     }
   ]
 }

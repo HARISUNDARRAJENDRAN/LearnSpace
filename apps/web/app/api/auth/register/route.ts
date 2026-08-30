@@ -2,12 +2,16 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   assertEmailDeliveryConfigured,
   getAppBaseUrl,
-  getAuthSecret,
 } from "../../../../lib/auth/config";
-import { createVerificationToken, hashPassword } from "../../../../lib/auth/crypto";
+import { hashPassword } from "../../../../lib/auth/crypto";
 import { sendVerificationEmail } from "../../../../lib/auth/email";
 import { AuthError, authErrorResponse, isUniqueViolation } from "../../../../lib/auth/errors";
-import { createEmailUser, findUserByEmail } from "../../../../lib/auth/repository";
+import {
+  createAuthChallenge,
+  createEmailUser,
+  findUserByEmail,
+} from "../../../../lib/auth/repository";
+import { enforceRateLimit } from "../../../../lib/auth/rate-limit";
 import { readJson } from "../../../../lib/auth/request";
 import { safeRedirectPath, registerInputSchema } from "../../../../lib/auth/validation";
 
@@ -17,7 +21,12 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const input = registerInputSchema.parse(await readJson(request));
-    const secret = getAuthSecret();
+    await enforceRateLimit({
+      request,
+      bucket: "register",
+      limit: 5,
+      windowSeconds: 60 * 60,
+    });
     assertEmailDeliveryConfigured();
 
     if (await findUserByEmail(input.email)) {
@@ -34,17 +43,14 @@ export async function POST(request: NextRequest) {
       passwordHash: await hashPassword(input.password),
     });
     const next = safeRedirectPath(input.next);
-    const verificationToken = createVerificationToken(
-      {
-        userId: user.id,
-        email: user.email,
-        next,
-        exp: Date.now() + 1000 * 60 * 60 * 24,
-      },
-      secret,
+    const verificationToken = await createAuthChallenge(
+      user.id,
+      "email_verification",
+      new Date(Date.now() + 1000 * 60 * 60 * 24),
     );
     const verificationUrl = new URL("/api/auth/verify", getAppBaseUrl(request));
     verificationUrl.searchParams.set("token", verificationToken);
+    verificationUrl.searchParams.set("next", next);
     const delivery = await sendVerificationEmail({
       email: user.email,
       displayName: user.displayName ?? input.displayName,

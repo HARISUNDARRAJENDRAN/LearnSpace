@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAuthSecret } from "../../../../lib/auth/config";
-import { verifyVerificationToken } from "../../../../lib/auth/crypto";
 import { setSessionCookie } from "../../../../lib/auth/cookies";
-import { AuthError } from "../../../../lib/auth/errors";
-import { createSession, findUserById, markEmailVerified } from "../../../../lib/auth/repository";
+import {
+  consumeEmailVerificationChallenge,
+  createSession,
+} from "../../../../lib/auth/repository";
 import { getSessionContext } from "../../../../lib/auth/request";
 import { safeRedirectPath } from "../../../../lib/auth/validation";
 
@@ -23,30 +24,24 @@ export async function GET(request: NextRequest) {
       return verificationRedirect(request, "invalid");
     }
 
-    const payload = verifyVerificationToken(token, getAuthSecret());
-    if (!payload) {
+    const result = await consumeEmailVerificationChallenge(token);
+    if (!result) {
       return verificationRedirect(request, "invalid");
     }
-
-    const user = await findUserById(payload.userId);
-    if (!user || user.email !== payload.email) {
-      return verificationRedirect(request, "invalid");
-    }
-    if (user.emailVerified) {
+    if (result.alreadyVerified) {
       return verificationRedirect(request, "already-verified");
     }
 
-    const verifiedUser = await markEmailVerified(user.id);
-    if (!verifiedUser) {
-      throw new AuthError("USER_NOT_FOUND", "This account no longer exists.", 404);
-    }
-
+    const secret = getAuthSecret();
     const session = await createSession(
-      verifiedUser.id,
+      result.user.id,
       getSessionContext(request),
-      getAuthSecret(),
+      secret,
     );
-    const destination = new URL(safeRedirectPath(payload.next), request.url);
+    const destination = new URL(
+      safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined),
+      request.url,
+    );
     const response = NextResponse.redirect(destination);
     setSessionCookie(response, session.token, session.maxAge);
     return response;

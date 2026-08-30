@@ -241,14 +241,22 @@
   margin: 24px 0 0;
 }
 
+.auth-forgot {
+  margin: 14px 0 0;
+  text-align: right;
+  font-size: 12px;
+}
+
 .auth-switch a,
-.auth-error a {
+.auth-error a,
+.auth-forgot a {
   color: #17647f;
   font-weight: 700;
 }
 
 .auth-switch a:hover,
-.auth-error a:hover {
+.auth-error a:hover,
+.auth-forgot a:hover {
   text-decoration: underline;
 }
 

@@ -9,17 +9,31 @@ export async function readJson(request: Request): Promise<unknown> {
   }
 }
 
+export function getClientIp(request: Request): string {
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  const vercelForwardedFor = request.headers.get("x-vercel-forwarded-for")?.trim();
+
+  if (process.env.VERCEL === "1") {
+    return vercelForwardedFor || realIp || "unknown";
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+    return realIp || forwardedFor || "unknown";
+  }
+
+  return "unknown";
+}
+
 export function getSessionContext(request: Request): SessionContext {
   const userAgent = request.headers.get("user-agent");
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  const realIp = request.headers.get("x-real-ip");
-  const ipAddress = forwardedFor?.split(",")[0]?.trim() || realIp?.trim();
+  const ipAddress = getClientIp(request);
   const context: SessionContext = {};
 
   if (userAgent) {
     context.userAgent = userAgent;
   }
-  if (ipAddress) {
+  if (ipAddress !== "unknown") {
     context.ipAddress = ipAddress;
   }
 

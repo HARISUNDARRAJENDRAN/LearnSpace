@@ -17,6 +17,7 @@
       "dependsOn": ["^build"],
       "outputs": [],
       "env": [
+        "DATABASE_URL",
         "DATABASE_MIGRATOR_URL",
         "DATABASE_AUTH_URL",
         "DATABASE_ADMIN_URL",

@@ -13,6 +13,8 @@ infra/postgres/data/
 *.log
 drizzle-meta/
 artifacts/
+playwright-report/
+test-results/
 
 # TypeScript source directories must not collect compiler output.
 **/*.js

@@ -34,11 +34,11 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm lint
-      - run: pnpm build
-      - run: pnpm db:check
-      - run: pnpm db:migrate
-      - run: pnpm db:verify
+      - run: pnpm run typecheck
+      - run: pnpm run lint
+      - run: pnpm run build
+      - run: pnpm run db:check
+      - run: pnpm run db:migrate
+      - run: pnpm run db:verify
       - run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --token "$VERCEL_TOKEN"
       - run: pnpm dlx vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"

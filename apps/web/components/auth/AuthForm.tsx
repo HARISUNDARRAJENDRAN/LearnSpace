@@ -9,6 +9,7 @@ type AuthResponse = {
   ok?: boolean;
   redirectTo?: string;
   verificationUrl?: string;
+  message?: string;
   error?: {
     code?: string;
     message?: string;
@@ -31,16 +32,24 @@ export function AuthForm({
   next,
   initialError,
   verified,
+  reset,
 }: {
   mode: AuthFormMode;
   next: string;
   initialError?: string;
   verified?: boolean;
+  reset?: boolean;
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initialValues);
   const [error, setError] = useState(initialError ?? "");
-  const [notice, setNotice] = useState(verified ? "Your email is verified. You can sign in now." : "");
+  const [notice, setNotice] = useState(
+    reset
+      ? "Your password has been reset. Sign in with your new password."
+      : verified
+        ? "Your email is verified. You can sign in now."
+        : "",
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === "register";
 
@@ -183,6 +192,11 @@ export function AuthForm({
           {isSubmitting ? "Please wait…" : isRegister ? "Create account" : "Log in"}
         </button>
       </form>
+      {!isRegister ? (
+        <p className="auth-forgot">
+          <a href="/forgot-password">Forgot password?</a>
+        </p>
+      ) : null}
       <p className="auth-switch">
         {isRegister ? "Already have an account?" : "New to LearnSpace?"}{" "}
         <a href={`${isRegister ? "/login" : "/register"}?next=${encodeURIComponent(next)}`}>

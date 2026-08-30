@@ -38,6 +38,7 @@ export default async function LoginPage({
         next={safeRedirectPath(first(params.next))}
         {...(initialError ? { initialError } : {})}
         verified={first(params.verified) === "1"}
+        reset={first(params.reset) === "1"}
       />
     </AuthShell>
   );

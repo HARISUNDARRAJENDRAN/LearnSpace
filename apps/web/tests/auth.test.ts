@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  createVerificationToken,
-  hashPassword,
-  verifyPassword,
-  verifyVerificationToken,
-} from "../lib/auth/crypto";
+import { createOpaqueToken, hashToken, hashPassword, verifyPassword } from "../lib/auth/crypto";
+import { getAppBaseUrl } from "../lib/auth/config";
+import { AuthError } from "../lib/auth/errors";
+import { enforceRateLimit } from "../lib/auth/rate-limit";
+import { getClientIp, readJson } from "../lib/auth/request";
 import { safeRedirectPath } from "../lib/auth/validation";
-import { readJson } from "../lib/auth/request";
 
 const secret = "test-auth-secret-that-is-long-enough-for-hmac";
+const mutableEnv = process.env as Record<string, string | undefined>;
 
 test("password hashes verify only for the original password", async () => {
   const hash = await hashPassword("correct horse battery staple");
@@ -19,30 +18,12 @@ test("password hashes verify only for the original password", async () => {
   assert.notEqual(hash, "correct horse battery staple");
 });
 
-test("verification tokens are signed and expire", () => {
-  const token = createVerificationToken(
-    {
-      userId: "11111111-1111-4111-8111-111111111111",
-      email: "learner@example.com",
-      next: "/app",
-      exp: Date.now() + 60_000,
-    },
-    secret,
-  );
+test("opaque challenge tokens are persisted only as hashes", () => {
+  const token = createOpaqueToken();
 
-  assert.equal(verifyVerificationToken(token, secret)?.email, "learner@example.com");
-  assert.equal(verifyVerificationToken(`${token}tampered`, secret), null);
-
-  const expired = createVerificationToken(
-    {
-      userId: "11111111-1111-4111-8111-111111111111",
-      email: "learner@example.com",
-      next: "/app",
-      exp: Date.now() - 1,
-    },
-    secret,
-  );
-  assert.equal(verifyVerificationToken(expired, secret), null);
+  assert.notEqual(token, hashToken(token));
+  assert.equal(hashToken(token), hashToken(token));
+  assert.equal(token.length >= 40, true);
 });
 
 test("redirect targets remain local application paths", () => {
@@ -58,4 +39,88 @@ test("malformed JSON is reported as a client error", async () => {
     () => readJson(new Request("http://localhost", { method: "POST", body: "{" })),
     { code: "INVALID_JSON", status: 400 },
   );
+});
+
+test("Vercel rate-limit identity prefers the trusted forwarded client IP", () => {
+  const previousVercel = process.env.VERCEL;
+  process.env.VERCEL = "1";
+
+  try {
+    const request = new Request("https://learnspace.example", {
+      headers: {
+        "x-real-ip": "spoofed-value",
+        "x-vercel-forwarded-for": "trusted-value",
+        "x-forwarded-for": "untrusted-value",
+      },
+    });
+    assert.equal(getClientIp(request), "trusted-value");
+  } finally {
+    if (previousVercel === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = previousVercel;
+  }
+});
+
+test("rate limiting returns a retryable 429", async () => {
+  const previous = {
+    authSecret: process.env.AUTH_SECRET,
+    backend: process.env.AUTH_RATE_LIMIT_BACKEND,
+    nodeEnv: process.env.NODE_ENV,
+  };
+  process.env.AUTH_SECRET = secret;
+  process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
+  mutableEnv.NODE_ENV = "test";
+
+  try {
+    const request = new Request("http://localhost", {
+      headers: { "x-real-ip": "unit-test-rate-limit" },
+    });
+    const bucket = `unit-${createOpaqueToken()}`;
+    await enforceRateLimit({
+      request,
+      bucket,
+      limit: 1,
+      windowSeconds: 60,
+    });
+    await assert.rejects(
+      () =>
+        enforceRateLimit({
+          request,
+          bucket,
+          limit: 1,
+          windowSeconds: 60,
+        }),
+      (error: unknown) =>
+        error instanceof AuthError && error.status === 429 && error.retryAfterSeconds === 60,
+    );
+  } finally {
+    if (previous.authSecret === undefined) delete process.env.AUTH_SECRET;
+    else process.env.AUTH_SECRET = previous.authSecret;
+    if (previous.backend === undefined) delete process.env.AUTH_RATE_LIMIT_BACKEND;
+    else process.env.AUTH_RATE_LIMIT_BACKEND = previous.backend;
+    if (previous.nodeEnv === undefined) delete mutableEnv.NODE_ENV;
+    else mutableEnv.NODE_ENV = previous.nodeEnv;
+  }
+});
+
+test("production auth URLs require an HTTPS APP_URL", () => {
+  const previous = { appUrl: process.env.APP_URL, nodeEnv: process.env.NODE_ENV };
+  mutableEnv.NODE_ENV = "production";
+
+  try {
+    delete process.env.APP_URL;
+    assert.throws(() => getAppBaseUrl(), (error: unknown) =>
+      error instanceof AuthError && error.code === "APP_URL_NOT_CONFIGURED");
+
+    process.env.APP_URL = "http://learnspace.example";
+    assert.throws(() => getAppBaseUrl(), (error: unknown) =>
+      error instanceof AuthError && error.code === "APP_URL_INVALID");
+
+    process.env.APP_URL = "https://learnspace.example";
+    assert.equal(getAppBaseUrl(), "https://learnspace.example");
+  } finally {
+    if (previous.appUrl === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = previous.appUrl;
+    if (previous.nodeEnv === undefined) delete mutableEnv.NODE_ENV;
+    else mutableEnv.NODE_ENV = previous.nodeEnv;
+  }
 });

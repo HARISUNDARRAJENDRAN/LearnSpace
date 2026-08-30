@@ -23,6 +23,15 @@ export const resendVerificationInputSchema = z.object({
   next: z.string().optional(),
 });
 
+export const forgotPasswordInputSchema = z.object({
+  email: z.string().trim().toLowerCase().email("Enter a valid email address.").max(254),
+});
+
+export const resetPasswordInputSchema = z.object({
+  token: z.string().trim().min(1, "This reset link is invalid.").max(512),
+  password: passwordSchema,
+});
+
 export function safeRedirectPath(value: string | undefined, fallback = "/app"): string {
   if (
     !value ||

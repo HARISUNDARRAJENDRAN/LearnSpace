@@ -22,7 +22,6 @@ export function ApplicationShell({ user }: { user: ApplicationUser }) {
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {
       router.replace("/");
-      router.refresh();
     }
   }
 
