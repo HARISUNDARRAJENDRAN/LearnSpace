@@ -6,6 +6,7 @@ import * as schema from "./schema/index.js";
 
 const databaseEnv = z.object({
   DATABASE_URL: z.string().url(),
+  DATABASE_AUTH_URL: z.string().url().optional(),
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
   DB_CONNECT_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(10),
   DB_IDLE_TIMEOUT_SECONDS: z.coerce.number().int().nonnegative().default(20),
@@ -18,7 +19,7 @@ const databaseEnv = z.object({
 
 export const env = databaseEnv.parse(process.env);
 
-export const sqlClient = postgres(env.DATABASE_URL, {
+const clientOptions = {
   max: env.DB_POOL_MAX,
   connect_timeout: env.DB_CONNECT_TIMEOUT_SECONDS,
   idle_timeout: env.DB_IDLE_TIMEOUT_SECONDS,
@@ -29,9 +30,20 @@ export const sqlClient = postgres(env.DATABASE_URL, {
     lock_timeout: env.DB_LOCK_TIMEOUT_MS,
   },
   transform: { undefined: null },
-});
+};
+
+export const sqlClient = postgres(env.DATABASE_URL, clientOptions);
+const authDatabaseUrl = env.DATABASE_AUTH_URL ?? env.DATABASE_URL;
+export const authSqlClient = authDatabaseUrl === env.DATABASE_URL
+  ? sqlClient
+  : postgres(authDatabaseUrl, clientOptions);
 
 export const db = drizzle(sqlClient, {
+  schema,
+  logger: env.DB_QUERY_LOGGING,
+});
+
+export const authDb = drizzle(authSqlClient, {
   schema,
   logger: env.DB_QUERY_LOGGING,
 });
@@ -51,5 +63,8 @@ export async function withUserTransaction<T>(
 }
 
 export async function closeDb(): Promise<void> {
-  await sqlClient.end({ timeout: 5 });
+  await Promise.all([
+    sqlClient.end({ timeout: 5 }),
+    authSqlClient === sqlClient ? Promise.resolve() : authSqlClient.end({ timeout: 5 }),
+  ]);
 }

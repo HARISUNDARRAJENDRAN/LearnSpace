@@ -1,0 +1,296 @@
+.application-page {
+  min-height: 100vh;
+  background: #f8f6f2;
+  color: #101516;
+}
+
+.application-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 76px;
+  padding: 0 clamp(20px, 5vw, 76px);
+  border-bottom: 1px solid #e5e1da;
+  background: #fcfbf9e8;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.application-brand {
+  display: inline-flex;
+  align-items: center;
+  color: #101516;
+}
+
+.application-brand .learnspace-mark {
+  width: 21px;
+  height: 21px;
+}
+
+.application-brand .brand-name {
+  font-size: 16px;
+}
+
+.application-account {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: #657074;
+  font-size: 12px;
+}
+
+.application-account button {
+  min-height: 34px;
+  margin-left: 9px;
+  padding: 0 13px;
+  border: 1px solid #d6d9d7;
+  border-radius: 18px;
+  background: #fff;
+  color: #1e2b2e;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.application-account button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 11px #1e2b2e14;
+}
+
+.application-account button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.application-avatar {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  place-items: center;
+  border-radius: 50%;
+  background: #b8dfd0;
+  color: #28614c;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.application-content {
+  width: min(100% - 40px, 1110px);
+  margin: 0 auto;
+  padding: clamp(55px, 9vw, 110px) 0 90px;
+}
+
+.application-intro {
+  max-width: 620px;
+}
+
+.application-intro h1 {
+  margin: 0;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: clamp(46px, 6vw, 76px);
+  font-weight: 400;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.application-intro > p:last-child {
+  margin: 19px 0 0;
+  color: #68757a;
+  font-size: 16px;
+}
+
+.application-grid {
+  display: grid;
+  grid-template-columns: 1.35fr 0.82fr 0.82fr;
+  gap: 15px;
+  margin-top: 56px;
+}
+
+.application-card {
+  min-height: 244px;
+  padding: 25px;
+  border: 1px solid #e4e0d8;
+  border-radius: 20px;
+  background: #fffefa;
+  box-shadow: 0 10px 23px #625f5510;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.application-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 15px 28px #625f5519;
+}
+
+.application-card-focus {
+  background: #d9eef2;
+}
+
+.application-card-label {
+  display: block;
+  margin-bottom: 27px;
+  color: #6b777a;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.application-card h2,
+.application-card strong {
+  display: block;
+  margin: 0;
+  color: #18363c;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.application-card > p {
+  max-width: 240px;
+  margin: 13px 0 0;
+  color: #69777b;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.application-card button,
+.application-card a {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 25px;
+  border: 0;
+  background: transparent;
+  color: #215b6c;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.application-card button:hover,
+.application-card a:hover {
+  text-decoration: underline;
+}
+
+.application-stat {
+  font-size: 57px !important;
+}
+
+.application-card .application-stat + p {
+  margin-top: 1px;
+}
+
+.application-progress {
+  height: 7px;
+  margin-top: 26px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: #e8ece9;
+}
+
+.application-progress span {
+  display: block;
+  width: 68%;
+  height: 100%;
+  border-radius: inherit;
+  background: #76ad98;
+}
+
+.application-recent {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 40px;
+  margin-top: 16px;
+  padding: 28px 25px;
+  border: 1px solid #e4e0d8;
+  border-radius: 20px;
+  background: #fffefa;
+}
+
+.application-recent h2 {
+  margin: 0;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 31px;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+}
+
+.application-note-list {
+  display: grid;
+  min-width: min(100%, 360px);
+  gap: 11px;
+}
+
+.application-note-list a {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eae6df;
+  color: #41575d;
+  font-size: 13px;
+}
+
+.application-note-list a:hover {
+  color: #1a6a83;
+}
+
+.application-note-list span {
+  color: #8d989a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 850px) {
+  .application-header {
+    min-height: 64px;
+  }
+
+  .application-account > span {
+    display: none;
+  }
+
+  .application-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .application-card-focus {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 580px) {
+  .application-header {
+    padding: 0 15px;
+  }
+
+  .application-content {
+    width: min(100% - 30px, 1110px);
+    padding-top: 52px;
+  }
+
+  .application-grid {
+    grid-template-columns: 1fr;
+    margin-top: 42px;
+  }
+
+  .application-card-focus {
+    grid-column: auto;
+  }
+
+  .application-recent {
+    display: grid;
+    gap: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .application-account button,
+  .application-card {
+    transition: none;
+  }
+}

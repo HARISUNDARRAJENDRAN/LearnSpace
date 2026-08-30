@@ -1,5 +1,8 @@
 node_modules/
 dist/
+.next/
+out/
+.vercel/
 coverage/
 .turbo/
 *.tsbuildinfo
@@ -9,3 +12,9 @@ coverage/
 infra/postgres/data/
 *.log
 drizzle-meta/
+artifacts/
+
+# TypeScript source directories must not collect compiler output.
+apps/web/**/*.js
+apps/web/**/*.js.map
+apps/web/**/*.d.ts.map

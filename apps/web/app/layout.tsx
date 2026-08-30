@@ -1,0 +1,26 @@
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+import "@fontsource/dm-sans/400.css";
+import "@fontsource/dm-sans/500.css";
+import "@fontsource/dm-sans/700.css";
+import "@fontsource/source-serif-4/400.css";
+import "./globals.css";
+import "../styles/hero.css";
+import "../styles/auth.css";
+import "../styles/application.css";
+
+export const metadata: Metadata = {
+  title: "LearnSpace — Your space to learn, research, and remember.",
+  description: "Your space to learn, research, and remember.",
+  icons: {
+    icon: "/assets/learnspace-mark-white.svg",
+  },
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en" data-scroll-behavior="smooth">
+      <body>{children}</body>
+    </html>
+  );
+}
