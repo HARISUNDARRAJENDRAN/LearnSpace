@@ -1,0 +1,2 @@
+# Migration manifests hash SQL bytes; keep them stable across CI and Windows.
+infra/migrations/drizzle/*.sql text eol=crlf
