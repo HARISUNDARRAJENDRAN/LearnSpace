@@ -1,2 +1,13 @@
-# Migration manifests hash SQL bytes; keep them stable across CI and Windows.
-infra/migrations/drizzle/*.sql text eol=crlf
+# Migration manifests hash SQL bytes; keep applied migrations byte-stable.
+infra/migrations/drizzle/*.sql text eol=lf
+infra/migrations/drizzle/0000_fast_daredevil.sql text eol=crlf
+infra/migrations/drizzle/0001_real_sandman.sql text eol=crlf
+infra/migrations/drizzle/0002_living_changeling.sql text eol=crlf
+infra/migrations/drizzle/0003_majestic_ronan.sql text eol=crlf
+infra/migrations/drizzle/0004_quiet_grandmaster.sql text eol=crlf
+infra/migrations/drizzle/0005_smart_havok.sql text eol=crlf
+infra/migrations/drizzle/0006_smooth_gladiator.sql text eol=crlf
+infra/migrations/drizzle/0007_certain_warhawk.sql text eol=crlf
+infra/migrations/drizzle/0008_wide_jack_power.sql text eol=crlf
+infra/migrations/drizzle/0009_whole_dragon_man.sql text eol=crlf
+infra/migrations/drizzle/0010_lucky_leech.sql text eol=crlf
