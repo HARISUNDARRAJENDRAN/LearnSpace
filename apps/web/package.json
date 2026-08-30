@@ -4,9 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --build",
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "node -e \"console.log('web boundary scaffold only')\""
+  },
+  "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/source-serif-4": "^5.3.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.12",
+    "@types/react-dom": "19.1.9",
+    "vite": "7.1.7"
   }
 }
