@@ -1,71 +1,163 @@
 .application-page {
   min-height: 100vh;
   background: #f8f6f2;
-  color: #101516;
+  color: #16272a;
 }
 
-.application-header {
+.application-sidebar {
+  position: fixed;
+  z-index: 20;
+  inset: 0 auto 0 0;
+  display: flex;
+  width: 238px;
+  flex-direction: column;
+  padding: 24px 16px 20px;
+  border-right: 1px solid #e3ded6;
+  background: #fbfaf7;
+}
+
+.application-sidebar-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 76px;
-  padding: 0 clamp(20px, 5vw, 76px);
-  border-bottom: 1px solid #e5e1da;
-  background: #fcfbf9e8;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  min-height: 38px;
+  padding: 0 8px;
 }
 
-.application-brand {
+.application-sidebar-brand {
   display: inline-flex;
   align-items: center;
   color: #101516;
 }
 
-.application-brand .learnspace-mark {
-  width: 21px;
-  height: 21px;
+.application-sidebar-brand .brand-lockup {
+  gap: 8px;
 }
 
-.application-brand .brand-name {
-  font-size: 16px;
+.application-sidebar-brand .learnspace-mark {
+  width: 19px;
+  height: 19px;
+}
+
+.application-sidebar-brand .brand-name {
+  font-size: 14px;
+}
+
+.application-close-nav,
+.application-menu-button {
+  display: none;
+  border: 0;
+  background: transparent;
+  color: #526467;
+  cursor: pointer;
+}
+
+.application-nav {
+  display: grid;
+  gap: 4px;
+  margin-top: 38px;
+}
+
+.application-nav-link {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 42px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: #68777a;
+  font-size: 13px;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.application-nav-link svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+}
+
+.application-nav-link:hover {
+  background: #f0eee9;
+  color: #203e43;
+  transform: translateX(2px);
+}
+
+.application-nav-link.is-active {
+  background: #e0eff0;
+  color: #145568;
+  font-weight: 700;
+}
+
+.application-sidebar-note {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: auto 8px 3px;
+  color: #8b9694;
+  font-size: 11px;
+}
+
+.application-sidebar-note-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #78af9d;
+}
+
+.application-main {
+  min-width: 0;
+  margin-left: 238px;
+}
+
+.application-header {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 72px;
+  padding: 0 clamp(22px, 4vw, 62px);
+  border-bottom: 1px solid #e6e1da;
+  background: #fbfaf7e8;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.application-header-context {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.application-header-kicker {
+  color: #1d5665;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+
+.application-header-greeting {
+  color: #8b9694;
+  font-size: 12px;
 }
 
 .application-account {
   display: flex;
   align-items: center;
   gap: 11px;
-  color: #657074;
+  color: #68777a;
   font-size: 12px;
-}
-
-.application-account button {
-  min-height: 34px;
-  margin-left: 9px;
-  padding: 0 13px;
-  border: 1px solid #d6d9d7;
-  border-radius: 18px;
-  background: #fff;
-  color: #1e2b2e;
-  font-size: 12px;
-  cursor: pointer;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.application-account button:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 5px 11px #1e2b2e14;
-}
-
-.application-account button:disabled {
-  cursor: wait;
-  opacity: 0.6;
 }
 
 .application-avatar {
   display: grid;
-  width: 29px;
-  height: 29px;
+  width: 30px;
+  height: 30px;
   place-items: center;
   border-radius: 50%;
   background: #b8dfd0;
@@ -74,223 +166,417 @@
   font-weight: 700;
 }
 
-.application-content {
-  width: min(100% - 40px, 1110px);
+.application-logout {
+  position: static;
+  min-height: 34px;
+  margin-left: 8px;
+  padding: 0 13px;
+  border: 1px solid #d6d9d7;
+  border-radius: 18px;
+  background: #fffefa;
+  color: #294247;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.application-logout:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 13px #1e2b2e14;
+}
+
+.application-logout:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.application-body {
+  min-height: calc(100vh - 72px);
+}
+
+.discovery-page {
+  width: min(100% - 44px, 1110px);
   margin: 0 auto;
-  padding: clamp(55px, 9vw, 110px) 0 90px;
+  padding: clamp(45px, 6vw, 80px) 0 100px;
 }
 
-.application-intro {
-  max-width: 620px;
+.discovery-page-intro {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 30px;
 }
 
-.application-intro h1 {
+.application-eyebrow {
+  margin: 0 0 14px;
+  color: #6c7e80;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.discovery-page-intro h1,
+.application-placeholder h1 {
+  max-width: 720px;
   margin: 0;
+  color: #18363c;
   font-family: "Source Serif 4", Georgia, serif;
-  font-size: clamp(46px, 6vw, 76px);
+  font-size: clamp(45px, 6vw, 76px);
   font-weight: 400;
   letter-spacing: -0.055em;
   line-height: 0.98;
 }
 
-.application-intro > p:last-child {
-  margin: 19px 0 0;
-  color: #68757a;
-  font-size: 16px;
+.discovery-page-intro > div:first-child > p:last-child {
+  margin: 18px 0 0;
+  color: #718083;
+  font-size: 15px;
 }
 
-.application-grid {
-  display: grid;
-  grid-template-columns: 1.35fr 0.82fr 0.82fr;
-  gap: 15px;
-  margin-top: 56px;
-}
-
-.application-card {
-  min-height: 244px;
-  padding: 25px;
-  border: 1px solid #e4e0d8;
-  border-radius: 20px;
-  background: #fffefa;
-  box-shadow: 0 10px 23px #625f5510;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.application-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 15px 28px #625f5519;
-}
-
-.application-card-focus {
-  background: #d9eef2;
-}
-
-.application-card-label {
-  display: block;
-  margin-bottom: 27px;
-  color: #6b777a;
+.discovery-feed-status {
+  padding-bottom: 5px;
+  color: #43836d;
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
 }
 
-.application-card h2,
-.application-card strong {
-  display: block;
-  margin: 0;
-  color: #18363c;
-  font-family: "Source Serif 4", Georgia, serif;
-  font-size: 28px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
-  line-height: 1.05;
+.discovery-feed-status[data-stale="true"] {
+  color: #9b7147;
 }
 
-.application-card > p {
-  max-width: 240px;
-  margin: 13px 0 0;
-  color: #69777b;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.application-card button,
-.application-card a {
-  display: inline-flex;
-  gap: 8px;
+.discovery-interests {
+  display: flex;
   align-items: center;
-  margin-top: 25px;
-  border: 0;
-  background: transparent;
-  color: #215b6c;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
+  justify-content: space-between;
+  gap: 30px;
+  margin-top: 67px;
+  padding: 24px 27px;
+  border: 1px solid #e0e5de;
+  border-radius: 18px;
+  background: #edf5ef;
 }
 
-.application-card button:hover,
-.application-card a:hover {
-  text-decoration: underline;
+.discovery-interests h2,
+.discovery-section h2,
+.application-placeholder h1 {
+  margin: 0;
+  color: #23464c;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.045em;
 }
 
-.application-stat {
-  font-size: 57px !important;
+.discovery-interests h2 {
+  font-size: 30px;
 }
 
-.application-card .application-stat + p {
-  margin-top: 1px;
+.discovery-interest-list {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
 }
 
-.application-progress {
-  height: 7px;
-  margin-top: 26px;
-  overflow: hidden;
-  border-radius: 5px;
-  background: #e8ece9;
+.discovery-interest-chip {
+  padding: 8px 11px;
+  border: 1px solid #c8ddd1;
+  border-radius: 18px;
+  background: #fffefa;
+  color: #386652;
+  font-size: 12px;
 }
 
-.application-progress span {
-  display: block;
-  width: 68%;
-  height: 100%;
-  border-radius: inherit;
-  background: #76ad98;
+.discovery-section {
+  margin-top: 67px;
 }
 
-.application-recent {
+.discovery-section-heading {
   display: flex;
   align-items: end;
   justify-content: space-between;
-  gap: 40px;
-  margin-top: 16px;
-  padding: 28px 25px;
-  border: 1px solid #e4e0d8;
-  border-radius: 20px;
-  background: #fffefa;
+  gap: 30px;
+  margin-bottom: 20px;
 }
 
-.application-recent h2 {
-  margin: 0;
-  font-family: "Source Serif 4", Georgia, serif;
-  font-size: 31px;
-  font-weight: 400;
-  letter-spacing: -0.04em;
+.discovery-section-heading .application-eyebrow {
+  margin-bottom: 8px;
 }
 
-.application-note-list {
+.discovery-section h2 {
+  font-size: 34px;
+}
+
+.discovery-section-heading > p {
+  max-width: 340px;
+  margin: 0 0 3px;
+  color: #7a8788;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.discovery-card-grid {
   display: grid;
-  min-width: min(100%, 360px);
-  gap: 11px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px;
 }
 
-.application-note-list a {
+.discovery-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #e1ded7;
+  border-radius: 18px;
+  background: #fffefa;
+  box-shadow: 0 9px 23px #5858520d;
+  transition: transform 200ms ease, box-shadow 200ms ease;
+}
+
+.discovery-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 15px 30px #58585218;
+}
+
+.discovery-card-image,
+.discovery-card-art {
+  width: 100%;
+  height: 158px;
+  object-fit: cover;
+  background: #d6e9ed;
+}
+
+.discovery-card-art {
+  display: flex;
+  align-items: end;
+  padding: 16px;
+  background: linear-gradient(135deg, #ccebf0, #eaf3e7 65%, #f4d9a1);
+}
+
+.discovery-card-art-paper {
+  background: linear-gradient(135deg, #e5e2ee, #d9e9e8 62%, #f0e4c8);
+}
+
+.discovery-card-art span {
+  color: #35616a;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 22px;
+}
+
+.discovery-card-content {
+  display: flex;
+  min-height: 220px;
+  flex: 1;
+  flex-direction: column;
+  padding: 17px 18px 16px;
+}
+
+.discovery-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  color: #85908e;
+  font-size: 10px;
+}
+
+.discovery-card-meta span + span::before {
+  margin-right: 7px;
+  content: "·";
+  color: #b2bbb6;
+}
+
+.discovery-card h3 {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 12px 0 0;
+  color: #213d42;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 23px;
+  font-weight: 400;
+  letter-spacing: -0.035em;
+  line-height: 1.07;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.discovery-card-content > p:not(.discovery-card-reason) {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 11px 0 0;
+  color: #748184;
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.discovery-card-reason {
+  margin: auto 0 0;
+  padding-top: 16px;
+  color: #3d7a65;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.discovery-card-actions {
   display: flex;
   align-items: center;
   gap: 13px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #eae6df;
-  color: #41575d;
-  font-size: 13px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid #eeeae3;
 }
 
-.application-note-list a:hover {
-  color: #1a6a83;
+.discovery-card-actions a,
+.discovery-card-actions button {
+  border: 0;
+  background: transparent;
+  color: #647376;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
 }
 
-.application-note-list span {
-  color: #8d989a;
-  font-size: 10px;
+.discovery-card-actions a:first-child {
+  margin-right: auto;
+  color: #1e687b;
   font-weight: 700;
 }
 
-@media (max-width: 850px) {
-  .application-header {
-    min-height: 64px;
-  }
-
-  .application-account > span {
-    display: none;
-  }
-
-  .application-grid {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .application-card-focus {
-    grid-column: 1 / -1;
-  }
+.discovery-card-actions a:hover,
+.discovery-card-actions button:hover {
+  color: #123f4b;
+  text-decoration: underline;
 }
 
-@media (max-width: 580px) {
-  .application-header {
-    padding: 0 15px;
-  }
+.discovery-card-actions button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
 
-  .application-content {
-    width: min(100% - 30px, 1110px);
-    padding-top: 52px;
-  }
+.discovery-empty {
+  display: grid;
+  min-height: 130px;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  border: 1px dashed #d8d8d1;
+  border-radius: 16px;
+  color: #8a9593;
+  text-align: center;
+}
 
-  .application-grid {
-    grid-template-columns: 1fr;
-    margin-top: 42px;
-  }
+.discovery-empty-mark {
+  color: #70a797;
+  font-size: 22px;
+}
 
-  .application-card-focus {
-    grid-column: auto;
-  }
+.discovery-empty p {
+  margin: 0;
+  color: #526467;
+  font-family: "Source Serif 4", Georgia, serif;
+  font-size: 21px;
+}
 
-  .application-recent {
-    display: grid;
-    gap: 28px;
+.discovery-empty span:last-child {
+  max-width: 360px;
+  font-size: 11px;
+}
+
+.application-placeholder {
+  width: min(100% - 44px, 760px);
+  margin: 0 auto;
+  padding: clamp(70px, 12vw, 150px) 0;
+}
+
+.application-placeholder h1 {
+  font-size: clamp(48px, 7vw, 82px);
+}
+
+.application-placeholder > p:last-child {
+  max-width: 400px;
+  margin: 22px 0 0;
+  color: #718083;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.discovery-skeleton-title {
+  width: min(70%, 560px);
+  height: 88px;
+  margin-bottom: 60px;
+}
+
+.discovery-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+
+.discovery-skeleton {
+  min-height: 240px;
+  border-radius: 18px;
+  background: linear-gradient(100deg, #ebe9e4 30%, #f7f5f1 45%, #ebe9e4 60%);
+  background-size: 200% 100%;
+  animation: discovery-shimmer 1.3s ease-in-out infinite;
+}
+
+@keyframes discovery-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 980px) {
+  .application-sidebar { width: 220px; }
+  .application-main { margin-left: 220px; }
+  .discovery-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 720px) {
+  .application-sidebar {
+    width: min(82vw, 290px);
+    transform: translateX(-100%);
+    transition: transform 220ms ease;
   }
+  .application-sidebar.is-open { transform: translateX(0); }
+  .application-close-nav { display: block; font-size: 22px; line-height: 1; }
+  .application-backdrop {
+    position: fixed;
+    z-index: 19;
+    inset: 0;
+    display: block;
+    border: 0;
+    background: #102b2b66;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 220ms ease;
+  }
+  .application-backdrop.is-open { opacity: 1; pointer-events: auto; }
+  .application-main { margin-left: 0; }
+  .application-menu-button { display: grid; width: 30px; gap: 4px; padding: 7px 5px; }
+  .application-menu-button span { display: block; width: 20px; height: 1px; background: currentColor; }
+  .application-header { min-height: 64px; padding: 0 18px; }
+  .application-header-context { margin-right: auto; margin-left: 12px; }
+  .application-header-kicker { font-size: 16px; }
+  .application-header-greeting, .application-account-email { display: none; }
+  .application-logout { margin-left: 5px; padding: 0 11px; }
+  .discovery-page { width: min(100% - 30px, 600px); padding-top: 43px; }
+  .discovery-page-intro, .discovery-section-heading { display: grid; align-items: start; gap: 17px; }
+  .discovery-feed-status { padding: 0; }
+  .discovery-interests { display: grid; align-items: start; margin-top: 44px; }
+  .discovery-interest-list { justify-content: start; }
+  .discovery-section { margin-top: 49px; }
+  .discovery-section-heading > p { text-align: left; }
+  .discovery-card-grid { grid-template-columns: 1fr; }
+  .discovery-skeleton-grid { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .application-account button,
-  .application-card {
-    transition: none;
-  }
+  .application-sidebar,
+  .application-backdrop,
+  .application-nav-link,
+  .application-logout,
+  .discovery-card,
+  .discovery-skeleton { transition: none; animation: none; }
 }

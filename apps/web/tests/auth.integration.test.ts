@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
+import { closeDb } from "@learnspace/db";
 import {
   consumeEmailVerificationChallenge,
   createAuthChallenge,
@@ -183,6 +184,7 @@ test(
         await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
       }
       await migrator.end({ timeout: 5 });
+      await closeDb();
     }
   },
 );

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "discovery_interactions_user_correlation_uq" ON "discovery"."discovery_interactions" USING btree ("user_id","correlation_id") WHERE "discovery"."discovery_interactions"."correlation_id" IS NOT NULL;

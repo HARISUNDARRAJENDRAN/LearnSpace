@@ -16,7 +16,7 @@ test(
   "onboarding completes atomically for canonical concepts and remains idempotent",
   { skip: databaseAvailable ? false : "DATABASE_URL, DATABASE_AUTH_URL, and DATABASE_MIGRATOR_URL are required" },
   async () => {
-    const [{ withUserTransaction }, { userSettings }, { createEmailUser }, { completeOnboarding, getOnboardingState, searchOnboardingConcepts, OnboardingError }] = await Promise.all([
+    const [{ withUserTransaction, closeDb }, { userSettings }, { createEmailUser }, { completeOnboarding, getOnboardingState, searchOnboardingConcepts, OnboardingError }] = await Promise.all([
       import("@learnspace/db"),
       import("@learnspace/db/schema"),
       import("../lib/auth/repository"),
@@ -277,11 +277,16 @@ test(
       });
       assert.equal((await getOnboardingState(otherUser.id)).completed, false);
     } finally {
-      for (const userId of userIds) {
-        await migrator`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
-        await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
+      try {
+        for (const userId of userIds) {
+          await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
+          await migrator`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
+          await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
+        }
+      } finally {
+        await migrator.end({ timeout: 5 });
+        await closeDb();
       }
-      await migrator.end({ timeout: 5 });
     }
   },
 );

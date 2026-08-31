@@ -64,3 +64,19 @@ jobs:
       - run: diff -u before after
       - if: always()
         run: docker compose -f infra/postgres/docker-compose.yml down -v
+
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ai-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check app tests
+      - run: uv run pyright
+      - run: uv run pytest

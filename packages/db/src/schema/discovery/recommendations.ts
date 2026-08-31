@@ -113,6 +113,7 @@ export const discoveryInteractions = discoverySchema.table(
   (table) => [
     index("discovery_interactions_user_occurred_idx").on(table.userId, table.occurredAt.desc()),
     index("discovery_interactions_resource_action_occurred_idx").on(table.resourceId, table.action, table.occurredAt.desc()),
+    uniqueIndex("discovery_interactions_user_correlation_uq").on(table.userId, table.correlationId).where(sql`${table.correlationId} IS NOT NULL`),
     foreignKey({
       name: "discovery_interactions_impression_fkey",
       columns: [table.impressionId],

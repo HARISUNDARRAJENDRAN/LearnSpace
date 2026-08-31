@@ -16,6 +16,12 @@ artifacts/
 playwright-report/
 test-results/
 .codegraph/
+.venv/
+**/.ruff_cache/
+**/.pytest_cache/
+**/__pycache__/
+artifacts/discovery/raw/
+artifacts/discovery/*.zip
 
 # TypeScript source directories must not collect compiler output.
 **/*.js

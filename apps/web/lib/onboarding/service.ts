@@ -2,6 +2,7 @@ import { withUserTransaction, type Transaction } from "@learnspace/db";
 import {
   activityEvents,
   concepts,
+  outboxEvents,
   userConceptAffinity,
   userSettings,
 } from "@learnspace/db/schema";
@@ -338,7 +339,7 @@ export async function completeOnboarding(
         where: eq(userConceptAffinity.featureVersion, ONBOARDING_FEATURE_VERSION),
       });
 
-    await tx
+    const [completionEvent] = await tx
       .insert(activityEvents)
       .values({
         schemaVersion: 1,
@@ -353,7 +354,26 @@ export async function completeOnboarding(
           concepts: selectedConcepts.map(({ id, slug }) => ({ id, slug })),
         },
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ id: activityEvents.id });
+
+    if (completionEvent) {
+      await tx.insert(outboxEvents).values({
+        aggregateType: "activity_event",
+        aggregateId: completionEvent.id,
+        eventType: "discovery.refresh_requested",
+        schemaVersion: 1,
+        userId,
+        payload: {
+          conceptIds: completion.conceptIds,
+          conceptNames: selectedConcepts.map((concept) => concept.name),
+          level: completion.selfReportedLevel,
+          preferredFormats: completion.preferredFormats,
+          source: "onboarding-v1",
+          requestedAt: now.toISOString(),
+        },
+      });
+    }
 
     const updatedSettings = updatedRows[0];
     if (!updatedSettings) {
