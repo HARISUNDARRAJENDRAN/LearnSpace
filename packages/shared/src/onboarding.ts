@@ -87,6 +87,18 @@ export const SELF_REPORTED_LEVELS = [
   "mixed",
 ] as const;
 
+export const STARTING_LEVEL_OPTIONS = [
+  { id: "beginner", label: "Just getting started", value: "beginner" },
+  { id: "basics", label: "I know the basics", value: "intermediate" },
+  { id: "comfortable", label: "I'm fairly comfortable", value: "intermediate" },
+  { id: "advanced", label: "I'm advanced", value: "advanced" },
+  { id: "mixed", label: "It depends on the topic", value: "mixed" },
+] as const satisfies readonly {
+  id: string;
+  label: string;
+  value: (typeof SELF_REPORTED_LEVELS)[number];
+}[];
+
 const personaSchema = z.enum(PERSONAS);
 const preferredFormatSchema = z.enum(PREFERRED_FORMATS);
 const preferredDurationSchema = z.enum(PREFERRED_DURATIONS);
@@ -98,6 +110,14 @@ const onboardingPreferenceFields = {
   preferredFormats: z.array(preferredFormatSchema).min(1).max(6),
   preferredDuration: preferredDurationSchema,
   selfReportedLevel: selfReportedLevelSchema,
+};
+
+const onboardingDraftFields = {
+  persona: personaSchema.optional(),
+  learningIntents: z.array(z.string().min(1)).max(7).optional(),
+  preferredFormats: z.array(preferredFormatSchema).max(6).optional(),
+  preferredDuration: preferredDurationSchema.optional(),
+  selfReportedLevel: selfReportedLevelSchema.optional(),
 };
 
 function validatePersonaIntents(
@@ -127,10 +147,18 @@ export const onboardingPreferencesSchema = z
 
 export const onboardingDraftSchema = z
   .object({
-    ...onboardingPreferenceFields,
-    conceptIds: z.array(z.string().uuid()).max(20),
+    ...onboardingDraftFields,
+    conceptIds: z.array(z.string().uuid()).max(20).optional(),
+    draftRevision: z.number().int().positive().optional(),
   })
-  .partial()
+  .superRefine(validatePersonaIntents);
+
+export const onboardingDraftRequestSchema = z
+  .object({
+    ...onboardingDraftFields,
+    conceptIds: z.array(z.string().uuid()).max(20).optional(),
+    draftRevision: z.number().int().positive(),
+  })
   .superRefine(validatePersonaIntents);
 
 export const onboardingCompletionSchema = z
@@ -153,6 +181,8 @@ export type Persona = (typeof PERSONAS)[number];
 export type PreferredFormat = (typeof PREFERRED_FORMATS)[number];
 export type PreferredDuration = (typeof PREFERRED_DURATIONS)[number];
 export type SelfReportedLevel = (typeof SELF_REPORTED_LEVELS)[number];
+export type StartingLevelOptionId = (typeof STARTING_LEVEL_OPTIONS)[number]["id"];
 export type OnboardingPreferences = z.infer<typeof onboardingPreferencesSchema>;
 export type OnboardingDraft = z.infer<typeof onboardingDraftSchema>;
+export type OnboardingDraftRequest = z.infer<typeof onboardingDraftRequestSchema>;
 export type OnboardingCompletion = z.infer<typeof onboardingCompletionSchema>;

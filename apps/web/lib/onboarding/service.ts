@@ -10,13 +10,18 @@ import {
   ONBOARDING_VERSION,
   onboardingCompletionSchema,
   onboardingDraftSchema,
+  onboardingDraftRequestSchema,
   type OnboardingCompletion,
   type OnboardingDraft,
+  type OnboardingDraftRequest,
 } from "@learnspace/shared/onboarding";
 import { and, asc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 
 const conceptSearchLimit = 40;
+const onboardingAffinityScore = 0.25;
+const onboardingAffinityConfidence = 0.2;
+const onboardingAffinityPositiveWeight = 0.25;
 
 export type OnboardingConcept = {
   id: string;
@@ -31,6 +36,7 @@ export type OnboardingState = {
   completedAt: string | null;
   version: number | null;
   draft: OnboardingDraft;
+  selectedConcepts: OnboardingConcept[];
 };
 
 export class OnboardingError extends AuthError {
@@ -45,12 +51,47 @@ function readDraft(value: unknown): OnboardingDraft {
   return result.success ? result.data : {};
 }
 
-function stateFromSettings(settings: typeof userSettings.$inferSelect): OnboardingState {
+function readDraftRevision(value: unknown): number {
+  return readDraft(value).draftRevision ?? 0;
+}
+
+async function loadSelectedConcepts(
+  tx: Transaction,
+  draft: OnboardingDraft,
+): Promise<OnboardingConcept[]> {
+  const conceptIds = draft.conceptIds ?? [];
+  if (conceptIds.length === 0) {
+    return [];
+  }
+
+  const rows = await tx
+    .select({
+      id: concepts.id,
+      slug: concepts.slug,
+      name: concepts.name,
+      kind: concepts.kind,
+      summary: concepts.summary,
+    })
+    .from(concepts)
+    .where(inArray(concepts.id, conceptIds));
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return conceptIds.flatMap((conceptId) => {
+    const concept = byId.get(conceptId);
+    return concept ? [concept] : [];
+  });
+}
+
+async function stateFromSettings(
+  tx: Transaction,
+  settings: typeof userSettings.$inferSelect,
+): Promise<OnboardingState> {
+  const draft = readDraft(settings.learningPreferences);
   return {
     completed: settings.onboardingCompletedAt !== null,
     completedAt: settings.onboardingCompletedAt?.toISOString() ?? null,
     version: settings.onboardingVersion,
-    draft: readDraft(settings.learningPreferences),
+    draft,
+    selectedConcepts: await loadSelectedConcepts(tx, draft),
   };
 }
 
@@ -113,7 +154,7 @@ async function validateConcepts(
 
 export async function getOnboardingState(userId: string): Promise<OnboardingState> {
   return withUserTransaction(userId, async (tx) =>
-    stateFromSettings(await loadSettings(tx, userId)),
+    stateFromSettings(tx, await loadSettings(tx, userId)),
   );
 }
 
@@ -157,21 +198,29 @@ export async function searchOnboardingConcepts(
 
 export async function saveOnboardingDraft(
   userId: string,
-  input: OnboardingDraft,
+  input: OnboardingDraftRequest,
 ): Promise<OnboardingState> {
-  const draft = onboardingDraftSchema.parse(input);
+  const draft = onboardingDraftRequestSchema.parse(input);
 
   return withUserTransaction(userId, async (tx) => {
+    const settings = await loadSettings(tx, userId);
+    const storedRevision = readDraftRevision(settings.learningPreferences);
+    if (settings.onboardingCompletedAt || draft.draftRevision <= storedRevision) {
+      return stateFromSettings(tx, settings);
+    }
+
     if (draft.conceptIds) {
       await validateConcepts(tx, draft.conceptIds);
     }
 
-    const settings = await loadSettings(tx, userId);
-    if (settings.onboardingCompletedAt) {
-      return stateFromSettings(settings);
-    }
-
-    const mergedDraft = { ...readDraft(settings.learningPreferences), ...draft };
+    const previousDraft = readDraft(settings.learningPreferences);
+    const mergedDraft = onboardingDraftSchema.parse({
+      ...previousDraft,
+      ...draft,
+      ...(draft.persona && draft.persona !== previousDraft.persona && draft.learningIntents === undefined
+        ? { learningIntents: [] }
+        : {}),
+    });
     const now = new Date();
     const updatedRows = await tx
       .update(userSettings)
@@ -180,10 +229,11 @@ export async function saveOnboardingDraft(
         and(
           eq(userSettings.userId, userId),
           isNull(userSettings.onboardingCompletedAt),
+          sql`COALESCE(NULLIF(${userSettings.learningPreferences}->>'draftRevision', '')::integer, 0) < ${draft.draftRevision}`,
         ),
       )
       .returning();
-    return stateFromSettings(updatedRows[0] ?? (await loadSettings(tx, userId)));
+    return stateFromSettings(tx, updatedRows[0] ?? (await loadSettings(tx, userId)));
   });
 }
 
@@ -221,7 +271,7 @@ export async function completeOnboarding(
       .returning();
 
     if (updatedRows.length === 0) {
-      return stateFromSettings(await loadSettings(tx, userId));
+      return stateFromSettings(tx, await loadSettings(tx, userId));
     }
 
     await tx
@@ -230,9 +280,9 @@ export async function completeOnboarding(
         selectedConcepts.map((concept) => ({
           userId,
           conceptId: concept.id,
-          score: 0.25,
-          confidence: 0.2,
-          positiveWeight: 0.25,
+          score: onboardingAffinityScore,
+          confidence: onboardingAffinityConfidence,
+          positiveWeight: onboardingAffinityPositiveWeight,
           negativeWeight: 0,
           featureVersion: ONBOARDING_FEATURE_VERSION,
           lastEventAt: now,
@@ -242,7 +292,11 @@ export async function completeOnboarding(
       .onConflictDoUpdate({
         target: [userConceptAffinity.userId, userConceptAffinity.conceptId],
         set: {
+          score: sql`LEAST(1.0, GREATEST(-1.0, ${userConceptAffinity.score} + ${onboardingAffinityScore} * (1.0 - ${userConceptAffinity.confidence})))`,
+          confidence: sql`GREATEST(${userConceptAffinity.confidence}, ${onboardingAffinityConfidence})`,
+          positiveWeight: sql`LEAST(1.0, ${userConceptAffinity.positiveWeight} + ${onboardingAffinityPositiveWeight})`,
           featureVersion: ONBOARDING_FEATURE_VERSION,
+          lastEventAt: now,
           updatedAt: now,
         },
       });
@@ -266,9 +320,9 @@ export async function completeOnboarding(
 
     const updatedSettings = updatedRows[0];
     if (!updatedSettings) {
-      return stateFromSettings(await loadSettings(tx, userId));
+      return stateFromSettings(tx, await loadSettings(tx, userId));
     }
-    return stateFromSettings(updatedSettings);
+    return stateFromSettings(tx, updatedSettings);
   });
 }
 

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { onboardingDraftSchema } from "@learnspace/shared/onboarding";
+import { onboardingDraftRequestSchema } from "@learnspace/shared/onboarding";
 import { authErrorResponse } from "../../../lib/auth/errors";
 import { requireCurrentSession } from "../../../lib/auth/session";
 import { getOnboardingState, saveOnboardingDraft } from "../../../lib/onboarding/service";
@@ -20,7 +20,7 @@ export async function GET() {
 export async function PATCH(request: NextRequest) {
   try {
     const session = await requireCurrentSession();
-    const draft = onboardingDraftSchema.parse(await readJson(request));
+    const draft = onboardingDraftRequestSchema.parse(await readJson(request));
     return NextResponse.json({
       ok: true,
       state: await saveOnboardingDraft(session.user.id, draft),

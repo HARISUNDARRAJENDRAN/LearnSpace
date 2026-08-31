@@ -6,12 +6,14 @@ import {
   PERSONAS,
   PREFERRED_DURATIONS,
   PREFERRED_FORMATS,
-  SELF_REPORTED_LEVELS,
+  STARTING_LEVEL_OPTIONS,
   type OnboardingDraft,
+  type OnboardingDraftRequest,
   type Persona,
   type PreferredDuration,
   type PreferredFormat,
   type SelfReportedLevel,
+  type StartingLevelOptionId,
 } from "@learnspace/shared/onboarding";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -30,6 +32,7 @@ type InitialState = {
   completedAt: string | null;
   version: number | null;
   draft: OnboardingDraft;
+  selectedConcepts: Concept[];
 };
 
 type FlowState = {
@@ -37,7 +40,8 @@ type FlowState = {
   learningIntents: string[];
   preferredFormats: PreferredFormat[];
   preferredDuration: PreferredDuration;
-  selfReportedLevel: SelfReportedLevel;
+  selfReportedLevel: SelfReportedLevel | undefined;
+  startingLevelOption: StartingLevelOptionId | undefined;
 };
 
 type ApiError = { error?: { message?: string } };
@@ -67,31 +71,22 @@ const durationLabels: Record<PreferredDuration, string> = {
   no_preference: "No preference",
 };
 
-const levelLabels: Record<SelfReportedLevel, string> = {
-  beginner: "Just getting started",
-  intermediate: "Know the basics",
-  advanced: "Fairly comfortable",
-  mixed: "Depends on the topic",
-};
-
 function initialFlow(draft: OnboardingDraft): FlowState {
+  const startingLevelOption = draft.selfReportedLevel
+    ? STARTING_LEVEL_OPTIONS.find((option) => option.value === draft.selfReportedLevel)?.id
+    : undefined;
   return {
     ...(draft.persona ? { persona: draft.persona } : { persona: undefined }),
     learningIntents: draft.learningIntents ?? [],
     preferredFormats: draft.preferredFormats ?? [],
     preferredDuration: draft.preferredDuration ?? "no_preference",
-    selfReportedLevel: draft.selfReportedLevel ?? "mixed",
+    selfReportedLevel: draft.selfReportedLevel,
+    startingLevelOption,
   };
 }
 
-function initialConcepts(ids: string[] | undefined): Concept[] {
-  return (ids ?? []).map((id) => ({
-    id,
-    slug: id,
-    name: "Selected interest",
-    kind: "concept",
-    summary: null,
-  }));
+function initialConcepts(selectedConcepts: Concept[]): Concept[] {
+  return selectedConcepts;
 }
 
 function isAllowedIntent(persona: Persona, intent: string): boolean {
@@ -147,8 +142,9 @@ export function OnboardingFlow({
   const [step, setStep] = useState(0);
   const [flow, setFlow] = useState(() => initialFlow(initialState.draft));
   const [selectedConcepts, setSelectedConcepts] = useState(() =>
-    initialConcepts(initialState.draft.conceptIds),
+    initialConcepts(initialState.selectedConcepts),
   );
+  const [draftRevision, setDraftRevision] = useState(initialState.draft.draftRevision ?? 0);
   const [concepts, setConcepts] = useState<Concept[]>([]);
   const [conceptQuery, setConceptQuery] = useState("");
   const [conceptLoading, setConceptLoading] = useState(false);
@@ -156,6 +152,7 @@ export function OnboardingFlow({
   const [saveError, setSaveError] = useState("");
   const [submitError, setSubmitError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
@@ -200,50 +197,46 @@ export function OnboardingFlow({
     };
   }, [conceptQuery, step]);
 
-  useEffect(() => {
-    if (step === 0 || isSubmitting) {
-      return;
-    }
-
-    const draft: OnboardingDraft = {
+  function buildDraft(revision: number): OnboardingDraftRequest {
+    return {
+      ...(flow.persona ? { persona: flow.persona } : {}),
+      learningIntents: flow.learningIntents,
+      preferredFormats: flow.preferredFormats,
       preferredDuration: flow.preferredDuration,
-      selfReportedLevel: flow.selfReportedLevel,
+      ...(flow.selfReportedLevel ? { selfReportedLevel: flow.selfReportedLevel } : {}),
       conceptIds: selectedConcepts.map((concept) => concept.id),
+      draftRevision: revision,
     };
-    if (flow.persona) {
-      draft.persona = flow.persona;
-    }
-    if (flow.learningIntents.length > 0) {
-      draft.learningIntents = flow.learningIntents;
-    }
-    if (flow.preferredFormats.length > 0) {
-      draft.preferredFormats = flow.preferredFormats;
+  }
+
+  async function persistDraft(): Promise<boolean> {
+    if (isSaving) {
+      return false;
     }
 
-    const controller = new AbortController();
-    void (async () => {
-      try {
-        const response = await fetch("/api/onboarding", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(draft),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          const data = (await response.json()) as ApiError;
-          setSaveError(apiErrorMessage(data));
-        } else {
-          setSaveError("");
-        }
-      } catch {
-        if (!controller.signal.aborted) {
-          setSaveError("Your progress could not be saved yet.");
-        }
+    const nextRevision = draftRevision + 1;
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/onboarding", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildDraft(nextRevision)),
+      });
+      const data = (await response.json()) as ApiError & { state?: InitialState };
+      if (!response.ok) {
+        setSaveError(apiErrorMessage(data));
+        return false;
       }
-    })();
-
-    return () => controller.abort();
-  }, [flow, isSubmitting, selectedConcepts, step]);
+      setDraftRevision(Math.max(nextRevision, data.state?.draft.draftRevision ?? nextRevision));
+      setSaveError("");
+      return true;
+    } catch {
+      setSaveError("Your progress could not be saved yet.");
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
   function toggleIntent(intent: string) {
     setFlow((current) => ({
@@ -279,18 +272,33 @@ export function OnboardingFlow({
     }));
   }
 
-  function goBack() {
+  async function goBack() {
+    if (isSaving) {
+      return;
+    }
     setSubmitError("");
-    setStep((current) => Math.max(0, current - 1));
+    if (step === 0 || (await persistDraft())) {
+      setStep((current) => Math.max(0, current - 1));
+    }
   }
 
-  function goForward() {
+  async function goForward() {
+    if (isSaving) {
+      return;
+    }
     setSubmitError("");
-    setStep((current) => Math.min(5, current + 1));
+    if (step === 0 || (await persistDraft())) {
+      setStep((current) => Math.min(5, current + 1));
+    }
   }
 
   async function complete() {
-    if (!flow.persona || flow.learningIntents.length === 0 || flow.preferredFormats.length === 0) {
+    if (
+      !flow.persona ||
+      flow.learningIntents.length === 0 ||
+      flow.preferredFormats.length === 0 ||
+      !flow.selfReportedLevel
+    ) {
       setSubmitError("Finish each step before completing setup.");
       return;
     }
@@ -491,17 +499,23 @@ export function OnboardingFlow({
               {step === 5 ? (
                 <fieldset className="onboarding-level-list">
                   <legend className="sr-only">Starting level</legend>
-                  {SELF_REPORTED_LEVELS.map((level) => (
+                  {STARTING_LEVEL_OPTIONS.map((option) => (
                     <button
-                      className={`onboarding-level-option ${flow.selfReportedLevel === level ? "is-selected" : ""}`}
+                      className={`onboarding-level-option ${flow.startingLevelOption === option.id ? "is-selected" : ""}`}
                       type="button"
-                      aria-pressed={flow.selfReportedLevel === level}
-                      key={level}
-                      onClick={() => setFlow((current) => ({ ...current, selfReportedLevel: level }))}
+                      aria-pressed={flow.startingLevelOption === option.id}
+                      key={option.id}
+                      onClick={() =>
+                        setFlow((current) => ({
+                          ...current,
+                          selfReportedLevel: option.value,
+                          startingLevelOption: option.id,
+                        }))
+                      }
                     >
                       <span className="onboarding-level-dot" aria-hidden="true" />
-                      <span>{levelLabels[level]}</span>
-                      <span className="onboarding-option-check" aria-hidden="true">{flow.selfReportedLevel === level ? "✓" : ""}</span>
+                      <span>{option.label}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.startingLevelOption === option.id ? "✓" : ""}</span>
                     </button>
                   ))}
                 </fieldset>
@@ -529,7 +543,7 @@ export function OnboardingFlow({
                     Continue <span aria-hidden="true">↗</span>
                   </button>
                 ) : (
-                  <button className="onboarding-primary" type="button" onClick={complete} disabled={isSubmitting}>
+                  <button className="onboarding-primary" type="button" onClick={complete} disabled={isSubmitting || isSaving || !flow.selfReportedLevel}>
                     {isSubmitting ? "Saving your space…" : "Start learning"} <span aria-hidden="true">↗</span>
                   </button>
                 )}

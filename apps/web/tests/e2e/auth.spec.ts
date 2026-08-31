@@ -39,14 +39,39 @@ async function completeOnboarding(page: Page, refreshDraft = false) {
   await expect(page.getByPlaceholder("Search topics, skills, or domains")).toBeVisible();
   await page.getByPlaceholder("Search topics, skills, or domains").fill("LLM");
   await expect(page.getByRole("button", { name: /Large Language Models/ })).toBeVisible();
-  await page.getByPlaceholder("Search topics, skills, or domains").fill("");
+  await page.getByPlaceholder("Search topics, skills, or domains").fill("AI");
   await page.getByRole("button", { name: /AI \/ Machine Learning/ }).click();
+  await page.getByPlaceholder("Search topics, skills, or domains").fill("Python");
   await page.getByRole("button", { name: "Python skill" }).click();
+  await page.getByPlaceholder("Search topics, skills, or domains").fill("React");
   await page.getByRole("button", { name: "React skill" }).click();
   await expect(page.getByText("3 selected · minimum 3")).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
+  if (refreshDraft) {
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Get started" })).toBeVisible();
+    await expect(page.locator("[data-onboarding-hydrated]")).toHaveAttribute(
+      "data-onboarding-hydrated",
+      "true",
+    );
+    await page.getByRole("button", { name: "Get started" }).click();
+    await page.getByRole("button", { name: "Student" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("button", { name: "Coursework" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.locator("button.onboarding-chip.is-selected").filter({ hasText: "AI / Machine Learning" })).toBeVisible();
+    await expect(page.locator("button.onboarding-chip.is-selected").filter({ hasText: "Python" })).toBeVisible();
+    await expect(page.locator("button.onboarding-chip.is-selected").filter({ hasText: "React" })).toBeVisible();
+    await page.getByRole("button", { name: "Continue" }).click();
+  }
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("button", { name: "Start learning" })).toBeDisabled();
+  await page.getByRole("button", { name: "Just getting started" }).click();
+  await page.getByRole("button", { name: "I know the basics" }).click();
+  await page.getByRole("button", { name: "I'm fairly comfortable" }).click();
+  await page.getByRole("button", { name: "It depends on the topic" }).click();
+  await page.getByRole("button", { name: "I'm advanced" }).click();
   await page.getByRole("button", { name: "Start learning" }).click();
   await expect(page).toHaveURL(/\/app/);
 }
