@@ -15,11 +15,10 @@ drizzle-meta/
 artifacts/
 playwright-report/
 test-results/
+.codegraph/
 
 # TypeScript source directories must not collect compiler output.
 **/*.js
 **/*.js.map
 **/*.d.ts
 **/*.d.ts.map
-.vercel
-.env*.local

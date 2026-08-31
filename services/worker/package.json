@@ -6,7 +6,6 @@
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit",
-    "test": "node -e \"console.log('worker boundary scaffold only')\""
+    "lint": "tsc --noEmit"
   }
 }

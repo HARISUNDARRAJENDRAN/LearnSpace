@@ -21,8 +21,7 @@
     "db:test": "pnpm --filter @learnspace/db db:test",
     "db:seed:dev": "pnpm --filter @learnspace/db db:seed:dev",
     "db:reset:local": "pnpm --filter @learnspace/db db:reset:local",
-    "db:studio": "pnpm --filter @learnspace/db db:studio",
-    "db:bootstrap": "pnpm db:migrate && pnpm db:verify && pnpm db:seed:dev && pnpm db:test"
+    "db:studio": "pnpm --filter @learnspace/db db:studio"
   },
   "devDependencies": {
     "turbo": "2.10.12",
