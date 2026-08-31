@@ -40,7 +40,9 @@ test(
       assert.equal(expandedRows.length, 3);
       const expandedConceptIds = expandedRows.map((concept) => concept.id);
       const behaviorConceptId = expandedConceptIds[0];
+      const onboardingConceptId = expandedConceptIds[1];
       assert.ok(behaviorConceptId);
+      assert.ok(onboardingConceptId);
       const email = `onboarding-${randomUUID()}@example.test`;
       const otherEmail = `onboarding-other-${randomUUID()}@example.test`;
       const passwordHash = await hashPassword("onboarding-password-123");
@@ -49,6 +51,33 @@ test(
       userIds.push(user.id, otherUser.id);
 
       assert.equal((await getOnboardingState(user.id)).completed, false);
+      const defaultSearch = await searchOnboardingConcepts(user.id, "");
+      assert.deepEqual(
+        defaultSearch.slice(0, 21).map((concept) => concept.slug),
+        [
+          "ai-machine-learning",
+          "data-science",
+          "programming-computer-science",
+          "web-development",
+          "devops-cloud",
+          "cybersecurity",
+          "mathematics-statistics",
+          "physics",
+          "biology",
+          "english-language-learning",
+          "communication-public-speaking",
+          "python",
+          "transformers",
+          "large-language-models",
+          "react",
+          "linear-algebra",
+          "algorithms",
+          "data-structures",
+          "deep-learning",
+          "computer-vision",
+          "operating-systems",
+        ],
+      );
       const searchResults = await searchOnboardingConcepts(user.id, "LLM");
       assert.equal(searchResults.some((concept) => concept.slug === "large-language-models"), true);
       assert.equal((await searchOnboardingConcepts(user.id, "quantum")).some((concept) => concept.slug === "quantum-mechanics"), true);
@@ -142,7 +171,8 @@ test(
         INSERT INTO discovery.user_concept_affinity
           (user_id, concept_id, score, confidence, positive_weight, negative_weight, feature_version, last_event_at)
         VALUES
-          (${user.id}, ${behaviorConceptId}, 0.8, 0.9, 0.7, 0.3, 'behavior-v1', now())
+          (${user.id}, ${behaviorConceptId}, 0.8, 0.9, 0.7, 0.3, 'behavior-v1', now()),
+          (${user.id}, ${onboardingConceptId}, 0.4, 0.1, 0.6, 0.1, 'onboarding-v1', now())
       `;
 
       const completion: OnboardingCompletion = {
@@ -191,22 +221,33 @@ test(
         ORDER BY concept_id
       `;
       assert.equal(affinityRows.length, 3);
-      assert.equal(affinityRows.every((row) => row.feature_version === "onboarding-v1"), true);
-      const mergedAffinity = affinityRows.find((row) => row.concept_id === expandedConceptIds[0]);
-      assert.ok(mergedAffinity);
-      const expectedMergedScore = Math.min(1, Math.max(-1, 0.8 + 0.25 * (1 - 0.9)));
-      const expectedMergedConfidence = Math.max(0.9, 0.2);
-      const expectedMergedPositiveWeight = Math.min(1, 0.7 + 0.25);
-      assert.ok(Math.abs(mergedAffinity.score - expectedMergedScore) < 0.001);
-      assert.equal(mergedAffinity.confidence, expectedMergedConfidence);
-      assert.ok(Math.abs(mergedAffinity.positive_weight - expectedMergedPositiveWeight) < 0.001);
-      assert.equal(mergedAffinity.negative_weight, 0.3);
-      assert.equal(
-        affinityRows
-          .filter((row) => row.concept_id !== expandedConceptIds[0])
-          .every((row) => row.score === 0.25 && row.confidence === 0.2),
-        true,
+      const preservedBehavior = affinityRows.find((row) => row.concept_id === behaviorConceptId);
+      assert.deepEqual(preservedBehavior, {
+        concept_id: behaviorConceptId,
+        feature_version: "behavior-v1",
+        score: 0.8,
+        confidence: 0.9,
+        positive_weight: 0.7,
+        negative_weight: 0.3,
+      });
+      const refreshedOnboarding = affinityRows.find((row) => row.concept_id === onboardingConceptId);
+      assert.ok(refreshedOnboarding);
+      assert.equal(refreshedOnboarding.feature_version, "onboarding-v1");
+      assert.ok(Math.abs(refreshedOnboarding.score - (0.4 + 0.25 * (1 - 0.1))) < 0.001);
+      assert.equal(refreshedOnboarding.confidence, Math.max(0.1, 0.2));
+      assert.ok(Math.abs(refreshedOnboarding.positive_weight - Math.min(1, 0.6 + 0.25)) < 0.001);
+      assert.equal(refreshedOnboarding.negative_weight, 0.1);
+      const coldStartAffinity = affinityRows.find(
+        (row) => row.concept_id !== behaviorConceptId && row.concept_id !== onboardingConceptId,
       );
+      assert.deepEqual(coldStartAffinity, {
+        concept_id: expandedConceptIds[2],
+        feature_version: "onboarding-v1",
+        score: 0.25,
+        confidence: 0.2,
+        positive_weight: 0.25,
+        negative_weight: 0,
+      });
 
       const eventRows = await migrator<{ event_type: string; idempotency_key: string; payload: Record<string, unknown> }[]>`
         SELECT event_type, idempotency_key, payload

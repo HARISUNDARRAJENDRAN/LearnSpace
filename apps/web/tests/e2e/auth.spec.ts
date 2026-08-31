@@ -48,6 +48,7 @@ async function completeOnboarding(page: Page, refreshDraft = false) {
   await expect(page.getByText("3 selected · minimum 3")).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   if (refreshDraft) {
+    await expect(page.getByRole("button", { name: "Continue" })).toBeEnabled();
     await page.reload();
     await expect(page.getByRole("button", { name: "Get started" })).toBeVisible();
     await expect(page.locator("[data-onboarding-hydrated]")).toHaveAttribute(
@@ -93,6 +94,8 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await page.goto("/app");
   await expect(page).toHaveURL(/\/onboarding/);
   await completeOnboarding(page, true);
+  await page.goto("/onboarding");
+  await expect(page).toHaveURL(/\/app/);
   await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
   await page.waitForLoadState("load");
 

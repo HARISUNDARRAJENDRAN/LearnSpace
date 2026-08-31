@@ -22,6 +22,32 @@ const conceptSearchLimit = 40;
 const onboardingAffinityScore = 0.25;
 const onboardingAffinityConfidence = 0.2;
 const onboardingAffinityPositiveWeight = 0.25;
+const featuredConceptSlugs = [
+  "ai-machine-learning",
+  "data-science",
+  "programming-computer-science",
+  "web-development",
+  "devops-cloud",
+  "cybersecurity",
+  "mathematics-statistics",
+  "physics",
+  "biology",
+  "english-language-learning",
+  "communication-public-speaking",
+  "python",
+  "transformers",
+  "large-language-models",
+  "react",
+  "linear-algebra",
+  "algorithms",
+  "data-structures",
+  "deep-learning",
+  "computer-vision",
+  "operating-systems",
+] as const;
+const featuredConceptRank = new Map<string, number>(
+  featuredConceptSlugs.map((slug, index) => [slug, index]),
+);
 
 export type OnboardingConcept = {
   id: string;
@@ -180,8 +206,8 @@ export async function searchOnboardingConcepts(
       )
     : eq(concepts.status, "active");
 
-  return withUserTransaction(userId, async (tx) =>
-    tx
+  return withUserTransaction(userId, async (tx) => {
+    const query = tx
       .select({
         id: concepts.id,
         slug: concepts.slug,
@@ -190,10 +216,21 @@ export async function searchOnboardingConcepts(
         summary: concepts.summary,
       })
       .from(concepts)
-      .where(where)
-      .orderBy(asc(concepts.name))
-      .limit(conceptSearchLimit),
-  );
+      .where(where);
+    if (normalizedQuery) {
+      return query.orderBy(asc(concepts.name)).limit(conceptSearchLimit);
+    }
+
+    const rows = await query.orderBy(asc(concepts.name));
+    return rows
+      .toSorted(
+        (left, right) =>
+          (featuredConceptRank.get(left.slug) ?? featuredConceptSlugs.length) -
+            (featuredConceptRank.get(right.slug) ?? featuredConceptSlugs.length) ||
+          left.name.localeCompare(right.name),
+      )
+      .slice(0, conceptSearchLimit);
+  });
 }
 
 export async function saveOnboardingDraft(
@@ -295,10 +332,10 @@ export async function completeOnboarding(
           score: sql`LEAST(1.0, GREATEST(-1.0, ${userConceptAffinity.score} + ${onboardingAffinityScore} * (1.0 - ${userConceptAffinity.confidence})))`,
           confidence: sql`GREATEST(${userConceptAffinity.confidence}, ${onboardingAffinityConfidence})`,
           positiveWeight: sql`LEAST(1.0, ${userConceptAffinity.positiveWeight} + ${onboardingAffinityPositiveWeight})`,
-          featureVersion: ONBOARDING_FEATURE_VERSION,
           lastEventAt: now,
           updatedAt: now,
         },
+        where: eq(userConceptAffinity.featureVersion, ONBOARDING_FEATURE_VERSION),
       });
 
     await tx
