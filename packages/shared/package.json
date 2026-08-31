@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./domain-values": "./src/domain-values.ts",
-    "./contracts": "./src/contracts.ts"
+    "./contracts": "./src/contracts.ts",
+    "./onboarding": "./src/onboarding.ts"
   },
   "scripts": {
     "build": "tsc --build",

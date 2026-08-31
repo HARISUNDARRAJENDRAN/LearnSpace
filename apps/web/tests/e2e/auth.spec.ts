@@ -1,10 +1,55 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const email = process.env.PLAYWRIGHT_E2E_EMAIL ?? "browser-e2e@example.test";
 const googleEmail = process.env.AUTH_TEST_GOOGLE_EMAIL ?? "google-e2e@example.test";
 const password = "browser-password-123";
 
 test.describe.configure({ mode: "serial" });
+
+async function completeOnboarding(page: Page, refreshDraft = false) {
+  await expect(page).toHaveURL(/\/onboarding/);
+  await expect(page.locator("[data-onboarding-hydrated]")).toHaveAttribute(
+    "data-onboarding-hydrated",
+    "true",
+  );
+  await page.getByRole("button", { name: "Get started" }).click();
+  const personaDraftSaved = refreshDraft
+    ? page.waitForResponse((response) => {
+        const request = response.request();
+        return (
+          response.url().endsWith("/api/onboarding") &&
+          request.method() === "PATCH" &&
+          response.status() === 200 &&
+          request.postData()?.includes('"persona":"student"') === true
+        );
+      })
+    : null;
+  await page.getByRole("button", { name: "Student" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  if (refreshDraft) {
+    await personaDraftSaved;
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Get started" })).toBeVisible();
+    await page.getByRole("button", { name: "Get started" }).click();
+    await expect(page.getByRole("button", { name: "Student" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Continue" }).click();
+  }
+  await page.getByRole("button", { name: "Coursework" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByPlaceholder("Search topics, skills, or domains")).toBeVisible();
+  await page.getByPlaceholder("Search topics, skills, or domains").fill("LLM");
+  await expect(page.getByRole("button", { name: /Large Language Models/ })).toBeVisible();
+  await page.getByPlaceholder("Search topics, skills, or domains").fill("");
+  await page.getByRole("button", { name: /AI \/ Machine Learning/ }).click();
+  await page.getByRole("button", { name: "Python skill" }).click();
+  await page.getByRole("button", { name: "React skill" }).click();
+  await expect(page.getByText("3 selected · minimum 3")).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Clear explanations" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Start learning" }).click();
+  await expect(page).toHaveURL(/\/app/);
+}
 
 test("register, verify, log in, access the app, and log out", async ({ page }) => {
   await page.goto("/register");
@@ -19,7 +64,10 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await expect(verificationLink).toBeVisible();
   const verificationHref = await verificationLink.getAttribute("href");
   await verificationLink.click();
-  await expect(page).toHaveURL(/\/app/);
+  await expect(page).toHaveURL(/\/onboarding/);
+  await page.goto("/app");
+  await expect(page).toHaveURL(/\/onboarding/);
+  await completeOnboarding(page, true);
   await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
   await page.waitForLoadState("load");
 
@@ -82,7 +130,8 @@ test("Google takeover clears the unverified password credential", async ({ page 
 
   await page.goto("/login");
   await page.getByRole("link", { name: "Continue with Google" }).click();
-  await expect(page).toHaveURL(/\/app/);
+  await expect(page).toHaveURL(/\/onboarding/);
+  await completeOnboarding(page);
   await page.waitForLoadState("load");
   await page.getByRole("button", { name: "Log out" }).click();
 

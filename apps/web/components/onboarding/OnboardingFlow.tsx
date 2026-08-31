@@ -1,0 +1,543 @@
+"use client";
+
+import {
+  ONBOARDING_VERSION,
+  PERSONA_INTENTS,
+  PERSONAS,
+  PREFERRED_DURATIONS,
+  PREFERRED_FORMATS,
+  SELF_REPORTED_LEVELS,
+  type OnboardingDraft,
+  type Persona,
+  type PreferredDuration,
+  type PreferredFormat,
+  type SelfReportedLevel,
+} from "@learnspace/shared/onboarding";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { LearnSpaceLogo } from "../marketing/hero/LearnSpaceLogo";
+
+type Concept = {
+  id: string;
+  slug: string;
+  name: string;
+  kind: string;
+  summary: string | null;
+};
+
+type InitialState = {
+  completed: boolean;
+  completedAt: string | null;
+  version: number | null;
+  draft: OnboardingDraft;
+};
+
+type FlowState = {
+  persona: Persona | undefined;
+  learningIntents: string[];
+  preferredFormats: PreferredFormat[];
+  preferredDuration: PreferredDuration;
+  selfReportedLevel: SelfReportedLevel;
+};
+
+type ApiError = { error?: { message?: string } };
+
+const personaLabels: Record<Persona, string> = {
+  student: "Student",
+  professional: "Working Professional",
+  researcher: "Researcher / Academic",
+  builder: "Builder / Creator",
+  lifelong_learner: "Lifelong Learner",
+  other: "Other",
+};
+
+const formatLabels: Record<PreferredFormat, string> = {
+  clear_explanations: "Clear explanations",
+  deep_dives: "Deep dives",
+  learn_by_building: "Learn by building",
+  research_backed: "Research-backed",
+  quick_learning: "Quick learning",
+  conversational_tutor_led: "Conversational / tutor-led",
+};
+
+const durationLabels: Record<PreferredDuration, string> = {
+  under_10_minutes: "<10 min",
+  ten_to_thirty_minutes: "10–30 min",
+  thirty_to_sixty_minutes: "30–60 min",
+  no_preference: "No preference",
+};
+
+const levelLabels: Record<SelfReportedLevel, string> = {
+  beginner: "Just getting started",
+  intermediate: "Know the basics",
+  advanced: "Fairly comfortable",
+  mixed: "Depends on the topic",
+};
+
+function initialFlow(draft: OnboardingDraft): FlowState {
+  return {
+    ...(draft.persona ? { persona: draft.persona } : { persona: undefined }),
+    learningIntents: draft.learningIntents ?? [],
+    preferredFormats: draft.preferredFormats ?? [],
+    preferredDuration: draft.preferredDuration ?? "no_preference",
+    selfReportedLevel: draft.selfReportedLevel ?? "mixed",
+  };
+}
+
+function initialConcepts(ids: string[] | undefined): Concept[] {
+  return (ids ?? []).map((id) => ({
+    id,
+    slug: id,
+    name: "Selected interest",
+    kind: "concept",
+    summary: null,
+  }));
+}
+
+function isAllowedIntent(persona: Persona, intent: string): boolean {
+  return PERSONA_INTENTS[persona].some((candidate) => candidate === intent);
+}
+
+const intentLabels: Record<string, string> = {
+  coursework: "Coursework",
+  exams: "Exams",
+  placements_interviews: "Placements / interviews",
+  learn_new_skill: "Learn a new skill",
+  build_project: "Build a project",
+  research: "Research",
+  explore: "Explore",
+  upskill_current_role: "Upskill in current role",
+  career_switch: "Career switch",
+  interview_preparation: "Interview preparation",
+  learn_new_technology: "Learn a new technology",
+  build_something: "Build something",
+  keep_up_with_field: "Keep up with my field",
+  explore_outside_work: "Explore outside work",
+  read_papers: "Read papers",
+  follow_research_area: "Follow a research area",
+  understand_unfamiliar_concepts: "Understand unfamiliar concepts",
+  reproduce_implementations: "Reproduce implementations",
+  literature_review: "Literature review",
+  discover_related_work: "Discover related work",
+  teaching_preparation: "Teaching / preparation",
+  learn_technology: "Learn a technology",
+  prototype_idea: "Prototype an idea",
+  understand_how_something_works: "Understand how something works",
+  improve_skill: "Improve a skill",
+  find_inspiration: "Find inspiration",
+  understand_something_deeply: "Understand something deeply",
+  explore_interesting_topics: "Explore interesting topics",
+  develop_new_skills: "Develop new skills",
+  read_more_deeply: "Read more deeply",
+  follow_curiosity: "Follow curiosity",
+};
+
+function apiErrorMessage(data: ApiError): string {
+  return data.error?.message ?? "We could not save your learning preferences.";
+}
+
+export function OnboardingFlow({
+  firstName,
+  initialState,
+}: {
+  firstName: string;
+  initialState: InitialState;
+}) {
+  const router = useRouter();
+  const [step, setStep] = useState(0);
+  const [flow, setFlow] = useState(() => initialFlow(initialState.draft));
+  const [selectedConcepts, setSelectedConcepts] = useState(() =>
+    initialConcepts(initialState.draft.conceptIds),
+  );
+  const [concepts, setConcepts] = useState<Concept[]>([]);
+  const [conceptQuery, setConceptQuery] = useState("");
+  const [conceptLoading, setConceptLoading] = useState(false);
+  const [conceptError, setConceptError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [submitError, setSubmitError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (step !== 3) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = window.setTimeout(async () => {
+      setConceptLoading(true);
+      setConceptError("");
+      try {
+        const response = await fetch(
+          `/api/onboarding/concepts?q=${encodeURIComponent(conceptQuery)}`,
+          { signal: controller.signal },
+        );
+        const data = (await response.json()) as { concepts?: Concept[] } & ApiError;
+        if (!response.ok) {
+          setConceptError(apiErrorMessage(data));
+          return;
+        }
+        setConcepts(data.concepts ?? []);
+        setSelectedConcepts((current) =>
+          current.map((selected) => data.concepts?.find((concept) => concept.id === selected.id) ?? selected),
+        );
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) {
+          setConceptError("We could not load the interest catalog.");
+        }
+      } finally {
+        setConceptLoading(false);
+      }
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [conceptQuery, step]);
+
+  useEffect(() => {
+    if (step === 0 || isSubmitting) {
+      return;
+    }
+
+    const draft: OnboardingDraft = {
+      preferredDuration: flow.preferredDuration,
+      selfReportedLevel: flow.selfReportedLevel,
+      conceptIds: selectedConcepts.map((concept) => concept.id),
+    };
+    if (flow.persona) {
+      draft.persona = flow.persona;
+    }
+    if (flow.learningIntents.length > 0) {
+      draft.learningIntents = flow.learningIntents;
+    }
+    if (flow.preferredFormats.length > 0) {
+      draft.preferredFormats = flow.preferredFormats;
+    }
+
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch("/api/onboarding", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(draft),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const data = (await response.json()) as ApiError;
+          setSaveError(apiErrorMessage(data));
+        } else {
+          setSaveError("");
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setSaveError("Your progress could not be saved yet.");
+        }
+      }
+    })();
+
+    return () => controller.abort();
+  }, [flow, isSubmitting, selectedConcepts, step]);
+
+  function toggleIntent(intent: string) {
+    setFlow((current) => ({
+      ...current,
+      learningIntents: current.learningIntents.includes(intent)
+        ? current.learningIntents.filter((selected) => selected !== intent)
+        : [...current.learningIntents, intent],
+    }));
+  }
+
+  function toggleFormat(format: PreferredFormat) {
+    setFlow((current) => ({
+      ...current,
+      preferredFormats: current.preferredFormats.includes(format)
+        ? current.preferredFormats.filter((selected) => selected !== format)
+        : [...current.preferredFormats, format],
+    }));
+  }
+
+  function toggleConcept(concept: Concept) {
+    setSelectedConcepts((current) =>
+      current.some((selected) => selected.id === concept.id)
+        ? current.filter((selected) => selected.id !== concept.id)
+        : [...current, concept],
+    );
+  }
+
+  function selectPersona(persona: Persona) {
+    setFlow((current) => ({
+      ...current,
+      persona,
+      learningIntents: current.learningIntents.filter((intent) => isAllowedIntent(persona, intent)),
+    }));
+  }
+
+  function goBack() {
+    setSubmitError("");
+    setStep((current) => Math.max(0, current - 1));
+  }
+
+  function goForward() {
+    setSubmitError("");
+    setStep((current) => Math.min(5, current + 1));
+  }
+
+  async function complete() {
+    if (!flow.persona || flow.learningIntents.length === 0 || flow.preferredFormats.length === 0) {
+      setSubmitError("Finish each step before completing setup.");
+      return;
+    }
+    if (selectedConcepts.length < 3) {
+      setSubmitError("Choose at least three interests to continue.");
+      return;
+    }
+
+    setSubmitError("");
+    setIsSubmitting(true);
+    try {
+      const response = await fetch("/api/onboarding/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          persona: flow.persona,
+          learningIntents: flow.learningIntents,
+          preferredFormats: flow.preferredFormats,
+          preferredDuration: flow.preferredDuration,
+          selfReportedLevel: flow.selfReportedLevel,
+          conceptIds: selectedConcepts.map((concept) => concept.id),
+        }),
+      });
+      const data = (await response.json()) as ApiError & { ok?: boolean };
+      if (!response.ok) {
+        setSubmitError(apiErrorMessage(data));
+        return;
+      }
+      router.replace("/app");
+      router.refresh();
+    } catch {
+      setSubmitError("We could not finish setting up your space. Try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const currentPersonaIntents = flow.persona ? PERSONA_INTENTS[flow.persona] : [];
+  const visibleConcepts = concepts.filter(
+    (concept) => !selectedConcepts.some((selected) => selected.id === concept.id),
+  );
+
+  return (
+    <main className="onboarding-page">
+      <div className="onboarding-orb onboarding-orb-left" aria-hidden="true" />
+      <div className="onboarding-orb onboarding-orb-right" aria-hidden="true" />
+      <section
+        className="onboarding-shell"
+        aria-labelledby="onboarding-title"
+        data-onboarding-hydrated={isHydrated ? "true" : "false"}
+      >
+        <header className="onboarding-header">
+          <a className="onboarding-brand" href="/" aria-label="LearnSpace home">
+            <LearnSpaceLogo />
+          </a>
+          {step > 0 ? (
+            <span className="onboarding-progress">Step {step} of 5</span>
+          ) : null}
+        </header>
+
+        <div className="onboarding-content">
+          {step === 0 ? (
+            <div className="onboarding-welcome">
+              <span className="onboarding-kicker">A space made for your mind</span>
+              <h1 id="onboarding-title">Welcome to LearnSpace, {firstName}.</h1>
+              <p>Let&apos;s shape this place around how you learn.</p>
+              <button className="onboarding-primary" type="button" onClick={goForward}>
+                Get started <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="onboarding-heading">
+                <span className="onboarding-kicker">{ONBOARDING_VERSION === 1 ? "Your learning profile" : "LearnSpace"}</span>
+                {step === 1 ? <h1 id="onboarding-title">How do you see yourself learning?</h1> : null}
+                {step === 2 ? <h1 id="onboarding-title">What brings you here?</h1> : null}
+                {step === 3 ? <h1 id="onboarding-title">What could you spend hours learning about?</h1> : null}
+                {step === 4 ? <h1 id="onboarding-title">What helps ideas stick?</h1> : null}
+                {step === 5 ? <h1 id="onboarding-title">Where are you starting from?</h1> : null}
+                {step === 1 ? <p>Choose the path that feels closest right now.</p> : null}
+                {step === 2 ? <p>Select everything that sounds like you.</p> : null}
+                {step === 3 ? <p>Pick at least three. You can always change these later.</p> : null}
+                {step === 4 ? <p>There is no wrong way to learn. Choose what feels useful.</p> : null}
+                {step === 5 ? <p>We&apos;ll use this as a starting point, never a label.</p> : null}
+              </div>
+
+              {step === 1 ? (
+                <fieldset className="onboarding-options onboarding-personas">
+                  <legend className="sr-only">Persona</legend>
+                  {PERSONAS.map((persona) => (
+                    <button
+                      className={`onboarding-option ${flow.persona === persona ? "is-selected" : ""}`}
+                      type="button"
+                      aria-pressed={flow.persona === persona}
+                      key={persona}
+                      onClick={() => selectPersona(persona)}
+                    >
+                      <span>{personaLabels[persona]}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.persona === persona ? "✓" : ""}</span>
+                    </button>
+                  ))}
+                </fieldset>
+              ) : null}
+
+              {step === 2 ? (
+                <fieldset className="onboarding-options onboarding-intents">
+                  <legend className="sr-only">Learning intentions</legend>
+                  {currentPersonaIntents.map((intent) => (
+                    <button
+                      className={`onboarding-option ${flow.learningIntents.includes(intent) ? "is-selected" : ""}`}
+                      type="button"
+                      aria-pressed={flow.learningIntents.includes(intent)}
+                      key={intent}
+                      onClick={() => toggleIntent(intent)}
+                    >
+                      <span>{intentLabels[intent] ?? intent}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.learningIntents.includes(intent) ? "✓" : ""}</span>
+                    </button>
+                  ))}
+                </fieldset>
+              ) : null}
+
+              {step === 3 ? (
+                <div className="onboarding-interest-picker">
+                  <label className="onboarding-search">
+                    <span className="sr-only">Search interests</span>
+                    <span aria-hidden="true">⌕</span>
+                    <input
+                      type="search"
+                      value={conceptQuery}
+                      onChange={(event) => setConceptQuery(event.target.value)}
+                      placeholder="Search topics, skills, or domains"
+                    />
+                  </label>
+                  <div className="onboarding-selected" aria-live="polite">
+                    {selectedConcepts.map((concept) => (
+                      <button
+                        className="onboarding-chip is-selected"
+                        type="button"
+                        key={concept.id}
+                        onClick={() => toggleConcept(concept)}
+                      >
+                        {concept.name} <span aria-hidden="true">×</span>
+                      </button>
+                    ))}
+                  </div>
+                  {conceptLoading ? <p className="onboarding-muted">Finding concepts…</p> : null}
+                  {conceptError ? <p className="onboarding-inline-error" role="alert">{conceptError}</p> : null}
+                  <div className="onboarding-concept-grid">
+                    {visibleConcepts.map((concept) => (
+                      <button className="onboarding-chip" type="button" key={concept.id} onClick={() => toggleConcept(concept)}>
+                        <span>{concept.name}</span>
+                        <small>{concept.kind}</small>
+                      </button>
+                    ))}
+                  </div>
+                  {!conceptLoading && visibleConcepts.length === 0 ? (
+                    <p className="onboarding-muted">No matching concepts yet. Try a broader search.</p>
+                  ) : null}
+                  <p className="onboarding-selection-count">{selectedConcepts.length} selected · minimum 3</p>
+                </div>
+              ) : null}
+
+              {step === 4 ? (
+                <div className="onboarding-style-stack">
+                  <fieldset className="onboarding-options onboarding-format-grid">
+                    <legend className="onboarding-field-label">Learning style</legend>
+                    {PREFERRED_FORMATS.map((format) => (
+                      <button
+                        className={`onboarding-option ${flow.preferredFormats.includes(format) ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={flow.preferredFormats.includes(format)}
+                        key={format}
+                        onClick={() => toggleFormat(format)}
+                      >
+                        <span>{formatLabels[format]}</span>
+                        <span className="onboarding-option-check" aria-hidden="true">{flow.preferredFormats.includes(format) ? "✓" : ""}</span>
+                      </button>
+                    ))}
+                  </fieldset>
+                  <fieldset className="onboarding-choice-row">
+                    <legend className="onboarding-field-label">Typical learning time</legend>
+                    {PREFERRED_DURATIONS.map((duration) => (
+                      <button
+                        className={`onboarding-small-option ${flow.preferredDuration === duration ? "is-selected" : ""}`}
+                        type="button"
+                        aria-pressed={flow.preferredDuration === duration}
+                        key={duration}
+                        onClick={() => setFlow((current) => ({ ...current, preferredDuration: duration }))}
+                      >
+                        {durationLabels[duration]}
+                      </button>
+                    ))}
+                  </fieldset>
+                </div>
+              ) : null}
+
+              {step === 5 ? (
+                <fieldset className="onboarding-level-list">
+                  <legend className="sr-only">Starting level</legend>
+                  {SELF_REPORTED_LEVELS.map((level) => (
+                    <button
+                      className={`onboarding-level-option ${flow.selfReportedLevel === level ? "is-selected" : ""}`}
+                      type="button"
+                      aria-pressed={flow.selfReportedLevel === level}
+                      key={level}
+                      onClick={() => setFlow((current) => ({ ...current, selfReportedLevel: level }))}
+                    >
+                      <span className="onboarding-level-dot" aria-hidden="true" />
+                      <span>{levelLabels[level]}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.selfReportedLevel === level ? "✓" : ""}</span>
+                    </button>
+                  ))}
+                </fieldset>
+              ) : null}
+
+              {saveError ? <p className="onboarding-inline-error" role="status">{saveError}</p> : null}
+              {submitError ? <p className="onboarding-inline-error" role="alert">{submitError}</p> : null}
+
+              <div className="onboarding-actions">
+                <button className="onboarding-back" type="button" onClick={goBack}>
+                  <span aria-hidden="true">←</span> Back
+                </button>
+                {step < 5 ? (
+                  <button
+                    className="onboarding-primary"
+                    type="button"
+                    onClick={goForward}
+                    disabled={
+                      (step === 1 && !flow.persona) ||
+                      (step === 2 && flow.learningIntents.length === 0) ||
+                      (step === 3 && selectedConcepts.length < 3) ||
+                      (step === 4 && flow.preferredFormats.length === 0)
+                    }
+                  >
+                    Continue <span aria-hidden="true">↗</span>
+                  </button>
+                ) : (
+                  <button className="onboarding-primary" type="button" onClick={complete} disabled={isSubmitting}>
+                    {isSubmitting ? "Saving your space…" : "Start learning"} <span aria-hidden="true">↗</span>
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      </section>
+    </main>
+  );
+}

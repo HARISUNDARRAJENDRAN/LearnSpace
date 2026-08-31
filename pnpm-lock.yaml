@@ -26,6 +26,9 @@ importers:
       '@learnspace/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@learnspace/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       drizzle-orm:
         specifier: 0.45.2
         version: 0.45.2(postgres@3.4.9)

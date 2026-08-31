@@ -6,6 +6,7 @@ import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
 import { createSession, findUserByEmail } from "../../../../lib/auth/repository";
 import { enforceRateLimit } from "../../../../lib/auth/rate-limit";
 import { getSessionContext, readJson } from "../../../../lib/auth/request";
+import { getAuthenticatedDestination } from "../../../../lib/onboarding/service";
 import { safeRedirectPath, loginInputSchema } from "../../../../lib/auth/validation";
 
 export const runtime = "nodejs";
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
     );
     const response = NextResponse.json({
       ok: true,
-      redirectTo: safeRedirectPath(input.next),
+      redirectTo: await getAuthenticatedDestination(user.id, safeRedirectPath(input.next)),
     });
     setSessionCookie(response, session.token, session.maxAge);
     return response;

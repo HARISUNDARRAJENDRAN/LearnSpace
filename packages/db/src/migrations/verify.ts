@@ -219,6 +219,18 @@ try {
   `);
   await requireCondition(tableCount === 80, `expected 80 target tables, found ${tableCount}`);
 
+  const onboardingColumnCount = await count(`
+    SELECT count(*)::text AS count
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'identity'
+      AND c.relname = 'user_settings'
+      AND a.attname IN ('onboarding_completed_at', 'onboarding_version')
+      AND NOT a.attisdropped
+  `);
+  await requireCondition(onboardingColumnCount === 2, "onboarding settings columns are incomplete");
+
   const generatedFtsCount = await count(`
     SELECT count(*)::text AS count
     FROM pg_attribute a
@@ -679,6 +691,7 @@ try {
     extensions: extensions.map((row) => row.extname),
     schemas: schemas.length,
     tables: tableCount,
+    onboardingColumns: onboardingColumnCount,
     sensitiveRlsTables: Object.keys(sensitiveRlsManifest).length,
     constraints: requiredConstraints.length,
     securityViews: views.length,

@@ -2,7 +2,6 @@ import {
   authAccounts,
   authChallenges,
   authSessions,
-  userSettings,
   users,
 } from "@learnspace/db/schema";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
@@ -77,7 +76,7 @@ export async function createEmailUser(input: {
       emailVerified: false,
       profile: {},
     });
-    await tx.insert(userSettings).values({ userId });
+    await tx.execute(sql`INSERT INTO identity.user_settings (user_id) VALUES (${userId})`);
   });
 
   const user = await findUserById(userId);
@@ -145,7 +144,7 @@ export async function upsertGoogleUser(input: {
         timezone: "UTC",
         subscriptionTier: "free",
       });
-      await tx.insert(userSettings).values({ userId });
+      await tx.execute(sql`INSERT INTO identity.user_settings (user_id) VALUES (${userId})`);
     }
 
     const now = new Date();

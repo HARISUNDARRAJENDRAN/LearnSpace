@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { sessionCookieName } from "./cookies";
+import { AuthError } from "./errors";
 import { findSessionByToken, type PublicUser, type UserRecord } from "./repository";
 
 export type CurrentSession = NonNullable<Awaited<ReturnType<typeof findSessionByToken>>>;
@@ -13,6 +14,14 @@ export async function getCurrentSession(): Promise<CurrentSession | null> {
 
   const result = await findSessionByToken(token);
   return result;
+}
+
+export async function requireCurrentSession(): Promise<CurrentSession> {
+  const currentSession = await getCurrentSession();
+  if (!currentSession) {
+    throw new AuthError("UNAUTHENTICATED", "Sign in to continue.", 401);
+  }
+  return currentSession;
 }
 
 export function publicUser(user: UserRecord): PublicUser {

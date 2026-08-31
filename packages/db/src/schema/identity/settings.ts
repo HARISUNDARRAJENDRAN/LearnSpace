@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { jsonb, timestamp, uuid } from "drizzle-orm/pg-core";
+import { jsonb, smallint, timestamp, uuid } from "drizzle-orm/pg-core";
 import { identitySchema } from "../namespaces.js";
 import { users } from "./users.js";
 
@@ -9,5 +9,7 @@ export const userSettings = identitySchema.table("user_settings", {
   notificationSettings: jsonb("notification_settings").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   privacySettings: jsonb("privacy_settings").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   accessibility: jsonb("accessibility").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),
+  onboardingVersion: smallint("onboarding_version"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

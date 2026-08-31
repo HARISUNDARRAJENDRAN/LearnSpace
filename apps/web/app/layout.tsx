@@ -8,6 +8,7 @@ import "./globals.css";
 import "../styles/hero.css";
 import "../styles/auth.css";
 import "../styles/application.css";
+import "../styles/onboarding.css";
 
 export const metadata: Metadata = {
   title: "LearnSpace — Your space to learn, research, and remember.",

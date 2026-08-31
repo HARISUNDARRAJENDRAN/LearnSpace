@@ -10,6 +10,7 @@ import {
   upsertGoogleUser,
 } from "../../../../../lib/auth/repository";
 import { getSessionContext } from "../../../../../lib/auth/request";
+import { getAuthenticatedDestination } from "../../../../../lib/onboarding/service";
 import {
   clearOauthStateCookie,
   oauthStateCookieName,
@@ -135,7 +136,8 @@ export async function GET(request: NextRequest) {
       getSessionContext(request),
       getAuthSecret(),
     );
-    const response = NextResponse.redirect(new URL(next, request.url));
+    const destination = await getAuthenticatedDestination(user.id, next);
+    const response = NextResponse.redirect(new URL(destination, request.url));
     setSessionCookie(response, session.token, session.maxAge);
     clearOauthStateCookie(response);
     return response;

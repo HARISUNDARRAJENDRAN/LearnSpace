@@ -7,6 +7,9 @@ on:
 jobs:
   foundation:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgres://build:build@localhost:5432/build
+      DATABASE_AUTH_URL: postgres://build:build@localhost:5432/build
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

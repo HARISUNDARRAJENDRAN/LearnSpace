@@ -6,6 +6,7 @@ import {
   createSession,
 } from "../../../../lib/auth/repository";
 import { getSessionContext } from "../../../../lib/auth/request";
+import { getAuthenticatedDestination } from "../../../../lib/onboarding/service";
 import { safeRedirectPath } from "../../../../lib/auth/validation";
 
 export const runtime = "nodejs";
@@ -38,10 +39,11 @@ export async function GET(request: NextRequest) {
       getSessionContext(request),
       secret,
     );
-    const destination = new URL(
+    const destinationPath = await getAuthenticatedDestination(
+      result.user.id,
       safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined),
-      request.url,
     );
+    const destination = new URL(destinationPath, request.url);
     const response = NextResponse.redirect(destination);
     setSessionCookie(response, session.token, session.maxAge);
     return response;
