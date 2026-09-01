@@ -74,10 +74,14 @@ records owner authorization as provenance and is not a public licence claim:
 pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educational_youtube_content.csv --owner-authorized
 ```
 
-The discovery worker uses the same worker connection for catalogue writes and
-durable job state. Run it outside Vercel with `pnpm discovery:worker` and set
-`DISCOVERY_AGENT_URL` plus `INTERNAL_SERVICE_TOKEN`. Its recurring scheduler
-reads these optional policy overrides (hours):
+The discovery agent runs as the AWS Lambda function
+`learnspace-discovery-agent-staging` in `us-east-1`. Its Function URL is
+`https://ecjpwlgoajulb4heuvlb7gpuuu0bbrfj.lambda-url.us-east-1.on.aws/` and the
+refresh route remains protected by `INTERNAL_SERVICE_TOKEN`. The discovery
+worker uses the same worker connection for catalogue writes and durable job
+state. Run it outside Vercel with `pnpm discovery:worker` and set
+`DISCOVERY_AGENT_URL` to that Function URL plus `INTERNAL_SERVICE_TOKEN`. Its
+recurring scheduler reads these optional policy overrides (hours):
 
 - `DISCOVERY_REFRESH_FAST_HOURS` (default 12)
 - `DISCOVERY_REFRESH_MEDIUM_HOURS` (default 24)
