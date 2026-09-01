@@ -41,8 +41,6 @@ class Settings:
         if self.agents_enabled:
             if not self.exa_api_key:
                 errors.append("EXA_API_KEY")
-            if not self.redis_url:
-                errors.append("REDIS_URL")
             if self.youtube_embedder_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
                 errors.append("OPENAI_API_KEY")
         return errors

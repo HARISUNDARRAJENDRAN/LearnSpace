@@ -260,4 +260,4 @@ def test_live_readiness_requires_provider_dependencies() -> None:
     )
     errors = settings.readiness_errors()
     assert "EXA_API_KEY" in errors
-    assert "REDIS_URL" in errors
+    assert "REDIS_URL" not in errors
