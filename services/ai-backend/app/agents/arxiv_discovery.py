@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from app.contracts.discovery import ArxivCandidate, DiscoveryRefreshRequest
 from app.guardrails.candidate_validation import validate_arxiv_candidate
 from app.tools.arxiv_search import ArxivPaperTool
+from app.tools.budget import ToolBudget
 from app.tools.exa_discovery import ExaDiscoveryTool
 
 
@@ -17,13 +18,24 @@ class ArxivDiscoveryAgent:
         self.arxiv = arxiv
         self.max_results = max_results
 
-    async def discover(self, request: DiscoveryRefreshRequest) -> list[ArxivCandidate]:
+    async def discover(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[ArxivCandidate]:
+        if len(request.concept_ids) != 1 or len(request.concept_names) != 1:
+            raise ValueError("arXiv discovery requires one canonical concept pool")
         raw_results = await self.exa.search(
-            request.concept_names, "paper", request.window_days, self.max_results
+            request.concept_names,
+            "paper",
+            request.window_days,
+            self.max_results,
+            paper_strategy=request.paper_strategy,
+            budget=budget,
         )
         if len(raw_results) < 3:
             raw_results.extend(
-                await self.arxiv.search(request.concept_names, self.max_results - len(raw_results))
+                await self.arxiv.search(
+                    request.concept_names, self.max_results - len(raw_results), budget
+                )
             )
         output: list[ArxivCandidate] = []
         seen: set[str] = set()
@@ -47,8 +59,8 @@ class ArxivDiscoveryAgent:
                 abstract=item.get("text") if isinstance(item.get("text"), str) else None,
                 published_at=self._date(item.get("publishedDate")),
                 categories=[str(item["category"])] if isinstance(item.get("category"), str) else [],
-                matched_concept_ids=request.concept_ids,
-                paper_class="foundational" if request.window_days > 365 else "current",
+                matched_concept_ids=[request.concept_ids[0]],
+                paper_class=request.paper_strategy,
                 evidence=[str(item.get("text"))[:800]] if item.get("text") else [],
                 confidence=0.65,
             )
@@ -66,15 +78,3 @@ class ArxivDiscoveryAgent:
         except ValueError:
             return None
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-    @staticmethod
-    def crew_agent() -> Any:
-        from crewai import Agent
-
-        return Agent(
-            role="Bounded arXiv research curator",
-            goal="Return current or foundational arXiv candidates for supplied canonical concepts",
-            backstory="You validate metadata and URLs before returning research candidates.",
-            allow_delegation=False,
-            max_iter=3,
-        )

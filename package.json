@@ -23,7 +23,7 @@
     "db:reset:local": "pnpm --filter @learnspace/db db:reset:local",
     "db:studio": "pnpm --filter @learnspace/db db:studio",
     "discovery:import:youtube-dataset": "pnpm --filter @learnspace/web run discovery:import:youtube-dataset",
-    "discovery:worker": "pnpm --filter @learnspace/worker run discovery:once"
+    "discovery:worker": "pnpm --filter @learnspace/worker run discovery:worker"
   },
   "devDependencies": {
     "turbo": "2.10.12",

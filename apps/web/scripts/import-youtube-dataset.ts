@@ -5,7 +5,23 @@ import { profileYoutubeDataset, datasetRows, normalizeYoutubeRow, type Normalize
 import { scoreYoutubeQuality } from "../lib/discovery/quality";
 
 const datasetName = "harisundarrajendran/educational-youtube-content";
-const allowedLicences = ["cc0", "cc by", "cc by 4.0", "cc by-sa", "cc by-sa 4.0", "mit", "apache 2.0", "odc-pddl", "odc-by"];
+const allowedLicences = new Set([
+  "cc0",
+  "cc0 1 0",
+  "cc by",
+  "cc by 2 0",
+  "cc by 3 0",
+  "cc by 4 0",
+  "cc by sa",
+  "cc by sa 2 0",
+  "cc by sa 3 0",
+  "cc by sa 4 0",
+  "mit",
+  "apache 2 0",
+  "apache license 2 0",
+  "odc pddl",
+  "odc by",
+]);
 
 function argument(name: string): string | null {
   const index = process.argv.indexOf(name);
@@ -22,6 +38,10 @@ function readLicence(metadata: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function normaliseLicence(value: string): string {
+  return value.toLowerCase().replaceAll(/[._-]+/g, " ").replaceAll(/\s+/g, " ").trim();
+}
+
 async function datasetLicence(inputPath: string): Promise<string | null> {
   const explicit = argument("--license") ?? process.env.DISCOVERY_DATASET_LICENSE;
   if (explicit) return explicit;
@@ -34,7 +54,7 @@ async function datasetLicence(inputPath: string): Promise<string | null> {
 }
 
 function assertLicence(licence: string | null): asserts licence is string {
-  if (!licence || !allowedLicences.some((allowed) => licence.toLowerCase().startsWith(allowed))) {
+  if (!licence || !allowedLicences.has(normaliseLicence(licence))) {
     throw new Error(`Refusing import: dataset licence is missing or not approved for this use (${licence ?? "unknown"}).`);
   }
 }
@@ -197,8 +217,8 @@ async function main(): Promise<void> {
   process.stdout.write(`Profiled ${profile.rowCount} rows; ${profile.uniqueYoutubeIds} unique YouTube IDs; ${profile.duplicateYoutubeIds} duplicates; ${profile.invalidUrls} rejected.\n`);
   if (process.argv.includes("--profile-only")) return;
 
-  const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
-  if (!databaseUrl) throw new Error("DATABASE_MIGRATOR_URL is required for catalog import");
+  const databaseUrl = process.env.DATABASE_WORKER_URL;
+  if (!databaseUrl) throw new Error("DATABASE_WORKER_URL is required for catalog import");
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const conceptMap = await loadConceptMap(sql);
   const importedAt = new Date(process.env.DISCOVERY_IMPORT_CAPTURED_AT ?? new Date().toISOString());

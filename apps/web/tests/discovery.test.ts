@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
+import { homeFeedCacheKey } from "../lib/discovery/cache";
+import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
 import { scoreYoutubeQuality } from "../lib/discovery/quality";
 import { rankDiscoveryResources, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
 
@@ -79,6 +80,18 @@ test("paper ranking stays separate from video engagement features", () => {
   assert.equal(ranked.videos[0]?.resource.type, "video");
 });
 
+test("current and foundational papers remain distinct ranking inputs", () => {
+  const ranked = rankDiscoveryResources(
+    [
+      resource("current-paper", "paper", [conceptId]),
+      { ...resource("foundational-paper", "paper", [conceptId]), metadata: { paperClass: "foundational", estimatedLevel: "beginner" }, citationCount: 10_000, publicationDate: new Date("2017-06-12T00:00:00.000Z") },
+    ],
+    profile({ persona: "researcher", learningIntents: ["read_papers"] }),
+    now,
+  );
+  assert.deepEqual(new Set(ranked.papers.map((candidate) => candidate.resource.id)), new Set(["current-paper", "foundational-paper"]));
+});
+
 test("old metric snapshots reduce quality confidence without fabricated values", () => {
   const recent = scoreYoutubeQuality({
     title: "A lesson",
@@ -144,4 +157,28 @@ test("dataset profile counts malformed and duplicate YouTube records", async () 
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("dataset duration units and URL hosts are normalized explicitly", () => {
+  assert.equal(parseDurationMs("600000", "milliseconds"), 600_000);
+  assert.equal(parseDurationMs("600000ms"), 600_000);
+  assert.equal(parseDurationMs("600s"), 600_000);
+  assert.equal(parseDurationMs("600", "seconds"), 600_000);
+  assert.equal(parseDurationMs("10:00"), 600_000);
+  assert.equal(parseDurationMs("01:02:03"), 3_723_000);
+  assert.equal(parseDurationMs("PT10M"), 600_000);
+  assert.equal(parseDurationMs("10:99"), null);
+  assert.equal(parseDurationMs("not-a-duration"), null);
+  assert.equal(canonicalYoutubeId("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(canonicalYoutubeId("https://evil-youtube.com/watch?v=dQw4w9WgXcQ"), null);
+  assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "milliseconds", duration_ms: "600000" })?.durationMs, 600_000);
+  assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "seconds", duration_seconds: "600" })?.durationMs, 600_000);
+});
+
+test("home feed cache keys change with learner and catalogue versions", () => {
+  const first = homeFeedCacheKey("user-1", { profileFingerprint: "profile-a", catalogFingerprint: "catalog-a" });
+  const changedProfile = homeFeedCacheKey("user-1", { profileFingerprint: "profile-b", catalogFingerprint: "catalog-a" });
+  const changedCatalog = homeFeedCacheKey("user-1", { profileFingerprint: "profile-a", catalogFingerprint: "catalog-b" });
+  assert.notEqual(first, changedProfile);
+  assert.notEqual(first, changedCatalog);
 });

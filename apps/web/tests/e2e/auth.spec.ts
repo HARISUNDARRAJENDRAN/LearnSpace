@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-const email = process.env.PLAYWRIGHT_E2E_EMAIL ?? "browser-e2e@example.test";
+const baseEmail = process.env.PLAYWRIGHT_E2E_EMAIL ?? "browser-e2e@example.test";
+let email = baseEmail;
 const googleEmail = process.env.AUTH_TEST_GOOGLE_EMAIL ?? "google-e2e@example.test";
 const password = "browser-password-123";
 
@@ -77,7 +78,8 @@ async function completeOnboarding(page: Page, refreshDraft = false) {
   await expect(page).toHaveURL(/\/app/);
 }
 
-test("register, verify, log in, access the app, and log out", async ({ page }) => {
+test("register, verify, log in, access the app, and log out", async ({ page }, testInfo) => {
+  email = baseEmail.replace("@", `-attempt-${testInfo.retry}@`);
   await page.goto("/register");
   await page.getByLabel("Your name").fill("Browser Learner");
   await page.getByLabel("Email address").fill(email);

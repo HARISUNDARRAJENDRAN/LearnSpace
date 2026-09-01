@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { extname } from "node:path";
+import { youtubeIdFromUrl } from "@learnspace/shared";
 
 export type DatasetRow = Record<string, string>;
 
@@ -60,13 +61,21 @@ function normalizedKey(value: string): string {
   return value.trim().toLowerCase().replaceAll(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
 }
 
-function valueFor(row: DatasetRow, names: readonly string[]): string | null {
-  const normalized = new Map(Object.entries(row).map(([key, value]) => [normalizedKey(key), value.trim()]));
+function normalizedRow(row: DatasetRow): Map<string, string> {
+  return new Map(Object.entries(row).map(([key, value]) => [normalizedKey(key), value.trim()]));
+}
+
+function valueEntryFor(row: DatasetRow, names: readonly string[]): { name: string; value: string } | null {
+  const normalized = normalizedRow(row);
   for (const name of names) {
     const value = normalized.get(name);
-    if (value) return value;
+    if (value) return { name, value };
   }
   return null;
+}
+
+function valueFor(row: DatasetRow, names: readonly string[]): string | null {
+  return valueEntryFor(row, names)?.value ?? null;
 }
 
 function splitLabels(value: string | null): string[] {
@@ -79,41 +88,44 @@ export function canonicalYoutubeId(value: string | null): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
-  try {
-    const parsed = new URL(trimmed);
-    const hostname = parsed.hostname.toLowerCase();
-    if (hostname === "youtu.be") {
-      const id = parsed.pathname.slice(1);
-      return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-    if (hostname.endsWith("youtube.com")) {
-      const id = parsed.searchParams.get("v") ?? parsed.pathname.match(/\/(?:shorts|embed|live)\/([^/?]+)/)?.[1];
-      return id && /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
-    }
-  } catch {
-    return null;
+  return youtubeIdFromUrl(trimmed);
+}
+
+export type DurationUnit = "milliseconds" | "seconds" | "auto";
+
+export function parseDurationMs(value: string | null, unit: DurationUnit = "auto"): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  const numeric = trimmed.match(/^(\d+(?:\.\d+)?)(ms|s)?$/i);
+  if (numeric) {
+    const amount = Number(numeric[1]);
+    const suffix = numeric[2]?.toLowerCase();
+    const multiplier = suffix === "ms" || (!suffix && unit === "milliseconds") ? 1 : 1000;
+    return Number.isSafeInteger(amount * multiplier) ? Math.round(amount * multiplier) : null;
+  }
+  const iso = trimmed.match(/^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
+  if (iso && (iso[1] !== undefined || iso[2] !== undefined || iso[3] !== undefined)) {
+    return Math.round((Number(iso[1] ?? 0) * 3600 + Number(iso[2] ?? 0) * 60 + Number(iso[3] ?? 0)) * 1000);
+  }
+  const clock = trimmed.split(":").map(Number);
+  if (clock.every(Number.isFinite) && (clock.length === 2 || clock.length === 3)) {
+    const secondsPart = clock.at(-1) ?? -1;
+    const minutesPart = clock.length === 2 ? clock[0] : clock[1];
+    const hoursPart = clock.length === 3 ? clock[0] : 0;
+    if (secondsPart < 0 || secondsPart >= 60 || (minutesPart ?? -1) < 0 || (clock.length === 3 && (minutesPart ?? 60) >= 60)) return null;
+    const seconds = (hoursPart ?? 0) * 3600 + (minutesPart ?? 0) * 60 + secondsPart;
+    return seconds >= 0 ? Math.round(seconds * 1000) : null;
   }
   return null;
 }
 
-export function parseDurationMs(value: string | null): number | null {
-  if (!value) return null;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric >= 0) {
-    return /ms$/i.test(value) ? Math.round(numeric) : Math.round(numeric * 1000);
-  }
-  const iso = value.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?$/i);
-  if (iso) {
-    return Math.round((Number(iso[1] ?? 0) * 3600 + Number(iso[2] ?? 0) * 60 + Number(iso[3] ?? 0)) * 1000);
-  }
-  const clock = value.split(":").map(Number);
-  if (clock.every(Number.isFinite) && (clock.length === 2 || clock.length === 3)) {
-    const seconds = clock.length === 2
-      ? (clock[0] ?? 0) * 60 + (clock[1] ?? 0)
-      : (clock[0] ?? 0) * 3600 + (clock[1] ?? 0) * 60 + (clock[2] ?? 0);
-    return seconds >= 0 ? Math.round(seconds * 1000) : null;
-  }
-  return null;
+function durationFor(row: DatasetRow): number | null {
+  const milliseconds = valueEntryFor(row, ["duration_ms"]);
+  if (milliseconds) return parseDurationMs(milliseconds.value, "milliseconds");
+  const seconds = valueEntryFor(row, ["duration_seconds"]);
+  if (seconds) return parseDurationMs(seconds.value, "seconds");
+  const generic = valueEntryFor(row, ["duration", "length"]);
+  return generic ? parseDurationMs(generic.value) : null;
 }
 
 function parseCount(value: string | null): number | null {
@@ -145,7 +157,7 @@ export function normalizeYoutubeRow(row: DatasetRow): NormalizedYoutubeRow | nul
     description: valueFor(row, fieldAliases.description),
     channelTitle: valueFor(row, fieldAliases.channelTitle),
     channelId: valueFor(row, fieldAliases.channelId),
-    durationMs: parseDurationMs(valueFor(row, fieldAliases.duration)),
+    durationMs: durationFor(row),
     language: valueFor(row, fieldAliases.language),
     categoryLabels: splitLabels(valueFor(row, fieldAliases.category)),
     publishedAt: parseDate(valueFor(row, fieldAliases.publishedAt)),

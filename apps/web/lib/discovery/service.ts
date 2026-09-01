@@ -17,9 +17,10 @@ import {
   videoDetails,
 } from "@learnspace/db/schema";
 import type { DiscoveryAction, DiscoveryHomeResponse, DiscoveryInteractionRequest, DiscoveryImpressionRequest } from "@learnspace/shared";
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNull, max, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 import { getCachedHomeFeed, invalidateHomeFeedCache, setCachedHomeFeed } from "./cache";
+import { DISCOVERY_CATALOG_VERSION, discoveryFingerprint } from "./fingerprint";
 import {
   DISCOVERY_FEATURE_VERSION,
   DISCOVERY_STRATEGY_VERSION,
@@ -37,6 +38,7 @@ type ProfileLoad = {
   profile: LearnerProfile;
   interests: Array<{ id: string; slug: string; name: string; kind: string }>;
   activeSessionResourceIds: string[];
+  dismissedResourceIds: string[];
 };
 
 function recordValue(value: unknown, key: string): unknown {
@@ -58,7 +60,7 @@ function asDate(value: unknown): Date | null {
 }
 
 async function loadProfile(tx: Transaction, userId: string): Promise<ProfileLoad> {
-  const [settingsRows, affinityRows, interestRows, sessions] = await Promise.all([
+  const [settingsRows, affinityRows, interestRows, sessions, dismissedRows] = await Promise.all([
     tx.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1),
     tx.select().from(userConceptAffinity).where(eq(userConceptAffinity.userId, userId)),
     tx
@@ -72,6 +74,10 @@ async function loadProfile(tx: Transaction, userId: string): Promise<ProfileLoad
       .where(and(eq(studySessions.userId, userId), eq(studySessions.status, "active")))
       .orderBy(desc(studySessions.lastActiveAt))
       .limit(3),
+    tx
+      .select({ resourceId: libraryItems.resourceId })
+      .from(libraryItems)
+      .where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "removed"))),
   ]);
   const preferences = settingsRows[0]?.learningPreferences ?? {};
   const conceptIds = stringArray(recordValue(preferences, "conceptIds"));
@@ -92,20 +98,88 @@ async function loadProfile(tx: Transaction, userId: string): Promise<ProfileLoad
     profile,
     interests: interestRows,
     activeSessionResourceIds: sessions.flatMap((session) => session.resourceId ? [session.resourceId] : []),
+    dismissedResourceIds: dismissedRows.map((row) => row.resourceId),
   };
 }
 
-async function loadResources(tx: Transaction, resourceIds?: string[]): Promise<DiscoveryResource[]> {
-  if (resourceIds && resourceIds.length === 0) return [];
-  const resourceWhere = resourceIds && resourceIds.length > 0
-    ? inArray(resources.id, resourceIds)
-    : and(
+async function catalogFingerprint(tx: Transaction): Promise<string> {
+  const [resourceSummary, qualitySummary, conceptSummary] = await Promise.all([
+    tx
+      .select({ count: count(), latestUpdatedAt: max(resources.updatedAt) })
+      .from(resources)
+      .where(and(
         isNull(resources.ownerUserId),
         or(eq(resources.visibility, "public"), eq(resources.visibility, "unlisted")),
         eq(resources.status, "ready"),
         isNull(resources.deletedAt),
         inArray(resources.type, ["video", "paper"]),
-      );
+      )),
+    tx.select({ latestCapturedAt: max(resourceQualitySnapshots.capturedAt), latestScore: max(resourceQualitySnapshots.finalQualityScore) }).from(resourceQualitySnapshots),
+    tx
+      .select({ count: count(), latestCreatedAt: max(resourceConcepts.createdAt) })
+      .from(resourceConcepts)
+      .innerJoin(resources, eq(resources.id, resourceConcepts.resourceId))
+      .where(and(
+        isNull(resources.ownerUserId),
+        or(eq(resources.visibility, "public"), eq(resources.visibility, "unlisted")),
+        eq(resources.status, "ready"),
+        isNull(resources.deletedAt),
+        inArray(resources.type, ["video", "paper"]),
+      )),
+  ]);
+  return discoveryFingerprint({
+    version: DISCOVERY_CATALOG_VERSION,
+    resourceCount: resourceSummary[0]?.count ?? 0,
+    latestResourceUpdatedAt: resourceSummary[0]?.latestUpdatedAt?.toISOString() ?? null,
+    latestQualityCapturedAt: qualitySummary[0]?.latestCapturedAt?.toISOString() ?? null,
+    latestQualityScore: qualitySummary[0]?.latestScore ?? null,
+    resourceConceptCount: conceptSummary[0]?.count ?? 0,
+    latestResourceConceptCreatedAt: conceptSummary[0]?.latestCreatedAt?.toISOString() ?? null,
+  });
+}
+
+function profileFingerprint(profileLoad: ProfileLoad): string {
+  return discoveryFingerprint({
+    version: "profile-v2",
+    conceptIds: [...profileLoad.profile.conceptIds].sort(),
+    persona: profileLoad.profile.persona,
+    learningIntents: [...profileLoad.profile.learningIntents].sort(),
+    preferredFormats: [...profileLoad.profile.preferredFormats].sort(),
+    preferredDuration: profileLoad.profile.preferredDuration,
+    selfReportedLevel: profileLoad.profile.selfReportedLevel,
+    affinities: [...profileLoad.profile.affinities.values()]
+      .toSorted((left, right) => left.conceptId.localeCompare(right.conceptId))
+      .map((affinity) => ({
+        conceptId: affinity.conceptId,
+        score: affinity.score,
+        confidence: affinity.confidence,
+        positiveWeight: affinity.positiveWeight,
+        negativeWeight: affinity.negativeWeight,
+        featureVersion: affinity.featureVersion,
+        lastEventAt: affinity.lastEventAt?.toISOString() ?? null,
+        updatedAt: affinity.updatedAt?.toISOString() ?? null,
+      })),
+    activeSessionResourceIds: profileLoad.activeSessionResourceIds,
+    dismissedResourceIds: [...profileLoad.dismissedResourceIds].sort(),
+  });
+}
+
+async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserId?: string): Promise<DiscoveryResource[]> {
+  if (resourceIds && resourceIds.length === 0) return [];
+  const publicResource = and(
+    isNull(resources.ownerUserId),
+    or(eq(resources.visibility, "public"), eq(resources.visibility, "unlisted")),
+  );
+  const visibleResource = ownerUserId
+    ? or(publicResource, eq(resources.ownerUserId, ownerUserId))
+    : publicResource;
+  const resourceWhere = and(
+    resourceIds && resourceIds.length > 0 ? inArray(resources.id, resourceIds) : undefined,
+    visibleResource,
+    eq(resources.status, "ready"),
+    isNull(resources.deletedAt),
+    inArray(resources.type, ["video", "paper"]),
+  );
   const rows = await tx
     .select({ resource: resources, video: videoDetails, paper: paperDetails })
     .from(resources)
@@ -173,6 +247,7 @@ async function loadResources(tx: Transaction, resourceIds?: string[]): Promise<D
 }
 
 function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
+  if (candidate.reasonCodes.includes("continue_learning")) return "Continue where you left off";
   const matchedConcept = candidate.resource.concepts.find((concept) => profile.conceptIds.includes(concept.id));
   if (candidate.reasonCodes.includes("concept_match") && matchedConcept) return `Because you selected ${matchedConcept.name}`;
   if (candidate.reasonCodes.includes("level_fit")) return "Fits your starting level";
@@ -201,33 +276,79 @@ function toCard(candidate: RankedResource, profile: LearnerProfile, runId: strin
   };
 }
 
-function responseFromRanked(runId: string, generatedAt: Date, profileLoad: ProfileLoad, ranked: { videos: RankedResource[]; papers: RankedResource[] }, stale: boolean): DiscoveryHomeResponse {
-  const selectedVideos = ranked.videos.filter((candidate) => candidate.finalRank !== null);
-  const selectedPapers = ranked.papers.filter((candidate) => candidate.finalRank !== null);
-  const fresh = [...selectedVideos, ...selectedPapers].toSorted((left, right) => right.freshnessScore - left.freshnessScore || right.score - left.score).slice(0, 6);
-  const active = profileLoad.activeSessionResourceIds
-    .flatMap((resourceId) => [...selectedVideos, ...selectedPapers].find((candidate) => candidate.resource.id === resourceId) ?? [])
-    .slice(0, 3);
+function responseFromRanked(
+  runId: string,
+  generatedAt: Date,
+  profileLoad: ProfileLoad,
+  ranked: { videos: RankedResource[]; papers: RankedResource[] },
+  activeSessionResources: DiscoveryResource[],
+  stale: boolean,
+): DiscoveryHomeResponse {
+  const dismissed = new Set(profileLoad.dismissedResourceIds);
+  const activeIds = new Set(profileLoad.activeSessionResourceIds);
+  const selectedVideos = ranked.videos.filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id));
+  const selectedPapers = ranked.papers.filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id));
+  const recommendedVideos = selectedVideos.slice(0, 6);
+  const recommendedPapers = selectedPapers.slice(0, 6);
+  const usedInRecommendations = new Set([...recommendedVideos, ...recommendedPapers].map((candidate) => candidate.resource.id));
+  const fresh = [...selectedVideos, ...selectedPapers]
+    .filter((candidate) => !usedInRecommendations.has(candidate.resource.id))
+    .toSorted((left, right) => right.freshnessScore - left.freshnessScore || right.score - left.score)
+    .slice(0, 6);
+  const activeResourceById = new Map(activeSessionResources.map((resource) => [resource.id, resource]));
+  const active = profileLoad.activeSessionResourceIds.flatMap((resourceId, index) => {
+    const resource = activeResourceById.get(resourceId);
+    if (!resource || dismissed.has(resourceId)) return [];
+    return [{
+      resource,
+      candidateRank: index + 1,
+      finalRank: index + 1,
+      score: 1,
+      semanticRelevance: 1,
+      qualityScore: 1,
+      learnerAffinity: 1,
+      masteryFit: null,
+      coverageScore: 1,
+      freshnessScore: 1,
+      diversityPenalty: 0,
+      reasonCodes: ["continue_learning"],
+    } satisfies RankedResource];
+  }).slice(0, 3);
   return {
     runId,
     generatedAt: generatedAt.toISOString(),
     stale,
     sections: {
       continueLearning: active.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
-      recommendedVideos: selectedVideos.slice(0, 6).map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
-      researchPapers: selectedPapers.slice(0, 6).map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
+      recommendedVideos: recommendedVideos.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
+      researchPapers: recommendedPapers.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
       freshForYou: fresh.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
       interests: profileLoad.interests,
     },
   };
 }
 
-async function findReusableRun(tx: Transaction, userId: string, now: Date, surface: "home" | "discover"): Promise<typeof recommendationRuns.$inferSelect | null> {
+async function findReusableRun(
+  tx: Transaction,
+  userId: string,
+  now: Date,
+  surface: "home" | "discover",
+  fingerprints: { profileFingerprint: string; catalogFingerprint: string },
+): Promise<typeof recommendationRuns.$inferSelect | null> {
   const minimumDate = new Date(now.getTime() - staleFeedTtlMs);
   const rows = await tx
     .select()
     .from(recommendationRuns)
-    .where(and(eq(recommendationRuns.userId, userId), eq(recommendationRuns.surface, surface), eq(recommendationRuns.status, "completed"), gte(recommendationRuns.createdAt, minimumDate)))
+    .where(and(
+      eq(recommendationRuns.userId, userId),
+      eq(recommendationRuns.surface, surface),
+      eq(recommendationRuns.status, "completed"),
+      gte(recommendationRuns.createdAt, minimumDate),
+      eq(recommendationRuns.strategyVersion, DISCOVERY_STRATEGY_VERSION),
+      eq(recommendationRuns.featureVersion, DISCOVERY_FEATURE_VERSION),
+      sql`${recommendationRuns.contextSnapshot}->>'profileFingerprint' = ${fingerprints.profileFingerprint}`,
+      sql`${recommendationRuns.contextSnapshot}->>'catalogFingerprint' = ${fingerprints.catalogFingerprint}`,
+    ))
     .orderBy(desc(recommendationRuns.createdAt))
     .limit(1);
   return rows[0] ?? null;
@@ -264,7 +385,15 @@ async function loadRankedRun(tx: Transaction, run: typeof recommendationRuns.$in
   };
 }
 
-async function generateRun(tx: Transaction, userId: string, profileLoad: ProfileLoad, now: Date, resourcesForRanker: DiscoveryResource[], surface: "home" | "discover"): Promise<{ run: typeof recommendationRuns.$inferSelect; ranked: { videos: RankedResource[]; papers: RankedResource[] } }> {
+async function generateRun(
+  tx: Transaction,
+  userId: string,
+  profileLoad: ProfileLoad,
+  now: Date,
+  resourcesForRanker: DiscoveryResource[],
+  surface: "home" | "discover",
+  fingerprints: { profileFingerprint: string; catalogFingerprint: string },
+): Promise<{ run: typeof recommendationRuns.$inferSelect; ranked: { videos: RankedResource[]; papers: RankedResource[] } }> {
   const started = performance.now();
   const initialRanked = rankDiscoveryResources(resourcesForRanker, profileLoad.profile, now);
   const ranked = {
@@ -289,7 +418,9 @@ async function generateRun(tx: Transaction, userId: string, profileLoad: Profile
       preferredFormats: profileLoad.profile.preferredFormats,
       preferredDuration: profileLoad.profile.preferredDuration,
       selfReportedLevel: profileLoad.profile.selfReportedLevel,
-      catalogVersion: "catalog-v1",
+      profileFingerprint: fingerprints.profileFingerprint,
+      catalogFingerprint: fingerprints.catalogFingerprint,
+      catalogVersion: DISCOVERY_CATALOG_VERSION,
     },
     status: "completed",
     latencyMs: Math.round(performance.now() - started),
@@ -319,22 +450,40 @@ async function generateRun(tx: Transaction, userId: string, profileLoad: Profile
 }
 
 export async function getHomeFeed(userId: string, surface: "home" | "discover" = "home"): Promise<DiscoveryHomeResponse> {
-  const cached = surface === "home" ? await getCachedHomeFeed(userId) : null;
+  const fingerprints = await withUserTransaction(userId, async (tx) => {
+    const profileLoad = await loadProfile(tx, userId);
+    return {
+      profileFingerprint: profileFingerprint(profileLoad),
+      catalogFingerprint: await catalogFingerprint(tx),
+    };
+  });
+  const cached = surface === "home" ? await getCachedHomeFeed(userId, fingerprints) : null;
   if (cached) return cached;
-  const response = await withUserTransaction(userId, async (tx) => {
+  const result = await withUserTransaction(userId, async (tx) => {
     const now = new Date();
     const profileLoad = await loadProfile(tx, userId);
-    const reusableRun = await findReusableRun(tx, userId, now, surface);
+    const currentFingerprints = {
+      profileFingerprint: profileFingerprint(profileLoad),
+      catalogFingerprint: await catalogFingerprint(tx),
+    };
+    const reusableRun = await findReusableRun(tx, userId, now, surface, currentFingerprints);
+    const activeSessionResources = await loadResources(tx, profileLoad.activeSessionResourceIds, userId);
     if (reusableRun) {
       const ranked = await loadRankedRun(tx, reusableRun);
-      return responseFromRanked(reusableRun.id, reusableRun.createdAt, profileLoad, ranked, now.getTime() - reusableRun.createdAt.getTime() > durableFeedTtlMs);
+      return {
+        response: responseFromRanked(reusableRun.id, reusableRun.createdAt, profileLoad, ranked, activeSessionResources, now.getTime() - reusableRun.createdAt.getTime() > durableFeedTtlMs),
+        fingerprints: currentFingerprints,
+      };
     }
-    const resourcesForRanker = await loadResources(tx);
-    const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface);
-    return responseFromRanked(run.id, now, profileLoad, ranked, false);
+    const resourcesForRanker = (await loadResources(tx)).filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id));
+    const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface, currentFingerprints);
+    return {
+      response: responseFromRanked(run.id, now, profileLoad, ranked, activeSessionResources, false),
+      fingerprints: currentFingerprints,
+    };
   });
-  if (surface === "home") await setCachedHomeFeed(userId, response);
-  return response;
+  if (surface === "home") await setCachedHomeFeed(userId, result.fingerprints, result.response);
+  return result.response;
 }
 
 export async function recordImpression(userId: string, input: DiscoveryImpressionRequest): Promise<{ id: string | null }> {
@@ -383,7 +532,13 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
       await tx.insert(libraryItems).values({ userId, resourceId: input.resourceId, status: "saved", source: "discovery" }).onConflictDoUpdate({ target: [libraryItems.userId, libraryItems.resourceId], set: { status: "saved", updatedAt: new Date() } });
     }
     if (input.action === "dismiss") {
-      await tx.update(libraryItems).set({ status: "removed", updatedAt: new Date() }).where(and(eq(libraryItems.userId, userId), eq(libraryItems.resourceId, input.resourceId)));
+      await tx
+        .insert(libraryItems)
+        .values({ userId, resourceId: input.resourceId, status: "removed", source: "discovery" })
+        .onConflictDoUpdate({
+          target: [libraryItems.userId, libraryItems.resourceId],
+          set: { status: "removed", updatedAt: new Date() },
+        });
     }
     return { duplicate: false };
   });

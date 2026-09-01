@@ -24,6 +24,9 @@ test(
     const migrator = postgres(migratorUrl, { max: 1, prepare: false, connect_timeout: 10 });
     const userIds: string[] = [];
     let resourceId: string | null = null;
+    let activeResourceId: string | null = null;
+    let activeVersionId: string | null = null;
+    let activeSessionId: string | null = null;
 
     try {
       const concepts = await migrator<{ id: string; slug: string; name: string }[]>`
@@ -67,10 +70,35 @@ test(
         VALUES (${resourceId}, ${interestConcept.id}, 'integration', 1, true)
       `;
 
+      activeResourceId = randomUUID();
+      activeVersionId = randomUUID();
+      activeSessionId = randomUUID();
+      const activeYoutubeId = `act${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      await migrator`
+        INSERT INTO catalog.resources (id, type, provider, external_id, canonical_url, title, description, visibility, status, quality_score, metadata)
+        VALUES (${activeResourceId}, 'video', 'youtube', ${`active-${randomUUID()}`}, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'An active learning session', 'A resource pinned by an active study session.', 'public', 'ready', 0.1, '{}'::jsonb)
+      `;
+      await migrator`
+        INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
+        VALUES (${activeResourceId}, ${activeYoutubeId}, 'Active Session Lab', 600000, now())
+      `;
+      await migrator`
+        INSERT INTO catalog.resource_versions (id, resource_id, version_no, source_sha256, raw_object_key, mime_type, processing_status, fetched_at, ready_at)
+        VALUES (${activeVersionId}, ${activeResourceId}, 1, ${"a".repeat(64)}, ${`integration/${activeResourceId}/raw.mp4`}, 'video/mp4', 'ready', now(), now())
+      `;
+      await migrator`
+        UPDATE catalog.resources SET current_version_id = ${activeVersionId} WHERE id = ${activeResourceId}
+      `;
+      await migrator`
+        INSERT INTO study.study_sessions (id, user_id, title, mode, status, active_resource_id, active_version_id, context_version, lock_version, started_at, last_active_at, metadata)
+        VALUES (${activeSessionId}, ${user.id}, 'Active discovery session', 'guided_learning', 'active', ${activeResourceId}, ${activeVersionId}, 0, 0, now(), now(), '{}'::jsonb)
+      `;
+
       const firstFeed = await getHomeFeed(user.id);
       assert.equal(firstFeed.stale, false);
       assert.ok(firstFeed.runId);
       assert.equal(firstFeed.sections.recommendedVideos.some((card) => card.resourceId === resourceId), true);
+      assert.equal(firstFeed.sections.continueLearning.some((card) => card.resourceId === activeResourceId), true);
       const runs = await migrator<{ count: string }[]>`
         SELECT count(*)::text AS count FROM discovery.recommendation_runs WHERE user_id = ${user.id} AND surface = 'home'
       `;
@@ -106,7 +134,30 @@ test(
         SELECT count(*)::text AS count FROM discovery.discovery_interactions WHERE user_id = ${user.id} AND correlation_id = ${concurrentCorrelationId}
       `;
       assert.equal(Number(concurrentInteractions[0]?.count), 1);
+
+      const dismissCorrelationId = randomUUID();
+      assert.equal((await recordInteraction(user.id, { runId: card.runId, resourceId: card.resourceId, action: "dismiss", correlationId: dismissCorrelationId, metadata: {} })).duplicate, false);
+      assert.equal((await recordInteraction(user.id, { runId: card.runId, resourceId: card.resourceId, action: "dismiss", correlationId: dismissCorrelationId, metadata: {} })).duplicate, true);
+      const removed = await migrator<{ status: string }[]>`
+        SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}
+      `;
+      assert.equal(removed[0]?.status, "removed");
+
+      const dismissedFeed = await getHomeFeed(user.id);
+      assert.equal(dismissedFeed.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
+      assert.equal(dismissedFeed.sections.freshForYou.some((item) => item.resourceId === resourceId), false);
+      assert.ok(dismissedFeed.runId);
+      await migrator`
+        INSERT INTO discovery.recommendation_candidates
+          (recommendation_run_id, resource_id, candidate_rank, final_rank, score, semantic_relevance, quality_score, freshness_score, reason_codes, selected)
+        VALUES (${dismissedFeed.runId}, ${resourceId}, 1, 1, 0.99, 1, 0.99, 1, '["concept_match"]'::jsonb, true)
+        ON CONFLICT DO NOTHING
+      `;
+      const reusedDismissedRun = await getHomeFeed(user.id);
+      assert.equal(reusedDismissedRun.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
+      assert.equal(reusedDismissedRun.sections.freshForYou.some((item) => item.resourceId === resourceId), false);
     } finally {
+      if (activeSessionId) await migrator`DELETE FROM study.study_sessions WHERE id = ${activeSessionId}`;
       for (const userId of userIds) {
         await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
         await migrator`DELETE FROM catalog.library_items WHERE user_id = ${userId}`;
@@ -116,6 +167,12 @@ test(
         await migrator`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
         await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
         await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
+      }
+      if (activeResourceId) await migrator`UPDATE catalog.resources SET current_version_id = NULL WHERE id = ${activeResourceId}`;
+      if (activeVersionId) await migrator`DELETE FROM catalog.resource_versions WHERE id = ${activeVersionId}`;
+      if (activeResourceId) {
+        await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${activeResourceId}`;
+        await migrator`DELETE FROM catalog.resources WHERE id = ${activeResourceId}`;
       }
       if (resourceId) {
         await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id = ${resourceId}`;

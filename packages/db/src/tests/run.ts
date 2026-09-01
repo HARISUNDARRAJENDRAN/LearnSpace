@@ -236,6 +236,47 @@ const tests: Array<[string, () => Promise<void>]> = [
       "auth role changing challenge owner",
     );
   }],
+  ["worker catalogue importer privileges are bounded", async () => {
+    const [privileges] = await worker<{
+      resources_insert: boolean;
+      resources_update: boolean;
+      resources_delete: boolean;
+      video_insert: boolean;
+      video_update: boolean;
+      metrics_insert: boolean;
+      concepts_insert: boolean;
+      quality_insert: boolean;
+      quality_update: boolean;
+      quality_delete: boolean;
+      knowledge_select: boolean;
+      aliases_select: boolean;
+    }[]>`SELECT
+      has_table_privilege(current_user, 'catalog.resources', 'INSERT') AS resources_insert,
+      has_table_privilege(current_user, 'catalog.resources', 'UPDATE') AS resources_update,
+      has_table_privilege(current_user, 'catalog.resources', 'DELETE') AS resources_delete,
+      has_table_privilege(current_user, 'catalog.video_details', 'INSERT') AS video_insert,
+      has_table_privilege(current_user, 'catalog.video_details', 'UPDATE') AS video_update,
+      has_table_privilege(current_user, 'catalog.video_metric_snapshots', 'INSERT') AS metrics_insert,
+      has_table_privilege(current_user, 'catalog.resource_concepts', 'INSERT') AS concepts_insert,
+      has_table_privilege(current_user, 'discovery.resource_quality_snapshots', 'INSERT') AS quality_insert,
+      has_table_privilege(current_user, 'discovery.resource_quality_snapshots', 'UPDATE') AS quality_update,
+      has_table_privilege(current_user, 'discovery.resource_quality_snapshots', 'DELETE') AS quality_delete,
+      has_table_privilege(current_user, 'knowledge.concepts', 'SELECT') AS knowledge_select,
+      has_table_privilege(current_user, 'knowledge.concept_aliases', 'SELECT') AS aliases_select
+    `;
+    assert.equal(privileges?.resources_insert, true);
+    assert.equal(privileges?.resources_update, true);
+    assert.equal(privileges?.resources_delete, false);
+    assert.equal(privileges?.video_insert, true);
+    assert.equal(privileges?.video_update, true);
+    assert.equal(privileges?.metrics_insert, true);
+    assert.equal(privileges?.concepts_insert, true);
+    assert.equal(privileges?.quality_insert, true);
+    assert.equal(privileges?.quality_update, true);
+    assert.equal(privileges?.quality_delete, false);
+    assert.equal(privileges?.knowledge_select, true);
+    assert.equal(privileges?.aliases_select, true);
+  }],
   ["restricted service access and execution authority", async () => {
     await expectRejected(
       () => app`SELECT solution_outline FROM practice.exercise_versions WHERE id = ${ids.exerciseVersion}`,

@@ -27,6 +27,7 @@ class AgentRuntime:
                 exa, ArxivPaperTool(settings.agents_enabled), min(10, settings.max_tool_calls)
             ),
             settings.max_tool_calls,
+            settings.request_timeout_seconds,
         )
         self.settings = settings
 

@@ -2,6 +2,8 @@ import asyncio
 import re
 from typing import Any
 
+from app.tools.budget import ToolBudget, ToolBudgetExceeded
+
 
 class ArxivPaperTool:
     name = "arxiv_paper_search"
@@ -10,18 +12,23 @@ class ArxivPaperTool:
     def __init__(self, enabled: bool = False) -> None:
         self.enabled = enabled
 
-    async def search(self, concept_names: list[str], limit: int) -> list[dict[str, Any]]:
+    async def search(
+        self, concept_names: list[str], limit: int, budget: ToolBudget
+    ) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
         from crewai_tools import ArxivPaperTool
 
         try:
+            budget.consume(self.name)
             tool = ArxivPaperTool(download_pdfs=False)
             content = await asyncio.to_thread(
                 tool.run,
                 search_query=" ".join(concept_names),
                 max_results=min(10, max(1, limit)),
             )
+        except ToolBudgetExceeded:
+            raise
         except Exception:
             return []
         text = str(content)

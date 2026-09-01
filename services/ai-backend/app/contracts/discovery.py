@@ -2,10 +2,11 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ResourceKind = Literal["video", "paper"]
 LearningLevel = Literal["beginner", "intermediate", "advanced", "mixed"]
+PaperStrategy = Literal["current", "foundational"]
 
 
 class DiscoveryRefreshRequest(BaseModel):
@@ -18,6 +19,7 @@ class DiscoveryRefreshRequest(BaseModel):
     video_coverage: int = Field(default=0, ge=0, le=100)
     paper_coverage: int = Field(default=0, ge=0, le=100)
     window_days: int = Field(default=30, ge=1, le=365)
+    paper_strategy: PaperStrategy = "current"
     audit_user_id: UUID | None = None
     trace_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -27,6 +29,12 @@ class DiscoveryRefreshRequest(BaseModel):
         if any(not value.strip() for value in values):
             raise ValueError("concept names must not be empty")
         return [value.strip() for value in values]
+
+    @model_validator(mode="after")
+    def concept_lists_match(self) -> "DiscoveryRefreshRequest":
+        if len(self.concept_ids) != len(self.concept_names):
+            raise ValueError("concept ids and names must have the same length")
+        return self
 
 
 class YoutubeCandidate(BaseModel):

@@ -4,6 +4,33 @@ import { DISCOVERY_ACTIONS, RECOMMENDATION_SURFACES } from "./domain-values.js";
 export const discoverySurfaceSchema = z.enum(RECOMMENDATION_SURFACES);
 export const discoveryActionSchema = z.enum(DISCOVERY_ACTIONS);
 
+const youtubeIdPattern = /^[A-Za-z0-9_-]{11}$/;
+
+export function isAllowedYoutubeHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be";
+}
+
+export function youtubeIdFromUrl(value: string): string | null {
+  try {
+    const parsed = new URL(value.trim());
+    if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return null;
+    const host = parsed.hostname.toLowerCase();
+    if (!isAllowedYoutubeHost(host)) return null;
+    const id = host === "youtu.be"
+      ? parsed.pathname.slice(1)
+      : parsed.searchParams.get("v") ?? parsed.pathname.match(/\/(?:shorts|embed|live)\/([^/?]+)/)?.[1];
+    return id && youtubeIdPattern.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function canonicalYoutubeUrl(youtubeId: string): string {
+  if (!youtubeIdPattern.test(youtubeId)) throw new Error("Invalid YouTube ID");
+  return `https://www.youtube.com/watch?v=${youtubeId}`;
+}
+
 export const discoveryImpressionRequestSchema = z.object({
   runId: z.string().uuid(),
   resourceId: z.string().uuid(),

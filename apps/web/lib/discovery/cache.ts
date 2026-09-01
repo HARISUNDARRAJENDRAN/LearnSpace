@@ -2,14 +2,23 @@ import type { DiscoveryHomeResponse } from "@learnspace/shared";
 
 const homeFeedTtlSeconds = 20 * 60;
 
+export type HomeFeedFingerprint = {
+  profileFingerprint: string;
+  catalogFingerprint: string;
+};
+
 function redisConfig(): { url: string; token: string } | null {
   const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
   return url && token ? { url: url.replace(/\/$/, ""), token } : null;
 }
 
-export function homeFeedCacheKey(userId: string): string {
-  return `ls:v1:discovery:home:${userId}:profile-v1:catalog-v1`;
+function homeFeedAliasKey(userId: string): string {
+  return `ls:v1:discovery:home:${userId}:current`;
+}
+
+export function homeFeedCacheKey(userId: string, fingerprints: HomeFeedFingerprint): string {
+  return `ls:v1:discovery:home:${userId}:${fingerprints.profileFingerprint}:${fingerprints.catalogFingerprint}`;
 }
 
 async function redisCommand(command: string[]): Promise<unknown> {
@@ -29,9 +38,12 @@ async function redisCommand(command: string[]): Promise<unknown> {
   return body && typeof body === "object" && "result" in body ? body.result : null;
 }
 
-export async function getCachedHomeFeed(userId: string): Promise<DiscoveryHomeResponse | null> {
+export async function getCachedHomeFeed(userId: string, fingerprints: HomeFeedFingerprint): Promise<DiscoveryHomeResponse | null> {
   try {
-    const result = await redisCommand(["GET", homeFeedCacheKey(userId)]);
+    const key = homeFeedCacheKey(userId, fingerprints);
+    const currentKey = await redisCommand(["GET", homeFeedAliasKey(userId)]);
+    if (currentKey !== key) return null;
+    const result = await redisCommand(["GET", key]);
     if (typeof result !== "string") return null;
     const parsed: unknown = JSON.parse(result);
     return parsed && typeof parsed === "object" ? parsed as DiscoveryHomeResponse : null;
@@ -40,9 +52,11 @@ export async function getCachedHomeFeed(userId: string): Promise<DiscoveryHomeRe
   }
 }
 
-export async function setCachedHomeFeed(userId: string, value: DiscoveryHomeResponse): Promise<void> {
+export async function setCachedHomeFeed(userId: string, fingerprints: HomeFeedFingerprint, value: DiscoveryHomeResponse): Promise<void> {
   try {
-    await redisCommand(["SETEX", homeFeedCacheKey(userId), String(homeFeedTtlSeconds), JSON.stringify(value)]);
+    const key = homeFeedCacheKey(userId, fingerprints);
+    await redisCommand(["SETEX", key, String(homeFeedTtlSeconds), JSON.stringify(value)]);
+    await redisCommand(["SETEX", homeFeedAliasKey(userId), String(homeFeedTtlSeconds), key]);
   } catch {
     return;
   }
@@ -50,7 +64,12 @@ export async function setCachedHomeFeed(userId: string, value: DiscoveryHomeResp
 
 export async function invalidateHomeFeedCache(userId: string): Promise<void> {
   try {
-    await redisCommand(["DEL", homeFeedCacheKey(userId)]);
+    const currentKey = await redisCommand(["GET", homeFeedAliasKey(userId)]);
+    await redisCommand([
+      "DEL",
+      homeFeedAliasKey(userId),
+      ...(typeof currentKey === "string" ? [currentKey] : []),
+    ]);
   } catch {
     return;
   }

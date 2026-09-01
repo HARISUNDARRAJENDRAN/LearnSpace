@@ -118,6 +118,9 @@ importers:
 
   services/worker:
     dependencies:
+      '@learnspace/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       postgres:
         specifier: 3.4.9
         version: 3.4.9

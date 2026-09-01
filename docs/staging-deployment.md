@@ -11,6 +11,7 @@ Docker PostgreSQL instance in `infra/postgres`.
 | `DATABASE_URL` | app data access | pooled `learnspace_app` | yes |
 | `DATABASE_AUTH_URL` | auth route handlers | pooled `learnspace_auth` | yes |
 | `DATABASE_MIGRATOR_URL` | migrate, verify, ledger, seed, DB tests | direct `learnspace_migrator` | no |
+| `DATABASE_WORKER_URL` | catalogue ingestion and discovery worker | pooled/direct `learnspace_worker` | no |
 | `DATABASE_ADMIN_URL` | one-time remote bootstrap | direct database owner/admin | no |
 
 The Vercel runtime also sets `DB_POOL_MAX=1`,
@@ -61,3 +62,21 @@ The Google callback must be exactly
 `https://<staging-domain>/api/auth/google/callback`. Redis is not provisioned
 for this milestone because the current auth implementation has no Redis
 dependency or rate-limit path.
+
+Catalogue imports must use `DATABASE_WORKER_URL`; `DATABASE_MIGRATOR_URL` is
+reserved for schema migrations and verification.
+
+The discovery worker uses the same worker connection for catalogue writes and
+durable job state. Run it outside Vercel with `pnpm discovery:worker` and set
+`DISCOVERY_AGENT_URL` plus `INTERNAL_SERVICE_TOKEN`. Its recurring scheduler
+reads these optional policy overrides (hours):
+
+- `DISCOVERY_REFRESH_FAST_HOURS` (default 12)
+- `DISCOVERY_REFRESH_MEDIUM_HOURS` (default 24)
+- `DISCOVERY_REFRESH_SLOW_HOURS` (default 72)
+- `DISCOVERY_REFRESH_JITTER_PERCENT` (default 0.1)
+- `DISCOVERY_WORKER_INTERVAL_MS` (default 30000)
+- `DISCOVERY_WORKER_MAX_JOBS` (default 0, continuous)
+
+The worker never needs `DATABASE_MIGRATOR_URL`; migrations remain a separate
+controlled job.

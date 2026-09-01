@@ -26,7 +26,11 @@ export type LearnerAffinity = {
   conceptId: string;
   score: number;
   confidence: number;
+  positiveWeight?: number;
+  negativeWeight?: number;
   featureVersion: string;
+  lastEventAt?: Date | null;
+  updatedAt?: Date | null;
 };
 
 export type LearnerProfile = {

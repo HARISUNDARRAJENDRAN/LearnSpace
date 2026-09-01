@@ -6,9 +6,11 @@ from app.contracts.discovery import ArxivCandidate, YoutubeCandidate
 def youtube_id_from_url(value: str) -> str | None:
     parsed = urlparse(value)
     host = parsed.hostname.lower() if parsed.hostname else ""
+    if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port:
+        return None
     if host == "youtu.be":
         candidate = parsed.path.strip("/")
-    elif host.endswith("youtube.com"):
+    elif host == "youtube.com" or host.endswith(".youtube.com"):
         candidate = parse_qs(parsed.query).get("v", [""])[0]
         if not candidate:
             parts = parsed.path.strip("/").split("/")

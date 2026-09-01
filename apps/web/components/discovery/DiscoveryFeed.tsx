@@ -15,13 +15,14 @@ function formatDate(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
-function DiscoveryCardView({ card, surface }: { card: DiscoveryCard; surface: DiscoverySurface }) {
+function DiscoveryCardView({ card, surface, onDismiss }: { card: DiscoveryCard; surface: DiscoverySurface; onDismiss: (resourceId: string) => void }) {
   const ref = useRef<HTMLElement>(null);
   const [action, setAction] = useState<DiscoveryAction | null>(null);
   const [message, setMessage] = useState("");
+  const isContinue = card.reasonCodes.includes("continue_learning");
 
   useEffect(() => {
-    if (!ref.current || !card.runId || typeof IntersectionObserver === "undefined") return;
+    if (!ref.current || !card.runId || isContinue || typeof IntersectionObserver === "undefined") return;
     let sent = false;
     const observer = new IntersectionObserver((entries) => {
       if (sent || !entries[0]?.isIntersecting) return;
@@ -35,7 +36,7 @@ function DiscoveryCardView({ card, surface }: { card: DiscoveryCard; surface: Di
     }, { threshold: 0.5 });
     observer.observe(ref.current);
     return () => observer.disconnect();
-  }, [card.position, card.resourceId, card.runId, surface]);
+  }, [card.position, card.resourceId, card.runId, isContinue, surface]);
 
   async function interact(nextAction: DiscoveryAction) {
     setAction(nextAction);
@@ -48,7 +49,7 @@ function DiscoveryCardView({ card, surface }: { card: DiscoveryCard; surface: Di
       });
       if (!response.ok) throw new Error("interaction failed");
       setMessage(nextAction === "save" ? "Saved to your library" : nextAction === "dismiss" ? "Removed from recommendations" : "Opening resource");
-      if (nextAction === "dismiss") setTimeout(() => setMessage(""), 1400);
+      if (nextAction === "dismiss") onDismiss(card.resourceId);
     } catch {
       setMessage("Could not save that action");
     } finally {
@@ -77,25 +78,28 @@ function DiscoveryCardView({ card, surface }: { card: DiscoveryCard; surface: Di
   );
 }
 
-function Section({ title, description, cards, surface }: { title: string; description: string; cards: DiscoveryCard[]; surface: DiscoverySurface }) {
+function Section({ title, description, cards, surface, onDismiss }: { title: string; description: string; cards: DiscoveryCard[]; surface: DiscoverySurface; onDismiss: (resourceId: string) => void }) {
   const sectionId = `section-${title.toLowerCase().replaceAll(" ", "-")}`;
   return (
     <section className="discovery-section" aria-labelledby={sectionId}>
       <div className="discovery-section-heading"><div><p className="application-eyebrow">LearnSpace</p><h2 id={sectionId}>{title}</h2></div><p>{description}</p></div>
-      {cards.length > 0 ? <div className="discovery-card-grid">{cards.map((card) => <DiscoveryCardView key={`${card.runId}-${card.resourceId}-${card.position}`} card={card} surface={surface} />)}</div> : <div className="discovery-empty"><span className="discovery-empty-mark" aria-hidden="true">○</span><p>Nothing here yet.</p><span>As your library and learning sessions grow, this space will follow along.</span></div>}
+      {cards.length > 0 ? <div className="discovery-card-grid">{cards.map((card) => <DiscoveryCardView key={`${card.runId}-${card.resourceId}-${card.position}`} card={card} surface={surface} onDismiss={onDismiss} />)}</div> : <div className="discovery-empty"><span className="discovery-empty-mark" aria-hidden="true">○</span><p>Nothing here yet.</p><span>As your library and learning sessions grow, this space will follow along.</span></div>}
     </section>
   );
 }
 
 export function DiscoveryFeed({ feed, surface, firstName }: { feed: DiscoveryHomeResponse; surface: DiscoverySurface; firstName: string }) {
+  const [dismissedResourceIds, setDismissedResourceIds] = useState<Set<string>>(() => new Set());
+  const dismiss = (resourceId: string) => setDismissedResourceIds((current) => new Set(current).add(resourceId));
+  const visible = (cards: DiscoveryCard[]) => cards.filter((card) => !dismissedResourceIds.has(card.resourceId));
   return (
     <main className="discovery-page">
       <div className="discovery-page-intro"><div><p className="application-eyebrow">Your learning space</p><h1>Good to see you, {firstName}.</h1><p>A considered place for the next thing worth learning.</p></div><div className="discovery-feed-status" data-stale={feed.stale ? "true" : "false"}>{feed.stale ? "Showing your last good feed" : "Personalized from your interests"}</div></div>
       {feed.sections.interests.length > 0 ? <section className="discovery-interests" aria-labelledby="interest-heading"><div><p className="application-eyebrow">Your starting point</p><h2 id="interest-heading">Explore your interests</h2></div><div className="discovery-interest-list">{feed.sections.interests.map((interest) => <span className="discovery-interest-chip" key={interest.id}>{interest.name}</span>)}</div></section> : null}
-      <Section title="Continue learning" description="Your active sessions, when you have one in motion." cards={feed.sections.continueLearning} surface={surface} />
-      <Section title="Recommended videos" description="A short list shaped by your concepts, level, and learning style." cards={feed.sections.recommendedVideos} surface={surface} />
-      <Section title="Research worth reading" description="Current and foundational papers, ranked separately from videos." cards={feed.sections.researchPapers} surface={surface} />
-      <Section title="Fresh for you" description="Recently added resources that clear the quality floor." cards={feed.sections.freshForYou} surface={surface} />
+      <Section title="Continue learning" description="Your active sessions, when you have one in motion." cards={visible(feed.sections.continueLearning)} surface={surface} onDismiss={dismiss} />
+      <Section title="Recommended videos" description="A short list shaped by your concepts, level, and learning style." cards={visible(feed.sections.recommendedVideos)} surface={surface} onDismiss={dismiss} />
+      <Section title="Research worth reading" description="Current and foundational papers, ranked separately from videos." cards={visible(feed.sections.researchPapers)} surface={surface} onDismiss={dismiss} />
+      <Section title="Fresh for you" description="Recently added resources that clear the quality floor." cards={visible(feed.sections.freshForYou)} surface={surface} onDismiss={dismiss} />
     </main>
   );
 }

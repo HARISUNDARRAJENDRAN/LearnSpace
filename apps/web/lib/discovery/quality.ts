@@ -1,4 +1,5 @@
 export const YOUTUBE_QUALITY_FEATURE_VERSION = "youtube-quality-v1";
+const neutralSourceAuthorityPrior = 0.6;
 
 export type YoutubeQualityInput = {
   title: string;
@@ -81,7 +82,7 @@ export function scoreYoutubeQuality(input: YoutubeQualityInput, now: Date): Yout
   }
 
   if (input.channelTitle?.trim()) {
-    values.push(["sourceAuthority", 0.6, 0.1]);
+    values.push(["sourceAuthority", neutralSourceAuthorityPrior, 0.1]);
   } else {
     missingFeatureCodes.push("channel_missing");
   }
@@ -99,6 +100,8 @@ export function scoreYoutubeQuality(input: YoutubeQualityInput, now: Date): Yout
     sourceAuthority: values.find(([name]) => name === "sourceAuthority")?.[1] ?? null,
     features: {
       featureVersion: YOUTUBE_QUALITY_FEATURE_VERSION,
+      sourceAuthorityKind: "neutral_prior",
+      sourceAuthorityPrior: neutralSourceAuthorityPrior,
       metricAgeDays: metricAge,
       missingFeatureCodes,
       availableFeatureNames: values.map(([name]) => name),

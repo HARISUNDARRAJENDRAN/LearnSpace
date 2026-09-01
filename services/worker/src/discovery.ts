@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { canonicalYoutubeUrl, youtubeIdFromUrl } from "@learnspace/shared";
 
 type JsonObject = Record<string, unknown>;
 type SqlClient = ReturnType<typeof postgres>;
@@ -59,6 +60,30 @@ type CandidateBatch = {
   audit_run_id: string | null;
 };
 
+function configuredNumber(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = Number(process.env[name] ?? fallback);
+  return Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback;
+}
+
+export function refreshIntervalHours(conceptName: string): number {
+  const name = conceptName.toLowerCase();
+  if (/(artificial intelligence|machine learning|ai|web development|cybersecurity)/.test(name)) {
+    return configuredNumber("DISCOVERY_REFRESH_FAST_HOURS", 12, 1, 168);
+  }
+  if (/(programming|computer science|data science|devops|cloud)/.test(name)) {
+    return configuredNumber("DISCOVERY_REFRESH_MEDIUM_HOURS", 24, 1, 336);
+  }
+  return configuredNumber("DISCOVERY_REFRESH_SLOW_HOURS", 72, 1, 720);
+}
+
+export function nextRefreshAt(conceptId: string, conceptName: string, finishedAt: Date): Date {
+  const jitterPercent = configuredNumber("DISCOVERY_REFRESH_JITTER_PERCENT", 0.1, 0, 0.5);
+  const hash = createHash("sha256").update(`${conceptId}:${finishedAt.toISOString()}`).digest().readUInt32BE(0);
+  const jitter = ((hash % 2001) / 1000 - 1) * jitterPercent;
+  const delayMs = refreshIntervalHours(conceptName) * 60 * 60 * 1000 * (1 + jitter);
+  return new Date(finishedAt.getTime() + delayMs);
+}
+
 function stringValue(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -90,12 +115,7 @@ function arxivId(value: unknown): string | null {
 }
 
 function isYoutubeUrl(value: string, id: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && ["youtube.com", "www.youtube.com"].includes(url.hostname) && url.searchParams.get("v") === id;
-  } catch {
-    return false;
-  }
+  return youtubeIdFromUrl(value) === id;
 }
 
 function isArxivUrl(value: string, id: string): boolean {
@@ -117,7 +137,7 @@ function parseYoutube(value: unknown): YoutubeProposal | null {
   if (!id || !url || !isYoutubeUrl(url, id) || !title || title.length < 3 || confidence === null || confidence < 0.5 || confidence > 1) return null;
   return {
     youtube_id: id,
-    canonical_url: `https://www.youtube.com/watch?v=${id}`,
+    canonical_url: canonicalYoutubeUrl(id),
     title: title.slice(0, 500),
     channel: stringValue(item.channel),
     published_at: stringValue(item.published_at),
@@ -185,10 +205,12 @@ function parseBatch(value: unknown): CandidateBatch {
   };
 }
 
-function discoveryPayload(payload: JsonObject, userId: string, traceId: string): JsonObject {
+export function discoveryPayload(payload: JsonObject, userId: string, traceId: string, conceptId: string, conceptName: string): JsonObject {
   return {
-    concept_ids: stringArray(payload.conceptIds),
-    concept_names: stringArray(payload.conceptNames),
+    concept_id: conceptId,
+    concept_name: conceptName,
+    concept_ids: [conceptId],
+    concept_names: [conceptName],
     level: stringValue(payload.level) ?? "mixed",
     preferred_formats: stringArray(payload.preferredFormats),
     video_coverage: 0,
@@ -197,6 +219,58 @@ function discoveryPayload(payload: JsonObject, userId: string, traceId: string):
     audit_user_id: userId,
     trace_id: traceId,
   };
+}
+
+async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
+  const rows = await sql<{ concept_id: string; concept_name: string; payload: JsonObject; finished_at: Date }[]>`
+    SELECT DISTINCT ON (payload->>'concept_id')
+      payload->>'concept_id' AS concept_id,
+      COALESCE(payload->>'concept_name', payload->'concept_names'->>0, payload->>'concept_id') AS concept_name,
+      payload,
+      finished_at
+    FROM ops.jobs
+    WHERE queue = 'discovery'
+      AND job_type = 'discovery.refresh_concept'
+      AND status = 'done'
+      AND finished_at IS NOT NULL
+      AND payload->>'concept_id' IS NOT NULL
+    ORDER BY payload->>'concept_id', finished_at DESC
+  `;
+  const scheduledRows = await sql<{ concept_id: string; status: string; created_at: Date }[]>`
+    SELECT DISTINCT ON (payload->>'concept_id')
+      payload->>'concept_id' AS concept_id,
+      status,
+      created_at
+    FROM ops.jobs
+    WHERE queue = 'discovery'
+      AND job_type = 'discovery.refresh_concept'
+      AND payload->>'refresh_reason' = 'scheduled'
+      AND status IN ('pending', 'running', 'dead')
+    ORDER BY payload->>'concept_id', created_at DESC
+  `;
+  const existingScheduled = new Map(scheduledRows.map((job) => [job.concept_id, job]));
+  let scheduled = 0;
+  for (const row of rows) {
+    const nextAt = nextRefreshAt(row.concept_id, row.concept_name, row.finished_at);
+    if (nextAt.getTime() > Date.now()) continue;
+    const existing = existingScheduled.get(row.concept_id);
+    if (existing && existing.created_at >= row.finished_at) continue;
+    const payload = {
+      ...row.payload,
+      audit_user_id: null,
+      refresh_reason: "scheduled",
+      trace_id: `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
+    };
+    const inserted = await sql<{ id: string }[]>`
+      INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, available_at, trace_id)
+      VALUES ('discovery', 'discovery.refresh_concept', ${JSON.stringify(payload)}::jsonb, 'pending', 0,
+        ${`discovery:${row.concept_id}:refresh`}, ${`scheduled:${row.concept_id}:${row.finished_at.toISOString()}`}, ${nextAt}, ${payload.trace_id})
+      ON CONFLICT DO NOTHING
+      RETURNING id
+    `;
+    if (inserted.length > 0) scheduled += 1;
+  }
+  return scheduled;
 }
 
 async function promoteOutbox(sql: SqlClient): Promise<string | null> {
@@ -214,14 +288,21 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const outbox = rows[0];
     if (!outbox?.user_id) return null;
     const traceId = outbox.trace_id ?? `outbox-${outbox.id}`;
-    const payload = discoveryPayload(outbox.payload, outbox.user_id, traceId);
-    const dedupKey = `discovery:${createHash("sha256").update(JSON.stringify(payload.concept_ids)).digest("hex").slice(0, 32)}`;
-    const jobs = await tx<{ id: string }[]>`
-      INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
-      VALUES ('discovery', 'discovery.refresh_concept', ${JSON.stringify(payload)}::jsonb, ${dedupKey}, ${outbox.id}, ${outbox.correlation_id}, ${traceId})
-      ON CONFLICT DO NOTHING
-      RETURNING id
-    `;
+    const conceptIds = stringArray(outbox.payload.conceptIds);
+    const conceptNames = stringArray(outbox.payload.conceptNames);
+    const jobs: Array<{ id: string }> = [];
+    for (const [index, conceptId] of conceptIds.entries()) {
+      const conceptName = conceptNames[index] ?? conceptId;
+      const payload = discoveryPayload(outbox.payload, outbox.user_id, traceId, conceptId, conceptName);
+      const dedupKey = `discovery:${conceptId}:refresh`;
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', 'discovery.refresh_concept', ${JSON.stringify(payload)}::jsonb, ${dedupKey}, ${`${outbox.id}:${conceptId}`}, ${outbox.correlation_id}, ${traceId})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) jobs.push(inserted[0]);
+    }
     await tx`
       UPDATE ops.outbox_events
       SET status = 'published', published_at = now()
@@ -280,9 +361,14 @@ async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<strin
 async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<{ videos: number; papers: number }> {
   const userId = stringValue(job.payload.audit_user_id);
   return sql.begin(async (tx) => {
+    const targetConceptId = (await validConceptIds(tx, [
+      stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0] ?? "",
+    ]))[0];
+    if (!targetConceptId) return { videos: 0, papers: 0 };
     let videos = 0;
     let papers = 0;
     for (const candidate of batch.youtube) {
+      if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
         VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${JSON.stringify({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, sourceConfidence: candidate.confidence })}::jsonb)
@@ -296,16 +382,15 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         VALUES (${resource.id}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
         ON CONFLICT (resource_id) DO UPDATE SET channel_title = EXCLUDED.channel_title, duration_ms = EXCLUDED.duration_ms, published_at = EXCLUDED.published_at, default_audio_language = EXCLUDED.default_audio_language, fetched_at = now()
       `;
-      for (const conceptId of await validConceptIds(tx, candidate.matched_concept_ids)) {
-        await tx`
-          INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
-          VALUES (${resource.id}, ${conceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
-          ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
-        `;
-      }
+      await tx`
+        INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
+        VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
+        ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
+      `;
       videos += 1;
     }
     for (const candidate of batch.arxiv) {
+      if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, visibility, status, metadata)
         VALUES ('paper', 'arxiv', ${candidate.arxiv_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.abstract}, 'public', 'ready', ${JSON.stringify({ source: "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories })}::jsonb)
@@ -319,13 +404,11 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${JSON.stringify({ authors: candidate.authors, source: "discovery-agent" })}::jsonb)
         ON CONFLICT (resource_id) DO UPDATE SET abstract = EXCLUDED.abstract, publication_date = EXCLUDED.publication_date, submitted_at = EXCLUDED.submitted_at, primary_category = EXCLUDED.primary_category, metadata = EXCLUDED.metadata
       `;
-      for (const conceptId of await validConceptIds(tx, candidate.matched_concept_ids)) {
-        await tx`
-          INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
-          VALUES (${resource.id}, ${conceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
-          ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
-        `;
-      }
+      await tx`
+        INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
+        VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
+        ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
+      `;
       papers += 1;
     }
     if (userId && batch.audit_run_id) await persistAudit(sql, job, batch);
@@ -377,9 +460,16 @@ async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promi
 
 async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<void> {
   const detail = error instanceof Error ? error.message.slice(0, 500) : "discovery worker failed";
+  const retryDelaySeconds = Math.min(3600, 30 * 2 ** Math.max(0, job.attempts - 1));
   await sql`
     UPDATE ops.jobs
-    SET status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END, last_error_code = 'DISCOVERY_REFRESH_FAILED', last_error_detail = ${detail}, available_at = now() + interval '30 seconds', lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+    SET status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
+      last_error_code = 'DISCOVERY_REFRESH_FAILED',
+      last_error_detail = ${detail},
+      available_at = now() + make_interval(secs => ${retryDelaySeconds}),
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      updated_at = now()
     WHERE id = ${job.id}
   `;
 }
@@ -394,14 +484,15 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
+    const scheduledCount = await scheduleDueRefreshes(sql);
     const promotedJobId = await promoteOutbox(sql);
     const job = await claimJob(sql, workerId);
-    if (!job) return { status: "idle", promotedJobId };
+    if (!job) return { status: "idle", promotedJobId, scheduledCount };
     try {
       const batch = await callAgent(agentUrl, token, job);
       const persisted = await persistBatch(sql, job, batch);
       await finishJob(sql, job, { traceId: batch.trace_id, ...persisted });
-      return { status: "done", jobId: job.id, traceId: batch.trace_id, ...persisted };
+      return { status: "done", jobId: job.id, traceId: batch.trace_id, scheduledCount, ...persisted };
     } catch (error) {
       await failJob(sql, job, error);
       throw error;
@@ -409,4 +500,28 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
   } finally {
     await sql.end({ timeout: 5 });
   }
+}
+
+export async function runDiscoveryWorkerLoop(options: { maxJobs?: number; intervalMs?: number; signal?: AbortSignal } = {}): Promise<JsonObject> {
+  const maxJobs = options.maxJobs ?? configuredNumber("DISCOVERY_WORKER_MAX_JOBS", 0, 0, 100_000);
+  const intervalMs = options.intervalMs ?? configuredNumber("DISCOVERY_WORKER_INTERVAL_MS", 30_000, 1_000, 300_000);
+  let processed = 0;
+  let scheduled = 0;
+  while (!options.signal?.aborted && (maxJobs <= 0 || processed < maxJobs)) {
+    let result: JsonObject;
+    try {
+      result = await runDiscoveryWorker();
+    } catch {
+      if (maxJobs > 0) processed += 1;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      continue;
+    }
+    scheduled += typeof result.scheduledCount === "number" ? result.scheduledCount : 0;
+    if (result.status === "done") {
+      processed += 1;
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { status: options.signal?.aborted ? "stopped" : "complete", processed, scheduled };
 }

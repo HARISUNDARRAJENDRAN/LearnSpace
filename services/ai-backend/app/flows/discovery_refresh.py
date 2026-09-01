@@ -1,5 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -23,14 +24,19 @@ from app.contracts.discovery import (
     YoutubeCandidate,
 )
 from app.guardrails.candidate_validation import validate_arxiv_candidate, validate_youtube_candidate
+from app.tools.budget import ToolBudget
 
 
 class YoutubeDiscoverer(Protocol):
-    async def discover(self, request: DiscoveryRefreshRequest) -> list[YoutubeCandidate]: ...
+    async def discover(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[YoutubeCandidate]: ...
 
 
 class ArxivDiscoverer(Protocol):
-    async def discover(self, request: DiscoveryRefreshRequest) -> list[ArxivCandidate]: ...
+    async def discover(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[ArxivCandidate]: ...
 
 
 class DiscoveryFlowState(BaseModel):
@@ -44,54 +50,105 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         youtube: YoutubeDiscoverer,
         arxiv: ArxivDiscoverer,
         max_tool_calls: int = 4,
+        request_timeout_seconds: float = 8.0,
     ) -> None:
         super().__init__()
         self.cache = cache
         self.youtube = youtube
         self.arxiv = arxiv
         self.max_tool_calls = max_tool_calls
+        self.request_timeout_seconds = request_timeout_seconds
 
     async def run_discovery(self, request: DiscoveryRefreshRequest) -> DiscoveryCandidateBatch:
         trace_id = request.trace_id or str(uuid4())
         format_key = request.preferred_formats[0] if request.preferred_formats else "any"
-        youtube_keys = [
-            youtube_cache_key(str(concept_id), request.level, format_key, request.window_days)
-            for concept_id in request.concept_ids
-        ]
-        arxiv_keys = [
-            arxiv_cache_key(str(concept_id), request.level, request.window_days)
-            for concept_id in request.concept_ids
-        ]
-        youtube_ready = await self.cache.has_enough(youtube_keys, 6)
-        arxiv_ready = await self.cache.has_enough(arxiv_keys, 4)
+        budget = ToolBudget(self.max_tool_calls)
         skipped: list[ResourceKind] = []
         youtube_candidates: list[YoutubeCandidate] = []
         arxiv_candidates: list[ArxivCandidate] = []
         failures: list[str] = []
-        if youtube_ready:
+        videos_ready = True
+        papers_ready = True
+        cache_hit = False
+        for concept_id, concept_name in zip(
+            request.concept_ids, request.concept_names, strict=False
+        ):
+            concept_key = str(concept_id)
+            pool_request = request.model_copy(
+                update={"concept_ids": [concept_id], "concept_names": [concept_name]}
+            )
+            youtube_key = youtube_cache_key(
+                concept_key, request.level, format_key, request.window_days
+            )
+            if await self.cache.has_enough([youtube_key], 6):
+                cache_hit = True
+                youtube_candidates.extend(await self._cached_youtube(youtube_key, concept_id))
+            else:
+                videos_ready = False
+                try:
+                    candidates = await self._retry(
+                        partial(self.youtube.discover, pool_request, budget)
+                    )
+                    candidates = [
+                        candidate
+                        for candidate in candidates
+                        if concept_id in candidate.matched_concept_ids
+                    ]
+                    youtube_candidates.extend(candidates)
+                    await self._cache_youtube(youtube_key, candidates)
+                except Exception as error:
+                    if len(failures) < 10:
+                        failures.append(f"youtube:{concept_key}:{type(error).__name__}")
+                    youtube_candidates.extend(
+                        await self._cached_youtube(youtube_key, concept_id, stale=True)
+                    )
+
+            for paper_strategy in ("current", "foundational"):
+                paper_request = request.model_copy(
+                    update={
+                        "concept_ids": [concept_id],
+                        "concept_names": [concept_name],
+                        "paper_strategy": paper_strategy,
+                        "window_days": request.window_days if paper_strategy == "current" else 365,
+                    }
+                )
+                arxiv_key = arxiv_cache_key(
+                    concept_key, request.level, paper_request.window_days, paper_strategy
+                )
+                if await self.cache.has_enough([arxiv_key], 2):
+                    cache_hit = True
+                    arxiv_candidates.extend(await self._cached_arxiv(arxiv_key, concept_id))
+                else:
+                    papers_ready = False
+                    try:
+                        candidates = await self._retry(
+                            partial(self.arxiv.discover, paper_request, budget)
+                        )
+                        candidates = [
+                            candidate
+                            for candidate in candidates
+                            if concept_id in candidate.matched_concept_ids
+                        ]
+                        arxiv_candidates.extend(candidates)
+                        await self._cache_arxiv(arxiv_key, candidates)
+                    except Exception as error:
+                        if len(failures) < 10:
+                            failures.append(
+                                f"arxiv:{concept_key}:{paper_strategy}:{type(error).__name__}"
+                            )
+                        arxiv_candidates.extend(
+                            await self._cached_arxiv(arxiv_key, concept_id, stale=True)
+                        )
+        if videos_ready:
             skipped.append("video")
-            youtube_candidates = await self._cached_youtube(youtube_keys)
-        else:
-            try:
-                youtube_candidates = await self._retry(lambda: self.youtube.discover(request))
-                await self._cache_youtube(youtube_keys, youtube_candidates)
-            except Exception as error:
-                failures.append(f"youtube:{type(error).__name__}")
-        if arxiv_ready:
+        if papers_ready:
             skipped.append("paper")
-            arxiv_candidates = await self._cached_arxiv(arxiv_keys)
-        else:
-            try:
-                arxiv_candidates = await self._retry(lambda: self.arxiv.discover(request))
-                await self._cache_arxiv(arxiv_keys, arxiv_candidates)
-            except Exception as error:
-                failures.append(f"arxiv:{type(error).__name__}")
         return DiscoveryCandidateBatch(
             trace_id=trace_id,
             skipped=skipped,
             youtube=self._dedupe_youtube(youtube_candidates),
             arxiv=self._dedupe_arxiv(arxiv_candidates),
-            cache_hit=youtube_ready or arxiv_ready,
+            cache_hit=cache_hit,
             failures=failures,
             audit_run_id=uuid4(),
         )
@@ -99,7 +156,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
     async def _retry(self, operation: Callable[[], Awaitable[list[Any]]]) -> list[Any]:
         for attempt in range(2):
             try:
-                return await asyncio.wait_for(operation(), timeout=8)
+                return await asyncio.wait_for(operation(), timeout=self.request_timeout_seconds)
             except Exception as error:
                 if attempt == 1 or not self._retryable(error):
                     raise
@@ -120,43 +177,45 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             504,
         }
 
-    async def _cached_youtube(self, keys: list[str]) -> list[YoutubeCandidate]:
+    async def _cached_youtube(
+        self, key: str, concept_id: Any, stale: bool = False
+    ) -> list[YoutubeCandidate]:
         result: list[YoutubeCandidate] = []
-        for key in keys:
-            for item in await self.cache.get(key) or []:
-                try:
-                    candidate = YoutubeCandidate.model_validate(item)
-                except Exception:
-                    continue
-                valid = validate_youtube_candidate(candidate)
-                if valid is not None:
-                    result.append(valid)
+        values = await (self.cache.get_stale(key) if stale else self.cache.get(key))
+        for item in values or []:
+            try:
+                candidate = YoutubeCandidate.model_validate(item)
+            except Exception:
+                continue
+            valid = validate_youtube_candidate(candidate)
+            if valid is not None and concept_id in valid.matched_concept_ids:
+                result.append(valid)
         return result
 
-    async def _cached_arxiv(self, keys: list[str]) -> list[ArxivCandidate]:
+    async def _cached_arxiv(
+        self, key: str, concept_id: Any, stale: bool = False
+    ) -> list[ArxivCandidate]:
         result: list[ArxivCandidate] = []
-        for key in keys:
-            for item in await self.cache.get(key) or []:
-                try:
-                    candidate = ArxivCandidate.model_validate(item)
-                except Exception:
-                    continue
-                valid = validate_arxiv_candidate(candidate)
-                if valid is not None:
-                    result.append(valid)
+        values = await (self.cache.get_stale(key) if stale else self.cache.get(key))
+        for item in values or []:
+            try:
+                candidate = ArxivCandidate.model_validate(item)
+            except Exception:
+                continue
+            valid = validate_arxiv_candidate(candidate)
+            if valid is not None and concept_id in valid.matched_concept_ids:
+                result.append(valid)
         return result
 
-    async def _cache_youtube(self, keys: list[str], candidates: list[YoutubeCandidate]) -> None:
+    async def _cache_youtube(self, key: str, candidates: list[YoutubeCandidate]) -> None:
         value = [candidate.model_dump(mode="json") for candidate in candidates]
         ttl = YOUTUBE_TTL if candidates else NEGATIVE_TTL
-        for key in keys:
-            await self.cache.set(key, value, ttl)
+        await self.cache.set(key, value, ttl)
 
-    async def _cache_arxiv(self, keys: list[str], candidates: list[ArxivCandidate]) -> None:
+    async def _cache_arxiv(self, key: str, candidates: list[ArxivCandidate]) -> None:
         value = [candidate.model_dump(mode="json") for candidate in candidates]
         ttl = ARXIV_TTL if candidates else NEGATIVE_TTL
-        for key in keys:
-            await self.cache.set(key, value, ttl)
+        await self.cache.set(key, value, ttl)
 
     @staticmethod
     def _dedupe_youtube(candidates: list[YoutubeCandidate]) -> list[YoutubeCandidate]:

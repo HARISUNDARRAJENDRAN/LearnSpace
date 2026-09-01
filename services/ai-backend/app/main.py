@@ -21,9 +21,10 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/readyz")
 async def readyz() -> dict[str, str]:
-    if not settings.ready():
+    errors = settings.readiness_errors()
+    if errors:
         raise HTTPException(
-            status_code=503, detail="internal service authentication is not configured"
+            status_code=503, detail=f"discovery service missing: {', '.join(errors)}"
         )
     return {"status": "ready"}
 

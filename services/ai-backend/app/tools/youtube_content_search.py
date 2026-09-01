@@ -1,6 +1,8 @@
 import asyncio
 from typing import Any
 
+from app.tools.budget import ToolBudget, ToolBudgetExceeded
+
 
 class YoutubeContentSearchTool:
     name = "youtube_content_search"
@@ -16,14 +18,15 @@ class YoutubeContentSearchTool:
         self.embedder_provider = embedder_provider
         self.embedder_model = embedder_model
 
-    async def analyze(self, urls: list[str]) -> dict[str, dict[str, Any]]:
+    async def analyze(self, urls: list[str], budget: ToolBudget) -> dict[str, dict[str, Any]]:
         if not self.enabled:
             return {}
         from crewai_tools import YoutubeVideoSearchTool
 
         result: dict[str, dict[str, Any]] = {}
-        for url in urls[:5]:
+        for url in urls[: min(5, budget.remaining)]:
             try:
+                budget.consume(self.name)
                 tool = YoutubeVideoSearchTool(
                     youtube_video_url=url,
                     config={
@@ -38,6 +41,8 @@ class YoutubeContentSearchTool:
                     "Assess whether this video teaches the requested concept, "
                     "including its format and level.",
                 )
+            except ToolBudgetExceeded:
+                raise
             except Exception:
                 continue
             result[url] = {

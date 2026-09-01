@@ -6,6 +6,7 @@ import httpx
 
 from app.contracts.discovery import ResourceKind
 from app.guardrails.candidate_validation import is_allowed_arxiv_url, youtube_id_from_url
+from app.tools.budget import ToolBudget
 
 
 class ExaDiscoveryTool:
@@ -22,19 +23,24 @@ class ExaDiscoveryTool:
         resource_kind: ResourceKind,
         window_days: int,
         limit: int,
+        budget: ToolBudget,
+        paper_strategy: str = "current",
     ) -> list[dict[str, Any]]:
         if not self.api_key:
             return []
+        budget.consume(self.name)
         domain = "youtube.com" if resource_kind == "video" else "arxiv.org"
-        start = datetime.now(UTC) - timedelta(days=window_days)
         payload = {
             "query": " educational " + " ".join(concept_names),
             "type": "neural",
             "numResults": min(10, max(1, limit)),
             "includeDomains": [domain],
-            "startPublishedDate": start.isoformat(),
             "contents": {"highlights": {"maxCharacters": 800}},
         }
+        if resource_kind == "video" or paper_strategy == "current":
+            payload["startPublishedDate"] = (
+                datetime.now(UTC) - timedelta(days=window_days)
+            ).isoformat()
         headers = {"x-api-key": self.api_key, "Content-Type": "application/json"}
         async with httpx.AsyncClient(
             timeout=self.timeout_seconds, follow_redirects=False

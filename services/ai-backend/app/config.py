@@ -34,5 +34,18 @@ class Settings:
             ),
         )
 
+    def readiness_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.internal_service_token:
+            errors.append("INTERNAL_SERVICE_TOKEN")
+        if self.agents_enabled:
+            if not self.exa_api_key:
+                errors.append("EXA_API_KEY")
+            if not self.redis_url:
+                errors.append("REDIS_URL")
+            if self.youtube_embedder_provider == "openai" and not os.getenv("OPENAI_API_KEY"):
+                errors.append("OPENAI_API_KEY")
+        return errors
+
     def ready(self) -> bool:
-        return bool(self.internal_service_token)
+        return not self.readiness_errors()
