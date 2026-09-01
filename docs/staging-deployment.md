@@ -89,6 +89,7 @@ recurring scheduler reads these optional policy overrides (hours):
 - `DISCOVERY_REFRESH_JITTER_PERCENT` (default 0.1)
 - `DISCOVERY_WORKER_INTERVAL_MS` (default 30000)
 - `DISCOVERY_WORKER_MAX_JOBS` (default 0, continuous)
+- `DISCOVERY_AGENT_TIMEOUT_SECONDS` (default 120)
 
 The worker never needs `DATABASE_MIGRATOR_URL`; migrations remain a separate
 controlled job.

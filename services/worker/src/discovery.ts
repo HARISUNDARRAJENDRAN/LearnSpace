@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { canonicalYoutubeUrl, youtubeIdFromUrl } from "@learnspace/shared";
 
-type JsonObject = Record<string, unknown>;
+type JsonObject = Record<string, postgres.JSONValue | undefined>;
 type SqlClient = ReturnType<typeof postgres>;
 type TransactionSql = postgres.TransactionSql;
 
@@ -99,6 +99,13 @@ function stringArray(value: unknown): string[] {
 }
 
 function objectValue(value: unknown): JsonObject | null {
+  if (typeof value === "string") {
+    try {
+      return objectValue(JSON.parse(value));
+    } catch {
+      return null;
+    }
+  }
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonObject)
     : null;
@@ -251,19 +258,21 @@ async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
   const existingScheduled = new Map(scheduledRows.map((job) => [job.concept_id, job]));
   let scheduled = 0;
   for (const row of rows) {
+    const basePayload = objectValue(row.payload);
+    if (!basePayload) continue;
     const nextAt = nextRefreshAt(row.concept_id, row.concept_name, row.finished_at);
     if (nextAt.getTime() > Date.now()) continue;
     const existing = existingScheduled.get(row.concept_id);
     if (existing && existing.created_at >= row.finished_at) continue;
     const payload = {
-      ...row.payload,
+      ...basePayload,
       audit_user_id: null,
       refresh_reason: "scheduled",
       trace_id: `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
     };
     const inserted = await sql<{ id: string }[]>`
       INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, available_at, trace_id)
-      VALUES ('discovery', 'discovery.refresh_concept', ${JSON.stringify(payload)}::jsonb, 'pending', 0,
+      VALUES ('discovery', 'discovery.refresh_concept', ${sql.json(payload)}, 'pending', 0,
         ${`discovery:${row.concept_id}:refresh`}, ${`scheduled:${row.concept_id}:${row.finished_at.toISOString()}`}, ${nextAt}, ${payload.trace_id})
       ON CONFLICT DO NOTHING
       RETURNING id
@@ -287,17 +296,19 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     `;
     const outbox = rows[0];
     if (!outbox?.user_id) return null;
+    const outboxPayload = objectValue(outbox.payload);
+    if (!outboxPayload) return null;
     const traceId = outbox.trace_id ?? `outbox-${outbox.id}`;
-    const conceptIds = stringArray(outbox.payload.conceptIds);
-    const conceptNames = stringArray(outbox.payload.conceptNames);
+    const conceptIds = stringArray(outboxPayload.conceptIds);
+    const conceptNames = stringArray(outboxPayload.conceptNames);
     const jobs: Array<{ id: string }> = [];
     for (const [index, conceptId] of conceptIds.entries()) {
       const conceptName = conceptNames[index] ?? conceptId;
-      const payload = discoveryPayload(outbox.payload, outbox.user_id, traceId, conceptId, conceptName);
+      const payload = discoveryPayload(outboxPayload, outbox.user_id, traceId, conceptId, conceptName);
       const dedupKey = `discovery:${conceptId}:refresh`;
       const inserted = await tx<{ id: string }[]>`
         INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
-        VALUES ('discovery', 'discovery.refresh_concept', ${JSON.stringify(payload)}::jsonb, ${dedupKey}, ${`${outbox.id}:${conceptId}`}, ${outbox.correlation_id}, ${traceId})
+        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, ${dedupKey}, ${`${outbox.id}:${conceptId}`}, ${outbox.correlation_id}, ${traceId})
         ON CONFLICT DO NOTHING
         RETURNING id
       `;
@@ -333,19 +344,43 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
       WHERE id = ${job.id}
       RETURNING id, payload, attempts, max_attempts, correlation_id, trace_id
     `;
-    return claimed[0] ?? null;
+    const claimedJob = claimed[0];
+    if (!claimedJob) return null;
+    const payload = objectValue(claimedJob.payload);
+    if (!payload) throw new Error(`discovery job ${claimedJob.id} has invalid JSON payload`);
+    return { ...claimedJob, payload };
   });
 }
 
 async function callAgent(agentUrl: string, token: string, job: JobRow): Promise<CandidateBatch> {
+  const agentPayload = discoveryAgentPayload(job.payload);
   const response = await fetch(`${agentUrl.replace(/\/$/, "")}/internal/v1/discovery/refresh`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-internal-service-token": token },
-    body: JSON.stringify(job.payload),
-    signal: AbortSignal.timeout(30_000),
+    body: JSON.stringify(agentPayload),
+    signal: AbortSignal.timeout(configuredNumber("DISCOVERY_AGENT_TIMEOUT_SECONDS", 120, 5, 300) * 1000),
   });
   if (!response.ok) throw new Error(`discovery agent returned ${response.status}`);
   return parseBatch(await response.json());
+}
+
+const discoveryAgentPayloadKeys = [
+  "concept_ids",
+  "concept_names",
+  "level",
+  "preferred_formats",
+  "video_coverage",
+  "paper_coverage",
+  "window_days",
+  "paper_strategy",
+  "audit_user_id",
+  "trace_id",
+] as const;
+
+export function discoveryAgentPayload(payload: JsonObject): JsonObject {
+  return Object.fromEntries(
+    discoveryAgentPayloadKeys.flatMap((key) => key in payload ? [[key, payload[key]]] : []),
+  );
 }
 
 async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<string[]> {
@@ -371,7 +406,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
-        VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${JSON.stringify({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, sourceConfidence: candidate.confidence })}::jsonb)
+        VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, sourceConfidence: candidate.confidence })})
         ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL
         DO UPDATE SET canonical_url = EXCLUDED.canonical_url, title = EXCLUDED.title, description = EXCLUDED.description, language = EXCLUDED.language, status = 'ready', deleted_at = NULL, updated_at = now(), metadata = EXCLUDED.metadata
         RETURNING id
@@ -393,7 +428,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, visibility, status, metadata)
-        VALUES ('paper', 'arxiv', ${candidate.arxiv_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.abstract}, 'public', 'ready', ${JSON.stringify({ source: "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories })}::jsonb)
+        VALUES ('paper', 'arxiv', ${candidate.arxiv_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.abstract}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories })})
         ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL
         DO UPDATE SET canonical_url = EXCLUDED.canonical_url, title = EXCLUDED.title, description = EXCLUDED.description, status = 'ready', deleted_at = NULL, updated_at = now(), metadata = EXCLUDED.metadata
         RETURNING id
@@ -401,7 +436,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       if (!resource) continue;
       await tx`
         INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, submitted_at, primary_category, metadata)
-        VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${JSON.stringify({ authors: candidate.authors, source: "discovery-agent" })}::jsonb)
+        VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: "discovery-agent" })})
         ON CONFLICT (resource_id) DO UPDATE SET abstract = EXCLUDED.abstract, publication_date = EXCLUDED.publication_date, submitted_at = EXCLUDED.submitted_at, primary_category = EXCLUDED.primary_category, metadata = EXCLUDED.metadata
       `;
       await tx`
@@ -434,14 +469,14 @@ async function persistAudit(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       if (!run) return;
       const [step] = await tx<{ id: string }[]>`
         INSERT INTO agent.agent_steps (agent_run_id, step_key, sequence_no, kind, status, input, output_summary, started_at, completed_at)
-        VALUES (${run.id}, 'discovery.validate', 1, 'validate', 'done', ${JSON.stringify({ conceptIds: stringArray(job.payload.concept_ids) })}::jsonb, ${`Validated ${batch.youtube.length} videos and ${batch.arxiv.length} papers`}, now(), now())
+        VALUES (${run.id}, 'discovery.validate', 1, 'validate', 'done', ${tx.json({ conceptIds: stringArray(job.payload.concept_ids) })}, ${`Validated ${batch.youtube.length} videos and ${batch.arxiv.length} papers`}, now(), now())
         ON CONFLICT (agent_run_id, step_key) DO UPDATE SET status = 'done', completed_at = now(), output_summary = EXCLUDED.output_summary
         RETURNING id
       `;
       if (step) {
         await tx`
           INSERT INTO agent.tool_invocations (agent_run_id, agent_step_id, tool_name, tool_version, status, input, output, latency_ms, started_at, completed_at)
-          VALUES (${run.id}, ${step.id}, 'candidate-validation', 'discovery-guardrails-v1', 'succeeded', ${JSON.stringify({ conceptCount: stringArray(job.payload.concept_ids).length })}::jsonb, ${JSON.stringify({ youtube: batch.youtube.length, arxiv: batch.arxiv.length })}::jsonb, 0, now(), now())
+          VALUES (${run.id}, ${step.id}, 'candidate-validation', 'discovery-guardrails-v1', 'succeeded', ${tx.json({ conceptCount: stringArray(job.payload.concept_ids).length })}, ${tx.json({ youtube: batch.youtube.length, arxiv: batch.arxiv.length })}, 0, now(), now())
         `;
       }
     });
@@ -453,7 +488,7 @@ async function persistAudit(sql: SqlClient, job: JobRow, batch: CandidateBatch):
 async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promise<void> {
   await sql`
     UPDATE ops.jobs
-    SET status = 'done', result = ${JSON.stringify(result)}::jsonb, finished_at = now(), lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+    SET status = 'done', result = ${sql.json(result)}, finished_at = now(), lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
     WHERE id = ${job.id}
   `;
 }
@@ -463,7 +498,7 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
   const retryDelaySeconds = Math.min(3600, 30 * 2 ** Math.max(0, job.attempts - 1));
   await sql`
     UPDATE ops.jobs
-    SET status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END,
+    SET status = (CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END)::ops.job_status,
       last_error_code = 'DISCOVERY_REFRESH_FAILED',
       last_error_detail = ${detail},
       available_at = now() + make_interval(secs => ${retryDelaySeconds}),
