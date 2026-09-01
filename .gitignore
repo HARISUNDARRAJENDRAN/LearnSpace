@@ -22,6 +22,7 @@ test-results/
 **/__pycache__/
 artifacts/discovery/raw/
 artifacts/discovery/*.zip
+/educational_youtube_content.csv
 
 # TypeScript source directories must not collect compiler output.
 **/*.js

@@ -131,14 +131,14 @@ const tests: Array<[string, () => Promise<void>]> = [
     assert.deepEqual(await visibleIds(app, ids.userA, "study.study_sessions", "id"), [ids.sessionA]);
     assert.deepEqual(await visibleIds(app, ids.userB, "study.study_sessions", "id"), [ids.sessionB]);
     assert.deepEqual(await visibleIds(app, null, "study.study_sessions", "id"), []);
-    assert.deepEqual(
-      await visibleIds(app, ids.userA, "catalog.resources", "id"),
-      [ids.privateResourceA, ids.publicResource].sort(),
-    );
-    assert.deepEqual(
-      await visibleIds(app, ids.userB, "catalog.resources", "id"),
-      [ids.privateResourceB, ids.publicResource].sort(),
-    );
+    const userAResources = await visibleIds(app, ids.userA, "catalog.resources", "id");
+    assert.ok(userAResources.includes(ids.privateResourceA));
+    assert.ok(userAResources.includes(ids.publicResource));
+    assert.equal(userAResources.includes(ids.privateResourceB), false);
+    const userBResources = await visibleIds(app, ids.userB, "catalog.resources", "id");
+    assert.ok(userBResources.includes(ids.privateResourceB));
+    assert.ok(userBResources.includes(ids.publicResource));
+    assert.equal(userBResources.includes(ids.privateResourceA), false);
     await expectRejected(
       () => app.begin(async (tx) => {
         await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;

@@ -66,6 +66,14 @@ dependency or rate-limit path.
 Catalogue imports must use `DATABASE_WORKER_URL`; `DATABASE_MIGRATOR_URL` is
 reserved for schema migrations and verification.
 
+The YouTube importer refuses missing or unapproved licences. For a private
+dataset owned by the operator, use the explicit `--owner-authorized` flag; this
+records owner authorization as provenance and is not a public licence claim:
+
+```text
+pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educational_youtube_content.csv --owner-authorized
+```
+
 The discovery worker uses the same worker connection for catalogue writes and
 durable job state. Run it outside Vercel with `pnpm discovery:worker` and set
 `DISCOVERY_AGENT_URL` plus `INTERNAL_SERVICE_TOKEN`. Its recurring scheduler

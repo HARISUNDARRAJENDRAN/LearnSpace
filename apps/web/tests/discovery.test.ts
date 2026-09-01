@@ -173,6 +173,7 @@ test("dataset duration units and URL hosts are normalized explicitly", () => {
   assert.equal(canonicalYoutubeId("https://evil-youtube.com/watch?v=dQw4w9WgXcQ"), null);
   assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "milliseconds", duration_ms: "600000" })?.durationMs, 600_000);
   assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "seconds", duration_seconds: "600" })?.durationMs, 600_000);
+  assert.deepEqual(normalizeYoutubeRow({ video_id: "dQw4w9WgXcQ", title: "genre", genre: "biology" })?.categoryLabels, ["biology"]);
 });
 
 test("home feed cache keys change with learner and catalogue versions", () => {

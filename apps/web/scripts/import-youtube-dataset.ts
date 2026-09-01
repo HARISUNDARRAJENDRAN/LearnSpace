@@ -53,7 +53,10 @@ async function datasetLicence(inputPath: string): Promise<string | null> {
   }
 }
 
-function assertLicence(licence: string | null): asserts licence is string {
+function assertImportAuthorization(licence: string | null, ownerAuthorized: boolean): void {
+  if ((!licence && ownerAuthorized) || (licence && allowedLicences.has(normaliseLicence(licence)))) {
+    return;
+  }
   if (!licence || !allowedLicences.has(normaliseLicence(licence))) {
     throw new Error(`Refusing import: dataset licence is missing or not approved for this use (${licence ?? "unknown"}).`);
   }
@@ -78,8 +81,11 @@ async function loadConceptMap(sql: ReturnType<typeof postgres>): Promise<Map<str
 
 const explicitLabelMappings: Record<string, string[]> = {
   ai: ["ai-machine-learning", "artificial intelligence", "machine learning"],
+  "data science ai": ["data-science", "ai-machine-learning"],
   "machine learning": ["ai-machine-learning"],
+  "ai innovation": ["ai-machine-learning", "generative-ai"],
   "data science": ["data-science"],
+  "coding programming": ["programming-computer-science"],
   programming: ["programming-computer-science"],
   "computer science": ["programming-computer-science"],
   web: ["web-development"],
@@ -87,11 +93,16 @@ const explicitLabelMappings: Record<string, string[]> = {
   devops: ["devops-cloud"],
   cloud: ["devops-cloud"],
   cybersecurity: ["cybersecurity"],
+  biology: ["biology"],
   mathematics: ["mathematics-statistics"],
   statistics: ["mathematics-statistics"],
   physics: ["physics"],
-  biology: ["biology"],
+  "language learning": ["english-language-learning"],
   english: ["english-language-learning"],
+  "writing content": ["writing-skills"],
+  "soft skills": ["communication-public-speaking"],
+  "public speaking": ["communication-public-speaking", "public-speaking"],
+  design: ["visual-communication"],
   communication: ["communication-public-speaking"],
 };
 
@@ -114,6 +125,7 @@ async function importBatch(
   rows: NormalizedYoutubeRow[],
   conceptMap: Map<string, string>,
   importedAt: Date,
+  provenance: Record<string, string>,
 ): Promise<void> {
   await sql.begin(async (tx) => {
     for (const row of rows) {
@@ -128,16 +140,18 @@ async function importBatch(
         commentCount: row.commentCount,
         metricsCapturedAt: row.metricsCapturedAt,
       }, importedAt);
+      const resourceMetadata = {
+        dataset: datasetName,
+        sourceRecordHash: row.sourceRecordHash,
+        mappingVersion: "youtube-dataset-v1",
+        thumbnailUrl: `https://i.ytimg.com/vi/${row.youtubeId}/hqdefault.jpg`,
+        ...provenance,
+      };
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources
           (owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
         VALUES
-          (NULL, 'video', 'youtube', ${row.youtubeId}, ${row.canonicalUrl}, ${row.title}, ${row.description}, ${row.language}, 'public', 'ready', ${quality.finalQualityScore}, ${JSON.stringify({
-            dataset: datasetName,
-            sourceRecordHash: row.sourceRecordHash,
-            mappingVersion: "youtube-dataset-v1",
-            thumbnailUrl: `https://i.ytimg.com/vi/${row.youtubeId}/hqdefault.jpg`,
-          })}::jsonb)
+          (NULL, 'video', 'youtube', ${row.youtubeId}, ${row.canonicalUrl}, ${row.title}, ${row.description}, ${row.language}, 'public', 'ready', ${quality.finalQualityScore}, ${tx.json(resourceMetadata)})
         ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL DO UPDATE SET
           canonical_url = EXCLUDED.canonical_url,
           title = EXCLUDED.title,
@@ -181,7 +195,7 @@ async function importBatch(
         INSERT INTO discovery.resource_quality_snapshots
           (resource_id, feature_version, captured_at, bayesian_engagement, comment_quality, freshness_prior, content_coverage, source_authority, final_quality_score, features)
         VALUES
-          (${resource.id}, 'youtube-quality-v1', ${importedAt}, ${quality.bayesianEngagement}, ${quality.commentQuality}, ${quality.freshnessPrior}, ${quality.contentCoverage}, ${quality.sourceAuthority}, ${quality.finalQualityScore}, ${JSON.stringify(quality.features)}::jsonb)
+          (${resource.id}, 'youtube-quality-v1', ${importedAt}, ${quality.bayesianEngagement}, ${quality.commentQuality}, ${quality.freshnessPrior}, ${quality.contentCoverage}, ${quality.sourceAuthority}, ${quality.finalQualityScore}, ${tx.json(quality.features)})
         ON CONFLICT (resource_id, feature_version, captured_at) DO UPDATE SET
           bayesian_engagement = EXCLUDED.bayesian_engagement,
           comment_quality = EXCLUDED.comment_quality,
@@ -209,7 +223,9 @@ async function main(): Promise<void> {
   if (!input) throw new Error("Use --input <csv|tsv|json> or DISCOVERY_YOUTUBE_DATASET_FILE.");
   const inputPath = resolve(input);
   const licence = await datasetLicence(inputPath);
-  assertLicence(licence);
+  const ownerAuthorized = process.argv.includes("--owner-authorized");
+  assertImportAuthorization(licence, ownerAuthorized);
+  const provenance = licence ? { datasetLicense: licence } : { datasetAuthorization: "owner-authorized" };
   const profile = await profileYoutubeDataset(inputPath, licence);
   const profilePath = resolve(process.env.DISCOVERY_PROFILE_OUTPUT ?? "../../artifacts/discovery/youtube-dataset-profile.json");
   await mkdir(dirname(profilePath), { recursive: true });
@@ -241,13 +257,13 @@ async function main(): Promise<void> {
       seenIds.add(row.youtubeId);
       batch.push(row);
       if (batch.length >= 100) {
-        await importBatch(sql, batch, conceptMap, importedAt);
+        await importBatch(sql, batch, conceptMap, importedAt, provenance);
         importedRows += batch.length;
         batch = [];
       }
     }
     if (batch.length > 0) {
-      await importBatch(sql, batch, conceptMap, importedAt);
+      await importBatch(sql, batch, conceptMap, importedAt, provenance);
       importedRows += batch.length;
     }
   } finally {

@@ -49,7 +49,7 @@ const fieldAliases = {
   channelId: ["channel_id", "channelid"],
   duration: ["duration", "duration_ms", "duration_seconds", "length"],
   language: ["language", "lang", "default_audio_language"],
-  category: ["category", "categories", "topic", "topics", "tags", "subject"],
+  category: ["category", "categories", "topic", "topics", "tags", "subject", "genre"],
   publishedAt: ["published_at", "publishedat", "publish_date", "published_date", "date", "upload_date"],
   metricsCapturedAt: ["metrics_captured_at", "captured_at", "metric_date", "snapshot_date", "scraped_at"],
   views: ["view_count", "views", "viewcount"],

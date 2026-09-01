@@ -1,6 +1,15 @@
 export const YOUTUBE_QUALITY_FEATURE_VERSION = "youtube-quality-v1";
 const neutralSourceAuthorityPrior = 0.6;
 
+export type YoutubeQualityFeatures = {
+  featureVersion: string;
+  sourceAuthorityKind: "neutral_prior";
+  sourceAuthorityPrior: number;
+  metricAgeDays: number | null;
+  missingFeatureCodes: string[];
+  availableFeatureNames: string[];
+};
+
 export type YoutubeQualityInput = {
   title: string;
   description: string | null;
@@ -20,7 +29,7 @@ export type YoutubeQualityResult = {
   freshnessPrior: number | null;
   contentCoverage: number | null;
   sourceAuthority: number | null;
-  features: Record<string, unknown>;
+  features: YoutubeQualityFeatures;
 };
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
