@@ -127,93 +127,274 @@ async function importBatch(
   importedAt: Date,
   provenance: Record<string, string>,
 ): Promise<void> {
+  const preparedRows = rows.map((row) => ({
+    row,
+    quality: scoreYoutubeQuality({
+      title: row.title,
+      description: row.description,
+      channelTitle: row.channelTitle,
+      durationMs: row.durationMs,
+      publishedAt: row.publishedAt,
+      viewCount: row.viewCount,
+      likeCount: row.likeCount,
+      commentCount: row.commentCount,
+      metricsCapturedAt: row.metricsCapturedAt,
+    }, importedAt),
+    conceptIds: resolveConcepts(row, conceptMap),
+    resourceMetadata: {
+      dataset: datasetName,
+      sourceRecordHash: row.sourceRecordHash,
+      mappingVersion: "youtube-dataset-v1",
+      thumbnailUrl: `https://i.ytimg.com/vi/${row.youtubeId}/hqdefault.jpg`,
+      ...provenance,
+    },
+  }));
+
   await sql.begin(async (tx) => {
-    for (const row of rows) {
-      const quality = scoreYoutubeQuality({
-        title: row.title,
-        description: row.description,
-        channelTitle: row.channelTitle,
-        durationMs: row.durationMs,
-        publishedAt: row.publishedAt,
-        viewCount: row.viewCount,
-        likeCount: row.likeCount,
-        commentCount: row.commentCount,
-        metricsCapturedAt: row.metricsCapturedAt,
-      }, importedAt);
-      const resourceMetadata = {
-        dataset: datasetName,
-        sourceRecordHash: row.sourceRecordHash,
-        mappingVersion: "youtube-dataset-v1",
-        thumbnailUrl: `https://i.ytimg.com/vi/${row.youtubeId}/hqdefault.jpg`,
-        ...provenance,
-      };
-      const [resource] = await tx<{ id: string }[]>`
-        INSERT INTO catalog.resources
-          (owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
-        VALUES
-          (NULL, 'video', 'youtube', ${row.youtubeId}, ${row.canonicalUrl}, ${row.title}, ${row.description}, ${row.language}, 'public', 'ready', ${quality.finalQualityScore}, ${tx.json(resourceMetadata)})
-        ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL DO UPDATE SET
-          canonical_url = EXCLUDED.canonical_url,
-          title = EXCLUDED.title,
-          description = EXCLUDED.description,
-          language = EXCLUDED.language,
-          status = EXCLUDED.status,
-          quality_score = EXCLUDED.quality_score,
-          metadata = EXCLUDED.metadata,
-          updated_at = ${importedAt}
-        RETURNING id
-      `;
-      if (!resource) throw new Error(`Could not persist YouTube resource ${row.youtubeId}`);
-      await tx`
-        INSERT INTO catalog.video_details
-          (resource_id, youtube_id, channel_id, channel_title, duration_ms, published_at, default_audio_language, latest_view_count, latest_like_count, latest_comment_count, metrics_captured_at, fetched_at)
-        VALUES
-          (${resource.id}, ${row.youtubeId}, ${row.channelId}, ${row.channelTitle}, ${row.durationMs}, ${row.publishedAt}, ${row.language}, ${row.viewCount}, ${row.likeCount}, ${row.commentCount}, ${row.metricsCapturedAt}, ${importedAt})
-        ON CONFLICT (resource_id) DO UPDATE SET
-          channel_id = EXCLUDED.channel_id,
-          channel_title = EXCLUDED.channel_title,
-          duration_ms = EXCLUDED.duration_ms,
-          published_at = EXCLUDED.published_at,
-          default_audio_language = EXCLUDED.default_audio_language,
-          latest_view_count = EXCLUDED.latest_view_count,
-          latest_like_count = EXCLUDED.latest_like_count,
-          latest_comment_count = EXCLUDED.latest_comment_count,
-          metrics_captured_at = EXCLUDED.metrics_captured_at,
-          fetched_at = EXCLUDED.fetched_at
-      `;
-      if (row.metricsCapturedAt && (row.viewCount !== null || row.likeCount !== null || row.commentCount !== null)) {
-        await tx`
-          INSERT INTO catalog.video_metric_snapshots (resource_id, captured_at, view_count, like_count, comment_count)
-          VALUES (${resource.id}, ${row.metricsCapturedAt}, ${row.viewCount}, ${row.likeCount}, ${row.commentCount})
-          ON CONFLICT (resource_id, captured_at) DO UPDATE SET
-            view_count = EXCLUDED.view_count,
-            like_count = EXCLUDED.like_count,
-            comment_count = EXCLUDED.comment_count
-        `;
-      }
-      await tx`
-        INSERT INTO discovery.resource_quality_snapshots
-          (resource_id, feature_version, captured_at, bayesian_engagement, comment_quality, freshness_prior, content_coverage, source_authority, final_quality_score, features)
-        VALUES
-          (${resource.id}, 'youtube-quality-v1', ${importedAt}, ${quality.bayesianEngagement}, ${quality.commentQuality}, ${quality.freshnessPrior}, ${quality.contentCoverage}, ${quality.sourceAuthority}, ${quality.finalQualityScore}, ${tx.json(quality.features)})
-        ON CONFLICT (resource_id, feature_version, captured_at) DO UPDATE SET
-          bayesian_engagement = EXCLUDED.bayesian_engagement,
-          comment_quality = EXCLUDED.comment_quality,
-          freshness_prior = EXCLUDED.freshness_prior,
-          content_coverage = EXCLUDED.content_coverage,
-          source_authority = EXCLUDED.source_authority,
-          final_quality_score = EXCLUDED.final_quality_score,
-          features = EXCLUDED.features
-      `;
-      for (const conceptId of resolveConcepts(row, conceptMap)) {
-        await tx`
-          INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
-          VALUES (${resource.id}, ${conceptId}, 'youtube-dataset', 0.75, false, 'youtube-dataset-mapping-v1')
-          ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET
-            relevance = EXCLUDED.relevance,
-            extractor_version = EXCLUDED.extractor_version
-        `;
-      }
+    const resourceRows = preparedRows.map(({ row, quality, resourceMetadata }) => ({
+      owner_user_id: null,
+      type: "video",
+      provider: "youtube",
+      external_id: row.youtubeId,
+      canonical_url: row.canonicalUrl,
+      title: row.title,
+      description: row.description,
+      language: row.language,
+      visibility: "public",
+      status: "ready",
+      quality_score: quality.finalQualityScore,
+      metadata: resourceMetadata,
+      updated_at: importedAt,
+    }));
+    const resources = await tx.unsafe<{ id: string; external_id: string }[]>(
+      `INSERT INTO catalog.resources
+        (owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata, updated_at)
+      SELECT
+        input.owner_user_id,
+        input.type::catalog.resource_type,
+        input.provider,
+        input.external_id,
+        input.canonical_url,
+        input.title,
+        input.description,
+        input.language,
+        input.visibility::catalog.resource_visibility,
+        input.status::catalog.resource_status,
+        input.quality_score,
+        input.metadata,
+        input.updated_at
+      FROM jsonb_to_recordset($1::jsonb) AS input(
+        owner_user_id uuid,
+        type text,
+        provider text,
+        external_id text,
+        canonical_url text,
+        title text,
+        description text,
+        language text,
+        visibility text,
+        status text,
+        quality_score real,
+        metadata jsonb,
+        updated_at timestamptz
+      )
+      ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL DO UPDATE SET
+        canonical_url = EXCLUDED.canonical_url,
+        title = EXCLUDED.title,
+        description = EXCLUDED.description,
+        language = EXCLUDED.language,
+        status = EXCLUDED.status,
+        quality_score = EXCLUDED.quality_score,
+        metadata = EXCLUDED.metadata,
+        updated_at = EXCLUDED.updated_at
+      RETURNING id, external_id
+    `,
+      [tx.json(resourceRows)],
+    );
+    const resourceIds = new Map(resources.map((resource) => [resource.external_id, resource.id]));
+    const idFor = (youtubeId: string): string => {
+      const resourceId = resourceIds.get(youtubeId);
+      if (!resourceId) throw new Error(`Could not persist YouTube resource ${youtubeId}`);
+      return resourceId;
+    };
+
+    const videoDetailRows = preparedRows.map(({ row }) => ({
+      resource_id: idFor(row.youtubeId),
+      youtube_id: row.youtubeId,
+      channel_id: row.channelId,
+      channel_title: row.channelTitle,
+      duration_ms: row.durationMs,
+      published_at: row.publishedAt,
+      default_audio_language: row.language,
+      latest_view_count: row.viewCount,
+      latest_like_count: row.likeCount,
+      latest_comment_count: row.commentCount,
+      metrics_captured_at: row.metricsCapturedAt,
+      fetched_at: importedAt,
+    }));
+    await tx.unsafe(
+      `INSERT INTO catalog.video_details
+        (resource_id, youtube_id, channel_id, channel_title, duration_ms, published_at, default_audio_language, latest_view_count, latest_like_count, latest_comment_count, metrics_captured_at, fetched_at)
+      SELECT
+        input.resource_id,
+        input.youtube_id,
+        input.channel_id,
+        input.channel_title,
+        input.duration_ms,
+        input.published_at,
+        input.default_audio_language,
+        input.latest_view_count,
+        input.latest_like_count,
+        input.latest_comment_count,
+        input.metrics_captured_at,
+        input.fetched_at
+      FROM jsonb_to_recordset($1::jsonb) AS input(
+        resource_id uuid,
+        youtube_id text,
+        channel_id text,
+        channel_title text,
+        duration_ms integer,
+        published_at timestamptz,
+        default_audio_language text,
+        latest_view_count bigint,
+        latest_like_count bigint,
+        latest_comment_count bigint,
+        metrics_captured_at timestamptz,
+        fetched_at timestamptz
+      )
+      ON CONFLICT (resource_id) DO UPDATE SET
+        channel_id = EXCLUDED.channel_id,
+        channel_title = EXCLUDED.channel_title,
+        duration_ms = EXCLUDED.duration_ms,
+        published_at = EXCLUDED.published_at,
+        default_audio_language = EXCLUDED.default_audio_language,
+        latest_view_count = EXCLUDED.latest_view_count,
+        latest_like_count = EXCLUDED.latest_like_count,
+        latest_comment_count = EXCLUDED.latest_comment_count,
+        metrics_captured_at = EXCLUDED.metrics_captured_at,
+        fetched_at = EXCLUDED.fetched_at
+    `,
+      [tx.json(videoDetailRows)],
+    );
+
+    const metricRows = preparedRows
+      .filter(({ row }) => row.metricsCapturedAt && (row.viewCount !== null || row.likeCount !== null || row.commentCount !== null))
+      .map(({ row }) => ({
+        resource_id: idFor(row.youtubeId),
+        captured_at: row.metricsCapturedAt,
+        view_count: row.viewCount,
+        like_count: row.likeCount,
+        comment_count: row.commentCount,
+      }));
+    if (metricRows.length > 0) {
+      await tx.unsafe(
+        `INSERT INTO catalog.video_metric_snapshots
+          (resource_id, captured_at, view_count, like_count, comment_count)
+        SELECT
+          input.resource_id,
+          input.captured_at,
+          input.view_count,
+          input.like_count,
+          input.comment_count
+        FROM jsonb_to_recordset($1::jsonb) AS input(
+          resource_id uuid,
+          captured_at timestamptz,
+          view_count bigint,
+          like_count bigint,
+          comment_count bigint
+        )
+        ON CONFLICT (resource_id, captured_at) DO UPDATE SET
+          view_count = EXCLUDED.view_count,
+          like_count = EXCLUDED.like_count,
+          comment_count = EXCLUDED.comment_count
+      `,
+        [tx.json(metricRows)],
+      );
+    }
+
+    const qualityRows = preparedRows.map(({ row, quality }) => ({
+      resource_id: idFor(row.youtubeId),
+      feature_version: "youtube-quality-v1",
+      captured_at: importedAt,
+      bayesian_engagement: quality.bayesianEngagement,
+      comment_quality: quality.commentQuality,
+      freshness_prior: quality.freshnessPrior,
+      content_coverage: quality.contentCoverage,
+      source_authority: quality.sourceAuthority,
+      final_quality_score: quality.finalQualityScore,
+      features: quality.features,
+    }));
+    await tx.unsafe(
+      `INSERT INTO discovery.resource_quality_snapshots
+        (resource_id, feature_version, captured_at, bayesian_engagement, comment_quality, freshness_prior, content_coverage, source_authority, final_quality_score, features)
+      SELECT
+        input.resource_id,
+        input.feature_version,
+        input.captured_at,
+        input.bayesian_engagement,
+        input.comment_quality,
+        input.freshness_prior,
+        input.content_coverage,
+        input.source_authority,
+        input.final_quality_score,
+        input.features
+      FROM jsonb_to_recordset($1::jsonb) AS input(
+        resource_id uuid,
+        feature_version text,
+        captured_at timestamptz,
+        bayesian_engagement real,
+        comment_quality real,
+        freshness_prior real,
+        content_coverage real,
+        source_authority real,
+        final_quality_score real,
+        features jsonb
+      )
+      ON CONFLICT (resource_id, feature_version, captured_at) DO UPDATE SET
+        bayesian_engagement = EXCLUDED.bayesian_engagement,
+        comment_quality = EXCLUDED.comment_quality,
+        freshness_prior = EXCLUDED.freshness_prior,
+        content_coverage = EXCLUDED.content_coverage,
+        source_authority = EXCLUDED.source_authority,
+        final_quality_score = EXCLUDED.final_quality_score,
+        features = EXCLUDED.features
+    `,
+      [tx.json(qualityRows)],
+    );
+
+    const conceptRows = preparedRows.flatMap(({ row, conceptIds }) => conceptIds.map((conceptId) => ({
+      resource_id: idFor(row.youtubeId),
+      concept_id: conceptId,
+      source: "youtube-dataset",
+      relevance: 0.75,
+      is_primary: false,
+      extractor_version: "youtube-dataset-mapping-v1",
+    })));
+    if (conceptRows.length > 0) {
+      await tx.unsafe(
+        `INSERT INTO catalog.resource_concepts
+          (resource_id, concept_id, source, relevance, is_primary, extractor_version)
+        SELECT
+          input.resource_id,
+          input.concept_id,
+          input.source,
+          input.relevance,
+          input.is_primary,
+          input.extractor_version
+        FROM jsonb_to_recordset($1::jsonb) AS input(
+          resource_id uuid,
+          concept_id uuid,
+          source text,
+          relevance real,
+          is_primary boolean,
+          extractor_version text
+        )
+        ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET
+          relevance = EXCLUDED.relevance,
+          extractor_version = EXCLUDED.extractor_version
+      `,
+        [tx.json(conceptRows)],
+      );
     }
   });
 }
