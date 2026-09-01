@@ -18,6 +18,7 @@ process.env.AUTH_TEST_GOOGLE_USERINFO_URL = "http://127.0.0.1:4010/userinfo";
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  testMatch: "**/*.spec.ts",
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,

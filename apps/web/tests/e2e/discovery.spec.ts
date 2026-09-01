@@ -55,12 +55,22 @@ test.afterAll(async () => {
     FROM discovery.recommendation_candidates
     WHERE resource_id IN ${db(seededResourceIds)}
   `;
+  if (runRows.length > 0) {
+    const runIds = runRows.map((row) => row.id);
+    await db`
+      DELETE FROM discovery.discovery_interactions
+      WHERE impression_id IN (
+        SELECT id FROM discovery.recommendation_impressions
+        WHERE recommendation_run_id IN ${db(runIds)}
+      )
+    `;
+    await db`DELETE FROM discovery.recommendation_impressions WHERE recommendation_run_id IN ${db(runIds)}`;
+    await db`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN ${db(runIds)}`;
+    await db`DELETE FROM discovery.recommendation_runs WHERE id IN ${db(runRows.map((row) => row.id))}`;
+  }
   await db`DELETE FROM discovery.discovery_interactions WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM discovery.recommendation_impressions WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM discovery.recommendation_candidates WHERE resource_id IN ${db(seededResourceIds)}`;
-  if (runRows.length > 0) {
-    await db`DELETE FROM discovery.recommendation_runs WHERE id IN ${db(runRows.map((row) => row.id))}`;
-  }
   await db`DELETE FROM activity.activity_events WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.library_items WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${db(seededResourceIds)}`;
