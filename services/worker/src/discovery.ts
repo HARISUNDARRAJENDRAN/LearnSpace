@@ -1,6 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { canonicalYoutubeUrl, youtubeIdFromUrl } from "@learnspace/shared";
+import {
+  DISCOVERY_LEARNING_FORMATS,
+  canonicalYoutubeUrl,
+  type DiscoveryLearningFormat,
+  youtubeIdFromUrl,
+} from "@learnspace/shared";
 
 type JsonObject = Record<string, postgres.JSONValue | undefined>;
 type SqlClient = ReturnType<typeof postgres>;
@@ -32,7 +37,7 @@ type YoutubeProposal = {
   duration_ms: number | null;
   language: string | null;
   matched_concept_ids: string[];
-  learning_format: string | null;
+  learning_format: DiscoveryLearningFormat | null;
   estimated_level: string | null;
   has_implementation: boolean | null;
   evidence: string[];
@@ -103,6 +108,13 @@ function stringArray(value: unknown): string[] {
     : [];
 }
 
+function learningFormat(value: unknown): DiscoveryLearningFormat | null | undefined {
+  if (value === null || value === undefined) return null;
+  return typeof value === "string" && (DISCOVERY_LEARNING_FORMATS as readonly string[]).includes(value)
+    ? value as DiscoveryLearningFormat
+    : undefined;
+}
+
 function objectValue(value: unknown): JsonObject | null {
   if (typeof value === "string") {
     try {
@@ -155,7 +167,8 @@ function parseYoutube(value: unknown): YoutubeProposal | null {
   const url = stringValue(item.canonical_url);
   const title = stringValue(item.title);
   const confidence = numberValue(item.confidence);
-  if (!id || !url || !isYoutubeUrl(url, id) || !title || title.length < 3 || confidence === null || confidence < 0.5 || confidence > 1) return null;
+  const format = learningFormat(item.learning_format);
+  if (!id || !url || !isYoutubeUrl(url, id) || !title || title.length < 3 || confidence === null || confidence < 0.5 || confidence > 1 || format === undefined) return null;
   return {
     youtube_id: id,
     canonical_url: canonicalYoutubeUrl(id),
@@ -165,7 +178,7 @@ function parseYoutube(value: unknown): YoutubeProposal | null {
     duration_ms: numberValue(item.duration_ms),
     language: stringValue(item.language),
     matched_concept_ids: stringArray(item.matched_concept_ids),
-    learning_format: stringValue(item.learning_format),
+    learning_format: format,
     estimated_level: stringValue(item.estimated_level),
     has_implementation: typeof item.has_implementation === "boolean" ? item.has_implementation : null,
     evidence: stringArray(item.evidence).slice(0, 5),
@@ -198,7 +211,7 @@ function parseArxiv(value: unknown): ArxivProposal | null {
   };
 }
 
-function parseBatch(value: unknown): CandidateBatch {
+export function parseBatch(value: unknown): CandidateBatch {
   const body = objectValue(value);
   if (!body) throw new Error("discovery agent returned a non-object response");
   const youtube: YoutubeProposal[] = [];

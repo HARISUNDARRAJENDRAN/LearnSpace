@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, refreshIntervalHours } from "./discovery.js";
+import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours } from "./discovery.js";
 
 test("discovery jobs are scoped to one canonical concept", () => {
   const payload = discoveryPayload(
@@ -70,4 +70,18 @@ test("scheduled payloads contain no learner-specific state", () => {
   assert.deepEqual(agentPayload.preferred_formats, []);
   assert.equal(agentPayload.audit_user_id, null);
   assert.equal("refresh_reason" in agentPayload, false);
+});
+
+test("worker rejects YouTube candidates with an unknown learning format", () => {
+  const result = parseBatch({
+    trace_id: "trace",
+    youtube: [{
+      youtube_id: "dQw4w9WgXcQ",
+      canonical_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      title: "A practical lesson",
+      confidence: 0.8,
+      learning_format: "not-a-learning-format",
+    }],
+  });
+  assert.deepEqual(result.youtube, []);
 });

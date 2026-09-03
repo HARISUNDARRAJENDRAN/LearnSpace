@@ -17,6 +17,8 @@ _FOUNDATIONAL_TERMS = (
     "influential work",
     "first work",
     "early defining",
+    "pioneering",
+    "introduced",
 )
 
 
@@ -66,6 +68,7 @@ class ArxivDiscoveryAgent:
                 pass
         output: list[ArxivCandidate] = []
         seen: set[str] = set()
+        now = datetime.now(UTC)
         for item in raw_results:
             url = item.get("url")
             title = item.get("title")
@@ -75,14 +78,16 @@ class ArxivDiscoveryAgent:
                 or not url.startswith("https://arxiv.org/abs/")
             ):
                 continue
-            raw_evidence = item.get("text")
-            evidence_text = raw_evidence if isinstance(raw_evidence, str) else ""
-            retrieval_strategy = item.get("retrieval_strategy")
-            has_strategy_evidence = retrieval_strategy == request.paper_strategy
-            if request.paper_strategy == "foundational" and not (
-                has_foundational_evidence(title, evidence_text) or has_strategy_evidence
+            evidence_text = self._evidence(item)
+            if request.paper_strategy == "foundational" and not has_foundational_evidence(
+                title, evidence_text
             ):
                 continue
+            published_at = self._date(item.get("publishedDate"))
+            if request.paper_strategy == "current" and published_at is not None:
+                age_days = (now - published_at).total_seconds() / 86_400
+                if age_days > request.window_days:
+                    continue
             arxiv_id = urlparse(url).path.removeprefix("/abs/")
             if not arxiv_id or arxiv_id in seen:
                 continue
@@ -96,7 +101,7 @@ class ArxivDiscoveryAgent:
                     if isinstance(item.get("abstract"), str)
                     else evidence_text or None
                 ),
-                published_at=self._date(item.get("publishedDate")),
+                published_at=published_at,
                 categories=self._strings(item.get("categories")) or (
                     [str(item["category"])] if isinstance(item.get("category"), str) else []
                 ),
@@ -104,10 +109,11 @@ class ArxivDiscoveryAgent:
                 matched_concept_ids=[request.concept_ids[0]],
                 paper_class=request.paper_strategy,
                 evidence=(
-                    ([evidence_text[:800]] if evidence_text else [])
-                    + (["retrieval strategy: foundational semantic search"]
-                       if has_strategy_evidence and request.paper_strategy == "foundational"
-                       else [])
+                    [evidence_text[:800]]
+                    if evidence_text
+                    else [title[:800]]
+                    if request.paper_strategy == "foundational"
+                    else []
                 ),
                 confidence=0.65,
             )
@@ -115,6 +121,22 @@ class ArxivDiscoveryAgent:
             if valid is not None:
                 output.append(valid)
         return output
+
+    @staticmethod
+    def _evidence(item: dict[str, Any]) -> str:
+        parts: list[str] = []
+        for key in ("text", "abstract", "summary", "highlight"):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        highlights = item.get("highlights")
+        if isinstance(highlights, list):
+            parts.extend(
+                value.strip()
+                for value in cast(list[object], highlights)
+                if isinstance(value, str) and value.strip()
+            )
+        return " ".join(parts)[:1600]
 
     @staticmethod
     def _date(value: Any) -> datetime | None:

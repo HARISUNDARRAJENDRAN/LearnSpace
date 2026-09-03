@@ -99,6 +99,10 @@ def test_refresh_request_rejects_unbounded_input() -> None:
         DiscoveryRefreshRequest.model_validate(
             {"concept_ids": [CONCEPT_ID], "concept_names": ["AI"], "unexpected": "private notes"}
         )
+    with pytest.raises(ValidationError):
+        DiscoveryRefreshRequest.model_validate(
+            {"concept_ids": [CONCEPT_ID, SECOND_CONCEPT_ID], "concept_names": ["AI", "Physics"]}
+        )
 
 
 def test_cache_keys_are_versioned_and_do_not_contain_pii() -> None:
@@ -195,28 +199,31 @@ def test_flow_caches_validated_candidates_and_skips_fresh_pools() -> None:
     asyncio.run(run())
 
 
-def test_flow_isolates_each_concept_pool_and_paper_class() -> None:
+def test_refresh_flow_requires_one_concept_pool() -> None:
+    with pytest.raises(ValidationError):
+        DiscoveryRefreshRequest(
+            concept_ids=[CONCEPT_ID, SECOND_CONCEPT_ID],
+            concept_names=["Artificial Intelligence", "Physics"],
+        )
+
+
+def test_single_concept_pools_keep_cache_and_attribution_isolated() -> None:
     class FakeYoutube:
         calls: list[UUID] = []
 
         async def discover(
             self, request: DiscoveryRefreshRequest, budget: ToolBudget
         ) -> list[YoutubeCandidate]:
-            del budget
+            budget.consume("youtube")
             self.calls.append(request.concept_ids[0])
             youtube_id = (
                 "dQw4w9WgXcQ"
                 if request.concept_ids[0] == CONCEPT_ID
                 else "9bZkp7q19f0"
             )
-            return [
-                youtube_candidate(request.concept_ids[0]).model_copy(
-                    update={
-                        "youtube_id": youtube_id,
-                        "canonical_url": f"https://www.youtube.com/watch?v={youtube_id}",
-                    }
-                )
-            ]
+            return [youtube_candidate(request.concept_ids[0]).model_copy(
+                update={"youtube_id": youtube_id}
+            )]
 
     class FakeArxiv:
         calls: list[tuple[UUID, str]] = []
@@ -224,44 +231,34 @@ def test_flow_isolates_each_concept_pool_and_paper_class() -> None:
         async def discover(
             self, request: DiscoveryRefreshRequest, budget: ToolBudget
         ) -> list[ArxivCandidate]:
-            del budget
+            budget.consume(f"arxiv-{request.paper_strategy}")
             self.calls.append((request.concept_ids[0], request.paper_strategy))
-            suffix = "2" if request.concept_ids[0] == SECOND_CONCEPT_ID else ""
-            arxiv_id = (
-                ("1706.0376" + suffix)
-                if request.paper_strategy == "current"
-                else ("1810.0480" + suffix)
-            )
+            arxiv_id = "1706.03762" if request.concept_ids[0] == CONCEPT_ID else "1800.00001"
+            if request.paper_strategy == "foundational":
+                arxiv_id = "1810.04805" if request.concept_ids[0] == CONCEPT_ID else "1800.00002"
             return [arxiv_candidate(request.concept_ids[0], request.paper_strategy, arxiv_id)]
 
     async def run() -> None:
-        cache = DiscoveryCache()
         youtube = FakeYoutube()
         arxiv = FakeArxiv()
-        flow = DiscoveryRefreshFlow(cache, youtube, arxiv, max_tool_calls=10)
-        result = await flow.run_discovery(
-            DiscoveryRefreshRequest(
-                concept_ids=[CONCEPT_ID, SECOND_CONCEPT_ID],
-                concept_names=["Artificial Intelligence", "Physics"],
-            )
+        flow = DiscoveryRefreshFlow(DiscoveryCache(), youtube, arxiv, max_tool_calls=3)
+        await flow.run_discovery(request())
+        second_request = request().model_copy(
+            update={"concept_ids": [SECOND_CONCEPT_ID], "concept_names": ["Physics"]}
         )
-        assert {candidate.matched_concept_ids[0] for candidate in result.youtube} == {
-            CONCEPT_ID,
-            SECOND_CONCEPT_ID,
-        }
-        assert {candidate.matched_concept_ids[0] for candidate in result.arxiv} == {
-            CONCEPT_ID,
-            SECOND_CONCEPT_ID,
-        }
-        assert set(youtube.calls) == {CONCEPT_ID, SECOND_CONCEPT_ID}
-        assert set(arxiv.calls) == {
+        await flow.run_discovery(second_request)
+
+        assert youtube.calls == [CONCEPT_ID, SECOND_CONCEPT_ID]
+        assert arxiv.calls == [
             (CONCEPT_ID, "current"),
             (CONCEPT_ID, "foundational"),
             (SECOND_CONCEPT_ID, "current"),
             (SECOND_CONCEPT_ID, "foundational"),
-        }
-        first_pool = await cache.get(youtube_cache_key(str(CONCEPT_ID), "mixed", "any", 30))
-        second_pool = await cache.get(youtube_cache_key(str(SECOND_CONCEPT_ID), "mixed", "any", 30))
+        ]
+        first_pool = await flow.cache.get(youtube_cache_key(str(CONCEPT_ID), "mixed", "any", 30))
+        second_pool = await flow.cache.get(
+            youtube_cache_key(str(SECOND_CONCEPT_ID), "mixed", "any", 30)
+        )
         assert first_pool and first_pool[0]["matched_concept_ids"] == [str(CONCEPT_ID)]
         assert second_pool and second_pool[0]["matched_concept_ids"] == [str(SECOND_CONCEPT_ID)]
 
@@ -345,6 +342,13 @@ def test_youtube_enrichment_requires_structured_evidence() -> None:
     assert parsed.has_implementation is True
     assert parse_youtube_enrichment('{"relevant":true,"confidence":0.8}') is None
     assert parse_youtube_enrichment('{"relevant":true,"unexpected":"value"}') is None
+    with pytest.raises(ValidationError):
+        YoutubeCandidate.model_validate(
+            {
+                **youtube_candidate().model_dump(),
+                "learning_format": "invented_format",
+            }
+        )
 
 
 def test_youtube_enrichment_uses_canonical_concept_and_preserves_base_on_failure() -> None:
@@ -410,7 +414,7 @@ def test_foundational_classification_requires_retrieval_evidence() -> None:
     assert not has_foundational_evidence("An old paper on attention", "historical result")
 
 
-def test_foundational_agent_requires_strategy_evidence_for_old_papers() -> None:
+def test_foundational_agent_requires_semantic_evidence_for_old_papers() -> None:
     class FakeExa:
         async def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
             del args, kwargs
@@ -420,14 +424,13 @@ def test_foundational_agent_requires_strategy_evidence_for_old_papers() -> None:
                 "text": "historical result",
             }]
 
-    class StrategyExa(FakeExa):
+    class EvidenceExa(FakeExa):
         async def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
             del args, kwargs
             return [{
                 "url": "https://arxiv.org/abs/1706.03762",
-                "title": "An old paper on attention",
-                "text": "historical result",
-                "retrieval_strategy": "foundational",
+                "title": "An old seminal paper on attention",
+                "text": "This pioneering work introduced the defining attention architecture.",
             }]
 
     class FakeArxiv:
@@ -449,7 +452,7 @@ def test_foundational_agent_requires_strategy_evidence_for_old_papers() -> None:
             foundational_request, ToolBudget(3)
         )
         accepted = await ArxivDiscoveryAgent(
-            cast(ExaDiscoveryTool, StrategyExa()), cast(ArxivPaperTool, FakeArxiv()), 1
+            cast(ExaDiscoveryTool, EvidenceExa()), cast(ArxivPaperTool, FakeArxiv()), 1
         ).discover(
             foundational_request, ToolBudget(3)
         )

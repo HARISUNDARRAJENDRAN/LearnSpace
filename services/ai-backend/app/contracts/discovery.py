@@ -21,8 +21,8 @@ LearningFormat = Literal[
 class DiscoveryRefreshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    concept_ids: list[UUID] = Field(min_length=1, max_length=20)
-    concept_names: list[str] = Field(min_length=1, max_length=20)
+    concept_ids: list[UUID] = Field(min_length=1, max_length=1)
+    concept_names: list[str] = Field(min_length=1, max_length=1)
     level: LearningLevel = "mixed"
     preferred_formats: list[str] = Field(default_factory=list, max_length=6)
     video_coverage: int = Field(default=0, ge=0, le=100)
@@ -57,7 +57,7 @@ class YoutubeCandidate(BaseModel):
     duration_ms: int | None = Field(default=None, ge=0)
     language: str | None = None
     matched_concept_ids: list[UUID] = Field(default_factory=lambda: list[UUID](), max_length=20)
-    learning_format: str | None = None
+    learning_format: LearningFormat | None = None
     estimated_level: LearningLevel | None = None
     has_implementation: bool | None = None
     evidence: list[str] = Field(default_factory=list, max_length=5)

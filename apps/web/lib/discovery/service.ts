@@ -356,10 +356,16 @@ async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserI
 
 function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
   if (candidate.reasonCodes.includes("continue_learning")) return "Continue where you left off";
-  const matchedConcept = candidate.resource.concepts.find((concept) => profile.conceptIds.includes(concept.id) || profile.emergingConceptIds?.includes(concept.id));
-  if (candidate.reasonCodes.includes("concept_match") && matchedConcept) return `Because you selected ${matchedConcept.name}`;
+  const coreConcept = candidate.resource.concepts.find((concept) => (profile.coreConceptIds ?? profile.conceptIds).includes(concept.id));
+  if ((candidate.reasonCodes.includes("concept_match") || candidate.reasonCodes.includes("adjacent_concept")) && coreConcept) {
+    return `Because you selected ${coreConcept.name}`;
+  }
+  const emergingConcept = candidate.resource.concepts.find((concept) => profile.emergingConceptIds?.includes(concept.id));
+  if ((candidate.reasonCodes.includes("concept_match") || candidate.reasonCodes.includes("adjacent_concept")) && emergingConcept) {
+    return `Because you've been learning ${emergingConcept.name}`;
+  }
   const adjacentConcept = candidate.resource.concepts.find((concept) => profile.adjacentConceptIds?.includes(concept.id));
-  if (candidate.reasonCodes.includes("adjacent_concept") && adjacentConcept) return `Related to ${adjacentConcept.name}`;
+  if (candidate.reasonCodes.includes("adjacent_concept") && adjacentConcept) return "Related to what you're learning";
   if (candidate.reasonCodes.includes("level_fit")) return "Fits your starting level";
   if (candidate.reasonCodes.includes("format_fit")) return "Matches how you like to learn";
   if (candidate.reasonCodes.includes("research_intent")) return "Matches your research interests";
@@ -666,7 +672,7 @@ async function projectBehaviorAffinity(
   conceptIds: string[],
   signal: BehaviorSignal,
   now: Date,
-): Promise<void> {
+): Promise<string[]> {
   const uniqueConceptIds = [...new Set(conceptIds)];
   const relationRows = uniqueConceptIds.length === 0
     ? []
@@ -712,16 +718,29 @@ async function projectBehaviorAffinity(
       .onConflictDoUpdate({
         target: [userConceptAffinity.userId, userConceptAffinity.conceptId],
         set: {
-          score: sql`LEAST(1.0, GREATEST(-1.0, ${userConceptAffinity.score} + (${positive} - ${negative}) * (1.0 - ${userConceptAffinity.confidence})))`,
-          confidence: sql`LEAST(1.0, ${userConceptAffinity.confidence} + ${confidence})`,
-          positiveWeight: sql`LEAST(1.0, ${userConceptAffinity.positiveWeight} + ${positive})`,
-          negativeWeight: sql`LEAST(1.0, ${userConceptAffinity.negativeWeight} + ${negative})`,
+          score: sql`LEAST(1.0::real, GREATEST(-1.0::real, ${userConceptAffinity.score} + (${positive}::real - ${negative}::real) * (1.0::real - ${userConceptAffinity.confidence})))`,
+          confidence: sql`LEAST(1.0::real, ${userConceptAffinity.confidence} + ${confidence}::real)`,
+          positiveWeight: sql`LEAST(1.0::real, ${userConceptAffinity.positiveWeight} + ${positive}::real)`,
+          negativeWeight: sql`LEAST(1.0::real, ${userConceptAffinity.negativeWeight} + ${negative}::real)`,
           featureVersion: sql`CASE WHEN ${userConceptAffinity.featureVersion} = 'onboarding-v1' THEN 'discovery-behavior-v1' ELSE ${userConceptAffinity.featureVersion} END`,
           lastEventAt: now,
           updatedAt: now,
         },
       });
   }
+  return [...new Set(targets.map((target) => target.conceptId))];
+}
+
+async function loadConceptsByIds(
+  tx: Transaction,
+  conceptIds: string[],
+): Promise<Array<{ id: string; name: string }>> {
+  const uniqueConceptIds = [...new Set(conceptIds)];
+  if (uniqueConceptIds.length === 0) return [];
+  return tx
+    .select({ id: concepts.id, name: concepts.name })
+    .from(concepts)
+    .where(and(inArray(concepts.id, uniqueConceptIds), eq(concepts.status, "active")));
 }
 
 async function enqueueConditionalRefresh(
@@ -797,7 +816,7 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
     const now = new Date();
     const signal = behaviorSignal(input.action, input.metadata);
     const conceptsForResource = await loadResourceConcepts(tx, input.resourceId);
-    await projectBehaviorAffinity(tx, userId, conceptsForResource.map((concept) => concept.id), signal, now);
+    const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource.map((concept) => concept.id), signal, now);
     await tx.insert(activityEvents).values({
       schemaVersion: 1,
       userId,
@@ -827,13 +846,16 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
         });
     }
     if (signal.refresh) {
+      const refreshConceptIds = signal.positive > 0
+        ? projectedConceptIds
+        : conceptsForResource.map((concept) => concept.id);
       await enqueueConditionalRefresh(
         tx,
         userId,
         input.resourceId,
         input.correlationId,
         input.action,
-        conceptsForResource,
+        await loadConceptsByIds(tx, refreshConceptIds),
         now,
       );
     }

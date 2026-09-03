@@ -27,6 +27,7 @@ test(
     let activeResourceId: string | null = null;
     let activeVersionId: string | null = null;
     let activeSessionId: string | null = null;
+    const adjacentConceptId = randomUUID();
 
     try {
       const concepts = await migrator<{ id: string; slug: string; name: string }[]>`
@@ -38,6 +39,14 @@ test(
       assert.equal(concepts.length, 3);
       const interestConcept = concepts[1];
       if (!interestConcept) throw new Error("expected a canonical interest concept");
+      await migrator`
+        INSERT INTO knowledge.concepts (id, slug, name, kind, summary, status)
+        VALUES (${adjacentConceptId}, ${`integration-adjacent-${randomUUID()}`}, 'Adjacent concept', 'topic', 'A related concept for discovery projection tests.', 'active')
+      `;
+      await migrator`
+        INSERT INTO knowledge.concept_relations (source_concept_id, target_concept_id, relation_type, weight, confidence, status, created_by)
+        VALUES (${interestConcept.id}, ${adjacentConceptId}, 'related_to', 0.9, 0.9, 'accepted', 'integration')
+      `;
       const user = await createEmailUser({
         email: `discovery-${randomUUID()}@example.test`,
         displayName: "Discovery Learner",
@@ -123,6 +132,23 @@ test(
         SELECT count(*)::text AS count FROM discovery.discovery_interactions WHERE user_id = ${user.id} AND correlation_id = ${correlationId}
       `;
       assert.equal(Number(interactions[0]?.count), 1);
+      const adjacentAffinity = await migrator<{ feature_version: string; positive_weight: number }[]>`
+        SELECT feature_version, positive_weight
+        FROM discovery.user_concept_affinity
+        WHERE user_id = ${user.id} AND concept_id = ${adjacentConceptId}
+      `;
+      assert.equal(adjacentAffinity[0]?.feature_version, "discovery-behavior-v1");
+      assert.ok(Number(adjacentAffinity[0]?.positive_weight) > 0);
+      const refreshPayloads = await migrator<{ payload: Record<string, unknown> }[]>`
+        SELECT payload
+        FROM ops.outbox_events
+        WHERE user_id = ${user.id} AND event_type = 'discovery.refresh_requested'
+        ORDER BY created_at DESC
+      `;
+      assert.equal(
+        refreshPayloads.some((row) => Array.isArray(row.payload.conceptIds) && row.payload.conceptIds.includes(adjacentConceptId)),
+        true,
+      );
 
       const concurrentCorrelationId = randomUUID();
       const concurrentResults = await Promise.all([
@@ -179,6 +205,7 @@ test(
         await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${resourceId}`;
         await migrator`DELETE FROM catalog.resources WHERE id = ${resourceId}`;
       }
+      await migrator`DELETE FROM knowledge.concepts WHERE id = ${adjacentConceptId}`;
       await migrator.end({ timeout: 5 });
       await closeDb();
     }

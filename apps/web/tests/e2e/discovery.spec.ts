@@ -6,33 +6,54 @@ test.describe.configure({ mode: "serial" });
 
 let database: ReturnType<typeof postgres> | null = null;
 let seededResourceIds: string[] = [];
+let adjacentRelationId: string | null = null;
+let behaviorCoreResourceId: string | null = null;
 
 test.beforeAll(async () => {
   const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!databaseUrl) throw new Error("DATABASE_MIGRATOR_URL is required for discovery E2E");
   const db = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   database = db;
-  const [concept] = await db<{ id: string }[]>`
-    SELECT id FROM knowledge.concepts WHERE slug = 'ai-machine-learning' AND status = 'active'
+  const concepts = await db<{ id: string; slug: string }[]>`
+    SELECT id, slug FROM knowledge.concepts
+    WHERE slug IN ('ai-machine-learning', 'physics') AND status = 'active'
   `;
-  if (!concept) throw new Error("AI / Machine Learning concept is required for discovery E2E");
+  const concept = concepts.find((item) => item.slug === "ai-machine-learning");
+  const adjacentConcept = concepts.find((item) => item.slug === "physics");
+  if (!concept || !adjacentConcept) throw new Error("AI and Physics concepts are required for discovery E2E");
+  adjacentRelationId = randomUUID();
+  await db`
+    INSERT INTO knowledge.concept_relations
+      (id, source_concept_id, target_concept_id, relation_type, weight, confidence, status, created_by)
+    VALUES
+      (${adjacentRelationId}, ${concept.id}, ${adjacentConcept.id}, 'related_to', 0.9, 0.9, 'accepted', 'e2e')
+  `;
 
   const videoResourceId = randomUUID();
   const paperResourceId = randomUUID();
+  const behaviorResourceAId = randomUUID();
+  const behaviorResourceBId = randomUUID();
   const youtubeId = `e2e${randomUUID().replaceAll("-", "").slice(0, 8)}`;
   const arxivId = `e2e.${randomUUID().replaceAll("-", "").slice(0, 8)}`;
-  seededResourceIds = [videoResourceId, paperResourceId];
+  const behaviorYoutubeA = `e2a${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  const behaviorYoutubeB = `e2b${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  behaviorCoreResourceId = behaviorResourceAId;
+  seededResourceIds = [videoResourceId, paperResourceId, behaviorResourceAId, behaviorResourceBId];
   await db.begin(async (tx) => {
     await tx`
       INSERT INTO catalog.resources
         (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
       VALUES
         (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A seeded discovery lesson', 'A deterministic lesson used by browser tests.', 'en', 'public', 'ready', 0.98, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
-        (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A seeded research paper', 'A deterministic paper used by browser tests.', 'en', 'public', 'ready', 0.96, '{"paperClass":"current","test":true}'::jsonb)
+        (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A seeded research paper', 'A deterministic paper used by browser tests.', 'en', 'public', 'ready', 0.96, '{"paperClass":"current","test":true}'::jsonb),
+        (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"test":true}'::jsonb),
+        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"test":true}'::jsonb)
     `;
     await tx`
       INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
       VALUES (${videoResourceId}, ${youtubeId}, 'LearnSpace Test Lab', 600000, now())
+        ,(${behaviorResourceAId}, ${behaviorYoutubeA}, 'LearnSpace Behavior Lab', 600000, now())
+        ,(${behaviorResourceBId}, ${behaviorYoutubeB}, 'LearnSpace Adjacent Lab', 600000, now())
     `;
     await tx`
       INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, submitted_at)
@@ -42,7 +63,9 @@ test.beforeAll(async () => {
       INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary)
       VALUES
         (${videoResourceId}, ${concept.id}, 'e2e', 1, true),
-        (${paperResourceId}, ${concept.id}, 'e2e', 1, true)
+        (${paperResourceId}, ${concept.id}, 'e2e', 1, true),
+        (${behaviorResourceAId}, ${concept.id}, 'e2e', 1, true),
+        (${behaviorResourceBId}, ${adjacentConcept.id}, 'e2e', 1, true)
     `;
   });
 });
@@ -77,9 +100,38 @@ test.afterAll(async () => {
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.paper_details WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.resources WHERE id IN ${db(seededResourceIds)}`;
+  if (adjacentRelationId) {
+    await db`DELETE FROM knowledge.concept_relations WHERE id = ${adjacentRelationId}`;
+  }
   await db.end({ timeout: 5 });
   database = null;
 });
+
+async function completeDiscoveryOnboarding(page: import("@playwright/test").Page): Promise<void> {
+  await expect(page).toHaveURL(/\/onboarding/);
+  await expect(page.locator("[data-onboarding-hydrated]")).toHaveAttribute(
+    "data-onboarding-hydrated",
+    "true",
+  );
+  await page.getByRole("button", { name: "Get started" }).click();
+  await page.getByRole("button", { name: "Student" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Coursework" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  const search = page.getByPlaceholder("Search topics, skills, or domains");
+  await search.fill("AI");
+  await page.getByRole("button", { name: /AI \/ Machine Learning/ }).click();
+  await search.fill("Python");
+  await page.getByRole("button", { name: "Python skill" }).click();
+  await search.fill("React");
+  await page.getByRole("button", { name: "React skill" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Clear explanations" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "I know the basics" }).click();
+  await page.getByRole("button", { name: "Start learning" }).click();
+  await expect(page).toHaveURL(/\/app/);
+}
 
 test("completed learner reaches personalized Home and can use the app navigation", async ({ page }) => {
   const email = `discovery-${Date.now()}@example.test`;
@@ -145,4 +197,47 @@ test("completed learner reaches personalized Home and can use the app navigation
   await page.getByRole("link", { name: "Discover" }).click();
   await expect(page).toHaveURL(/\/app\/discover$/);
   await expect(page.getByRole("heading", { name: "Recommended videos" })).toBeVisible();
+});
+
+test("meaningful learning promotes an adjacent concept and dismissal persists", async ({ page }) => {
+  const email = `discovery-adjacent-${Date.now()}@example.test`;
+  const password = "discovery-adjacent-password-123";
+
+  await page.goto("/register");
+  await page.getByLabel("Your name").fill("Adjacent Learner");
+  await page.getByLabel("Email address").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm password").fill(password);
+  await page.getByRole("button", { name: "Create account" }).click();
+  await expect(page).toHaveURL(/\/verify-email/);
+  await page.getByRole("link", { name: "Open verification link" }).click();
+  await completeDiscoveryOnboarding(page);
+
+  const coreCard = page.locator("article.discovery-card").filter({ hasText: "A behavior seed lesson" });
+  const adjacentCard = page.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
+  await expect(coreCard).toBeVisible();
+  await expect(adjacentCard).toBeVisible();
+  await coreCard.getByRole("button", { name: "Save" }).click();
+
+  if (!behaviorCoreResourceId) throw new Error("behavior seed resource was not created");
+  for (let index = 0; index < 2; index += 1) {
+    const response = await page.request.post("/api/v1/discovery/interactions", {
+      data: {
+        resourceId: behaviorCoreResourceId,
+        action: "complete",
+        correlationId: randomUUID(),
+        metadata: {},
+      },
+    });
+    expect(response.ok()).toBe(true);
+  }
+
+  await page.reload();
+  const promotedCard = page.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
+  await expect(promotedCard).toBeVisible();
+  await expect(promotedCard).toContainText("Because you've been learning Physics");
+  await promotedCard.getByRole("button", { name: "Dismiss" }).click();
+  await expect(page.getByText("An adjacent learning lesson")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText("An adjacent learning lesson")).toHaveCount(0);
 });

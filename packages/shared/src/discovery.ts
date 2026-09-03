@@ -1,6 +1,17 @@
 import { z } from "zod";
 import { DISCOVERY_ACTIONS, RECOMMENDATION_SURFACES } from "./domain-values.js";
 
+export const DISCOVERY_LEARNING_FORMATS = [
+  "clear_explanations",
+  "deep_dive",
+  "hands_on",
+  "research_backed",
+  "quick_learning",
+  "conversational",
+  "mixed",
+] as const;
+export type DiscoveryLearningFormat = (typeof DISCOVERY_LEARNING_FORMATS)[number];
+
 export const discoverySurfaceSchema = z.enum(RECOMMENDATION_SURFACES);
 export const discoveryActionSchema = z.enum(DISCOVERY_ACTIONS);
 
