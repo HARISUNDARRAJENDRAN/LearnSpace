@@ -34,6 +34,7 @@ type YoutubeProposal = {
   matched_concept_ids: string[];
   learning_format: string | null;
   estimated_level: string | null;
+  has_implementation: boolean | null;
   evidence: string[];
   confidence: number;
 };
@@ -65,9 +66,13 @@ function configuredNumber(name: string, fallback: number, minimum: number, maxim
   return Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback;
 }
 
+function refreshDeduplicationHours(): number {
+  return configuredNumber("DISCOVERY_REFRESH_DEDUP_HOURS", 12, 1, 168);
+}
+
 export function refreshIntervalHours(conceptName: string): number {
   const name = conceptName.toLowerCase();
-  if (/(artificial intelligence|machine learning|ai|web development|cybersecurity)/.test(name)) {
+  if (/\b(artificial intelligence|machine learning|ai|ml|web development|cybersecurity)\b/.test(name)) {
     return configuredNumber("DISCOVERY_REFRESH_FAST_HOURS", 12, 1, 168);
   }
   if (/(programming|computer science|data science|devops|cloud)/.test(name)) {
@@ -118,7 +123,9 @@ function youtubeId(value: unknown): string | null {
 
 function arxivId(value: unknown): string | null {
   const id = stringValue(value);
-  return id && /^[A-Za-z0-9][A-Za-z0-9.-]{2,99}$/.test(id) ? id : null;
+  return id && /^(?:[A-Za-z][A-Za-z0-9.-]{1,31}\/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)$/.test(id)
+    ? id
+    : null;
 }
 
 function isYoutubeUrl(value: string, id: string): boolean {
@@ -128,7 +135,14 @@ function isYoutubeUrl(value: string, id: string): boolean {
 function isArxivUrl(value: string, id: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "arxiv.org" && url.pathname === `/abs/${id}`;
+    return url.protocol === "https:"
+      && url.hostname === "arxiv.org"
+      && !url.username
+      && !url.password
+      && !url.port
+      && !url.search
+      && !url.hash
+      && url.pathname === `/abs/${id}`;
   } catch {
     return false;
   }
@@ -153,6 +167,7 @@ function parseYoutube(value: unknown): YoutubeProposal | null {
     matched_concept_ids: stringArray(item.matched_concept_ids),
     learning_format: stringValue(item.learning_format),
     estimated_level: stringValue(item.estimated_level),
+    has_implementation: typeof item.has_implementation === "boolean" ? item.has_implementation : null,
     evidence: stringArray(item.evidence).slice(0, 5),
     confidence,
   };
@@ -212,18 +227,18 @@ function parseBatch(value: unknown): CandidateBatch {
   };
 }
 
-export function discoveryPayload(payload: JsonObject, userId: string, traceId: string, conceptId: string, conceptName: string): JsonObject {
+export function discoveryPayload(traceId: string, conceptId: string, conceptName: string): JsonObject {
   return {
     concept_id: conceptId,
     concept_name: conceptName,
     concept_ids: [conceptId],
     concept_names: [conceptName],
-    level: stringValue(payload.level) ?? "mixed",
-    preferred_formats: stringArray(payload.preferredFormats),
+    level: "mixed",
+    preferred_formats: [],
     video_coverage: 0,
     paper_coverage: 0,
     window_days: 30,
-    audit_user_id: userId,
+    audit_user_id: null,
     trace_id: traceId,
   };
 }
@@ -238,7 +253,7 @@ async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
     FROM ops.jobs
     WHERE queue = 'discovery'
       AND job_type = 'discovery.refresh_concept'
-      AND status = 'done'
+      AND status IN ('done', 'dead')
       AND finished_at IS NOT NULL
       AND payload->>'concept_id' IS NOT NULL
     ORDER BY payload->>'concept_id', finished_at DESC
@@ -252,21 +267,22 @@ async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
     WHERE queue = 'discovery'
       AND job_type = 'discovery.refresh_concept'
       AND payload->>'refresh_reason' = 'scheduled'
-      AND status IN ('pending', 'running', 'dead')
+      AND status IN ('pending', 'running')
     ORDER BY payload->>'concept_id', created_at DESC
   `;
   const existingScheduled = new Map(scheduledRows.map((job) => [job.concept_id, job]));
   let scheduled = 0;
   for (const row of rows) {
-    const basePayload = objectValue(row.payload);
-    if (!basePayload) continue;
     const nextAt = nextRefreshAt(row.concept_id, row.concept_name, row.finished_at);
     if (nextAt.getTime() > Date.now()) continue;
     const existing = existingScheduled.get(row.concept_id);
     if (existing && existing.created_at >= row.finished_at) continue;
     const payload = {
-      ...basePayload,
-      audit_user_id: null,
+      ...discoveryPayload(
+        `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
+        row.concept_id,
+        row.concept_name,
+      ),
       refresh_reason: "scheduled",
       trace_id: `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
     };
@@ -304,8 +320,27 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const jobs: Array<{ id: string }> = [];
     for (const [index, conceptId] of conceptIds.entries()) {
       const conceptName = conceptNames[index] ?? conceptId;
-      const payload = discoveryPayload(outboxPayload, outbox.user_id, traceId, conceptId, conceptName);
+      const payload = {
+        ...discoveryPayload(traceId, conceptId, conceptName),
+        audit_user_id: outbox.user_id,
+      };
       const dedupKey = `discovery:${conceptId}:refresh`;
+      const recentJobs = await tx<{ id: string }[]>`
+        SELECT id
+        FROM ops.jobs
+        WHERE queue = 'discovery'
+          AND job_type = 'discovery.refresh_concept'
+          AND dedup_key = ${dedupKey}
+          AND (
+            status IN ('pending', 'running')
+            OR (
+              status IN ('done', 'dead')
+              AND finished_at >= now() - make_interval(hours => ${refreshDeduplicationHours()})
+            )
+          )
+        LIMIT 1
+      `;
+      if (recentJobs.length > 0) continue;
       const inserted = await tx<{ id: string }[]>`
         INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
         VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, ${dedupKey}, ${`${outbox.id}:${conceptId}`}, ${outbox.correlation_id}, ${traceId})
@@ -352,6 +387,33 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
   });
 }
 
+async function reclaimExpiredJobs(sql: SqlClient): Promise<number> {
+  const rows = await sql<{ id: string }[]>`
+    UPDATE ops.jobs
+    SET status = CASE
+        WHEN attempts >= max_attempts THEN 'dead'::ops.job_status
+        ELSE 'pending'::ops.job_status
+      END,
+      available_at = CASE
+        WHEN attempts >= max_attempts THEN available_at
+        ELSE now() + make_interval(secs => LEAST(3600::double precision, 30::double precision * power(2::double precision, GREATEST(0, attempts - 1))))
+      END,
+      finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
+      last_error_code = 'DISCOVERY_LEASE_EXPIRED',
+      last_error_detail = 'Worker lease expired before completion',
+      lease_owner = NULL,
+      lease_expires_at = NULL,
+      heartbeat_at = NULL,
+      updated_at = now()
+    WHERE queue = 'discovery'
+      AND status = 'running'
+      AND lease_expires_at IS NOT NULL
+      AND lease_expires_at < now()
+    RETURNING id
+  `;
+  return rows.length;
+}
+
 async function callAgent(agentUrl: string, token: string, job: JobRow): Promise<CandidateBatch> {
   const agentPayload = discoveryAgentPayload(job.payload);
   const response = await fetch(`${agentUrl.replace(/\/$/, "")}/internal/v1/discovery/refresh`, {
@@ -378,9 +440,15 @@ const discoveryAgentPayloadKeys = [
 ] as const;
 
 export function discoveryAgentPayload(payload: JsonObject): JsonObject {
-  return Object.fromEntries(
+  const request = Object.fromEntries(
     discoveryAgentPayloadKeys.flatMap((key) => key in payload ? [[key, payload[key]]] : []),
   );
+  return {
+    ...request,
+    level: "mixed",
+    preferred_formats: [],
+    audit_user_id: null,
+  };
 }
 
 async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<string[]> {
@@ -406,7 +474,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
-        VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, sourceConfidence: candidate.confidence })})
+        VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, hasImplementation: candidate.has_implementation, sourceConfidence: candidate.confidence })})
         ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL
         DO UPDATE SET canonical_url = EXCLUDED.canonical_url, title = EXCLUDED.title, description = EXCLUDED.description, language = EXCLUDED.language, status = 'ready', deleted_at = NULL, updated_at = now(), metadata = EXCLUDED.metadata
         RETURNING id
@@ -502,6 +570,7 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
       last_error_code = 'DISCOVERY_REFRESH_FAILED',
       last_error_detail = ${detail},
       available_at = now() + make_interval(secs => ${retryDelaySeconds}),
+      finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
       lease_owner = NULL,
       lease_expires_at = NULL,
       updated_at = now()
@@ -519,15 +588,16 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
+    const reclaimedCount = await reclaimExpiredJobs(sql);
     const scheduledCount = await scheduleDueRefreshes(sql);
     const promotedJobId = await promoteOutbox(sql);
     const job = await claimJob(sql, workerId);
-    if (!job) return { status: "idle", promotedJobId, scheduledCount };
+    if (!job) return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
     try {
       const batch = await callAgent(agentUrl, token, job);
       const persisted = await persistBatch(sql, job, batch);
       await finishJob(sql, job, { traceId: batch.trace_id, ...persisted });
-      return { status: "done", jobId: job.id, traceId: batch.trace_id, scheduledCount, ...persisted };
+      return { status: "done", jobId: job.id, traceId: batch.trace_id, scheduledCount, reclaimedCount, ...persisted };
     } catch (error) {
       await failJob(sql, job, error);
       throw error;

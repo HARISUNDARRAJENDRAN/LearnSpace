@@ -62,6 +62,7 @@ export const EVENT_TYPES = [
   "concept.encountered",
   "review.completed",
   "onboarding.completed",
+  "discovery.dismissed",
 ] as const;
 export const INGESTION_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
 export const PROCESSING_STATUSES = ["pending", "processing", "ready", "failed", "archived"] as const;

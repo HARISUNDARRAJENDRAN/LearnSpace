@@ -10,7 +10,8 @@
     "test": "tsx --test src/discovery.test.ts",
     "start": "node dist/index.js",
     "discovery:once": "tsx src/index.ts",
-    "discovery:worker": "tsx src/index.ts --loop"
+    "discovery:worker": "tsx src/index.ts --loop",
+    "discovery:smoke": "tsx src/discovery-smoke.ts"
   },
   "dependencies": {
     "@learnspace/shared": "workspace:*",

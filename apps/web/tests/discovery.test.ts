@@ -70,6 +70,28 @@ test("selected interests and stronger affinity affect deterministic ranking", ()
   assert.equal(behaviorRanked.videos[0]?.resource.id, "strong");
 });
 
+test("adjacent concepts provide a bounded exploratory ranking signal", () => {
+  const ranked = rankDiscoveryResources(
+    [resource("adjacent", "video", [behavioralConceptId]), resource("unrelated", "video", ["other-concept"])],
+    profile({ adjacentConceptIds: [behavioralConceptId] }),
+    now,
+  );
+  assert.equal(ranked.videos[0]?.resource.id, "adjacent");
+  assert.ok(ranked.videos[0]?.reasonCodes.includes("adjacent_concept"));
+});
+
+test("meaningful behavior can introduce an emerging concept without changing onboarding interests", () => {
+  const ranked = rankDiscoveryResources(
+    [resource("emerging", "video", [behavioralConceptId]), resource("unrelated", "video", ["other-concept"])],
+    profile({
+      emergingConceptIds: [behavioralConceptId],
+      affinities: new Map([[behavioralConceptId, { conceptId: behavioralConceptId, score: 0.55, confidence: 0.4, positiveWeight: 0.25, negativeWeight: 0, featureVersion: "discovery-behavior-v1" }]]),
+    }),
+    now,
+  );
+  assert.equal(ranked.videos[0]?.resource.id, "emerging");
+});
+
 test("paper ranking stays separate from video engagement features", () => {
   const ranked = rankDiscoveryResources(
     [resource("paper", "paper", [conceptId]), resource("video", "video", [conceptId])],

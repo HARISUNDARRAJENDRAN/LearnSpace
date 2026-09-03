@@ -30,8 +30,17 @@ class ExaDiscoveryTool:
             return []
         budget.consume(self.name)
         domain = "youtube.com" if resource_kind == "video" else "arxiv.org"
+        query = " educational " + " ".join(concept_names)
+        if resource_kind == "paper" and paper_strategy == "foundational":
+            query = (
+                "seminal foundational landmark canonical original influential early defining "
+                "research paper "
+                + " ".join(concept_names)
+            )
+        elif resource_kind == "paper":
+            query = "recent current research paper " + " ".join(concept_names)
         payload = {
-            "query": " educational " + " ".join(concept_names),
+            "query": query,
             "type": "neural",
             "numResults": min(10, max(1, limit)),
             "includeDomains": [domain],
@@ -75,5 +84,8 @@ class ExaDiscoveryTool:
                 continue
             else:
                 seen.add(url)
-            candidates.append(item)
+            candidates.append({
+                **item,
+                "retrieval_strategy": paper_strategy if resource_kind == "paper" else "video",
+            })
         return candidates

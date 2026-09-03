@@ -87,9 +87,26 @@ recurring scheduler reads these optional policy overrides (hours):
 - `DISCOVERY_REFRESH_MEDIUM_HOURS` (default 24)
 - `DISCOVERY_REFRESH_SLOW_HOURS` (default 72)
 - `DISCOVERY_REFRESH_JITTER_PERCENT` (default 0.1)
+- `DISCOVERY_REFRESH_DEDUP_HOURS` (default 12)
 - `DISCOVERY_WORKER_INTERVAL_MS` (default 30000)
 - `DISCOVERY_WORKER_MAX_JOBS` (default 0, continuous)
 - `DISCOVERY_AGENT_TIMEOUT_SECONDS` (default 120)
+
+The agent service requires `INTERNAL_SERVICE_TOKEN` and, when
+`DISCOVERY_AGENTS_ENABLED=true`, `EXA_API_KEY`. `REDIS_URL` enables the shared
+candidate cache; without it the service uses a bounded per-instance cache and
+still serves stale entries when available. `DISCOVERY_MAX_TOOL_CALLS` defaults
+to 4 and is reserved for mandatory video/current-paper/foundational-paper
+calls before optional work. Keep `DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED=false`
+until a deployed content tool returns the strict structured enrichment schema;
+raw validated Exa candidates remain the safe default.
+
+The optional `Discovery staging smoke` workflow runs manually or every six
+hours. It requires `STAGING_DATABASE_WORKER_URL`,
+`STAGING_DATABASE_MIGRATOR_URL`, `STAGING_DISCOVERY_AGENT_URL`, and
+`STAGING_INTERNAL_SERVICE_TOKEN`. It creates a temporary concept and job,
+executes the real worker-to-agent path, verifies a persisted candidate and
+cleans up with the migrator connection. It is separate from pull-request CI.
 
 The worker never needs `DATABASE_MIGRATOR_URL`; migrations remain a separate
 controlled job.

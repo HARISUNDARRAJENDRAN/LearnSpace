@@ -2,18 +2,6 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
-import { closeDb } from "@learnspace/db";
-import {
-  consumeEmailVerificationChallenge,
-  createAuthChallenge,
-  createEmailUser,
-  createSession,
-  findSessionByToken,
-  findUserById,
-  resetPasswordWithChallenge,
-  revokeSessionByToken,
-  upsertGoogleUser,
-} from "../lib/auth/repository";
 import { hashPassword, hashToken, verifyPassword } from "../lib/auth/crypto";
 
 const databaseAvailable = Boolean(
@@ -24,6 +12,20 @@ test(
   "auth repository protects verification, sessions, reset, and Google linking",
   { skip: databaseAvailable ? false : "DATABASE_AUTH_URL and DATABASE_MIGRATOR_URL are required" },
   async () => {
+    const [{ closeDb }, {
+      consumeEmailVerificationChallenge,
+      createAuthChallenge,
+      createEmailUser,
+      createSession,
+      findSessionByToken,
+      findUserById,
+      resetPasswordWithChallenge,
+      revokeSessionByToken,
+      upsertGoogleUser,
+    }] = await Promise.all([
+      import("@learnspace/db"),
+      import("../lib/auth/repository"),
+    ]);
     const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
     if (!migratorUrl) {
       throw new Error("DATABASE_MIGRATOR_URL is required for auth integration tests");

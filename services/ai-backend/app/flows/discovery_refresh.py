@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from functools import partial
 from typing import Any, Protocol
@@ -24,12 +25,23 @@ from app.contracts.discovery import (
     YoutubeCandidate,
 )
 from app.guardrails.candidate_validation import validate_arxiv_candidate, validate_youtube_candidate
-from app.tools.budget import ToolBudget
+from app.tools.budget import ToolBudget, ToolBudgetExceeded
+
+logger = logging.getLogger(__name__)
 
 
 class YoutubeDiscoverer(Protocol):
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[YoutubeCandidate]: ...
+
+
+class YoutubeEnricher(Protocol):
+    async def enrich(
+        self,
+        request: DiscoveryRefreshRequest,
+        candidates: list[YoutubeCandidate],
+        budget: ToolBudget,
     ) -> list[YoutubeCandidate]: ...
 
 
@@ -51,6 +63,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         arxiv: ArxivDiscoverer,
         max_tool_calls: int = 4,
         request_timeout_seconds: float = 8.0,
+        youtube_enricher: YoutubeEnricher | None = None,
     ) -> None:
         super().__init__()
         self.cache = cache
@@ -58,14 +71,20 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         self.arxiv = arxiv
         self.max_tool_calls = max_tool_calls
         self.request_timeout_seconds = request_timeout_seconds
+        self.youtube_enricher = youtube_enricher
 
     async def run_discovery(self, request: DiscoveryRefreshRequest) -> DiscoveryCandidateBatch:
         trace_id = request.trace_id or str(uuid4())
-        format_key = request.preferred_formats[0] if request.preferred_formats else "any"
+        neutral_request = request.model_copy(
+            update={"level": "mixed", "preferred_formats": [], "audit_user_id": None}
+        )
+        format_key = "any"
         budget = ToolBudget(self.max_tool_calls)
+        budget.reserve_primary(len(request.concept_ids) * 3)
         skipped: list[ResourceKind] = []
         youtube_candidates: list[YoutubeCandidate] = []
         arxiv_candidates: list[ArxivCandidate] = []
+        youtube_pools: list[tuple[DiscoveryRefreshRequest, list[YoutubeCandidate], bool]] = []
         failures: list[str] = []
         videos_ready = True
         papers_ready = True
@@ -74,20 +93,23 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             request.concept_ids, request.concept_names, strict=False
         ):
             concept_key = str(concept_id)
-            pool_request = request.model_copy(
+            pool_request = neutral_request.model_copy(
                 update={"concept_ids": [concept_id], "concept_names": [concept_name]}
             )
             youtube_key = youtube_cache_key(
-                concept_key, request.level, format_key, request.window_days
+                concept_key, neutral_request.level, format_key, request.window_days
             )
             if await self.cache.has_enough([youtube_key], 6):
                 cache_hit = True
-                youtube_candidates.extend(await self._cached_youtube(youtube_key, concept_id))
+                cached = await self._cached_youtube(youtube_key, concept_id)
+                youtube_candidates.extend(cached)
+                budget.release_primary()
+                youtube_pools.append((pool_request, cached, False))
             else:
                 videos_ready = False
                 try:
                     candidates = await self._retry(
-                        partial(self.youtube.discover, pool_request, budget)
+                        partial(self.youtube.discover, pool_request, budget), budget
                     )
                     candidates = [
                         candidate
@@ -95,16 +117,19 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                         if concept_id in candidate.matched_concept_ids
                     ]
                     youtube_candidates.extend(candidates)
+                    youtube_pools.append((pool_request, candidates, True))
                     await self._cache_youtube(youtube_key, candidates)
                 except Exception as error:
                     if len(failures) < 10:
                         failures.append(f"youtube:{concept_key}:{type(error).__name__}")
-                    youtube_candidates.extend(
-                        await self._cached_youtube(youtube_key, concept_id, stale=True)
+                    stale_candidates = await self._cached_youtube(
+                        youtube_key, concept_id, stale=True
                     )
+                    youtube_candidates.extend(stale_candidates)
+                    youtube_pools.append((pool_request, stale_candidates, False))
 
             for paper_strategy in ("current", "foundational"):
-                paper_request = request.model_copy(
+                paper_request = neutral_request.model_copy(
                     update={
                         "concept_ids": [concept_id],
                         "concept_names": [concept_name],
@@ -113,16 +138,17 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                     }
                 )
                 arxiv_key = arxiv_cache_key(
-                    concept_key, request.level, paper_request.window_days, paper_strategy
+                    concept_key, neutral_request.level, paper_request.window_days, paper_strategy
                 )
                 if await self.cache.has_enough([arxiv_key], 2):
                     cache_hit = True
                     arxiv_candidates.extend(await self._cached_arxiv(arxiv_key, concept_id))
+                    budget.release_primary()
                 else:
                     papers_ready = False
                     try:
                         candidates = await self._retry(
-                            partial(self.arxiv.discover, paper_request, budget)
+                            partial(self.arxiv.discover, paper_request, budget), budget
                         )
                         candidates = [
                             candidate
@@ -139,11 +165,35 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                         arxiv_candidates.extend(
                             await self._cached_arxiv(arxiv_key, concept_id, stale=True)
                         )
+        budget.begin_optional_phase()
+        if self.youtube_enricher is not None:
+            for index, (pool_request, candidates, can_enrich) in enumerate(youtube_pools):
+                if not can_enrich or not candidates or budget.remaining <= 0:
+                    continue
+                try:
+                    enriched = await self._retry(
+                        partial(self.youtube_enricher.enrich, pool_request, candidates, budget),
+                        budget,
+                        optional=True,
+                    )
+                except ToolBudgetExceeded:
+                    break
+                except Exception as error:
+                    if len(failures) < 10:
+                        failures.append(
+                            f"youtube-enrichment:{pool_request.concept_ids[0]}:{type(error).__name__}"
+                        )
+                    continue
+                youtube_pools[index] = (pool_request, enriched, True)
+        if youtube_pools:
+            youtube_candidates = [
+                candidate for _, candidates, _ in youtube_pools for candidate in candidates
+            ]
         if videos_ready:
             skipped.append("video")
         if papers_ready:
             skipped.append("paper")
-        return DiscoveryCandidateBatch(
+        batch = DiscoveryCandidateBatch(
             trace_id=trace_id,
             skipped=skipped,
             youtube=self._dedupe_youtube(youtube_candidates),
@@ -152,13 +202,33 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             failures=failures,
             audit_run_id=uuid4(),
         )
+        logger.info(
+            "discovery_refresh_completed",
+            extra={
+                "trace_id": trace_id,
+                "cache_hit": cache_hit,
+                "videos": len(batch.youtube),
+                "papers": len(batch.arxiv),
+                "failures": len(batch.failures),
+                "tool_calls_used": budget.used,
+                "tool_calls_limit": budget.limit,
+            },
+        )
+        return batch
 
-    async def _retry(self, operation: Callable[[], Awaitable[list[Any]]]) -> list[Any]:
+    async def _retry(
+        self,
+        operation: Callable[[], Awaitable[list[Any]]],
+        budget: ToolBudget,
+        optional: bool = False,
+    ) -> list[Any]:
         for attempt in range(2):
             try:
                 return await asyncio.wait_for(operation(), timeout=self.request_timeout_seconds)
             except Exception as error:
                 if attempt == 1 or not self._retryable(error):
+                    raise
+                if not optional and budget.remaining <= budget.primary_reserved:
                     raise
                 await asyncio.sleep(0.2)
         return []

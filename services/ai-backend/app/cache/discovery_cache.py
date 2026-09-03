@@ -16,13 +16,13 @@ def _hash(value: str) -> str:
 
 
 def youtube_cache_key(concept_id: str, level: str, learning_format: str, window: int) -> str:
-    return f"ls:v1:discovery:youtube:{concept_id}:{level}:{learning_format}:{window}:{TOOL_VERSION}"
+    return f"ls:v1:discovery:youtube:{concept_id}:mixed:any:{window}:{TOOL_VERSION}"
 
 
 def arxiv_cache_key(
     concept_id: str, level: str, window: int, paper_strategy: str = "current"
 ) -> str:
-    return f"ls:v1:discovery:arxiv:{concept_id}:{level}:{paper_strategy}:{window}:{TOOL_VERSION}"
+    return f"ls:v1:discovery:arxiv:{concept_id}:mixed:{paper_strategy}:{window}:{TOOL_VERSION}"
 
 
 def exa_cache_key(query: str, filters: str) -> str:
@@ -40,6 +40,7 @@ class CacheEntry:
 class DiscoveryCache:
     entries: dict[str, CacheEntry] = field(default_factory=lambda: {})
     redis_url: str | None = None
+    max_local_entries: int = 256
     redis_client: Any = field(default=None, init=False, repr=False)
 
     async def _redis(self) -> Any:
@@ -112,6 +113,8 @@ class DiscoveryCache:
         self.entries[key] = CacheEntry(
             value=value, expires_at=now + ttl, stale_until=now + ttl + STALE_TTL
         )
+        while len(self.entries) > max(1, self.max_local_entries):
+            self.entries.pop(next(iter(self.entries)))
 
     async def get_stale(self, key: str) -> list[dict[str, Any]] | None:
         try:

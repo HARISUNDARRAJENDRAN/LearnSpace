@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-export const DISCOVERY_CATALOG_VERSION = "catalog-v2";
+export const DISCOVERY_CATALOG_VERSION = "catalog-v3";
 
 export function discoveryFingerprint(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 24);

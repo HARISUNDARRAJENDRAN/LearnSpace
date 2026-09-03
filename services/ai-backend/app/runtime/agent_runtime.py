@@ -12,22 +12,25 @@ from app.tools.youtube_content_search import YoutubeContentSearchTool
 class AgentRuntime:
     def __init__(self, settings: Settings, cache: DiscoveryCache | None = None) -> None:
         exa = ExaDiscoveryTool(settings.exa_api_key, settings.request_timeout_seconds)
+        youtube = YoutubeDiscoveryAgent(
+            exa,
+            YoutubeContentSearchTool(
+                settings.youtube_enrichment_enabled,
+                settings.youtube_embedder_provider,
+                settings.youtube_embedder_model,
+            ),
+            min(10, settings.max_tool_calls),
+        )
+        arxiv = ArxivDiscoveryAgent(
+            exa, ArxivPaperTool(settings.agents_enabled), min(10, settings.max_tool_calls)
+        )
         self.flow = DiscoveryRefreshFlow(
             cache or DiscoveryCache(redis_url=settings.redis_url),
-            YoutubeDiscoveryAgent(
-                exa,
-                YoutubeContentSearchTool(
-                    settings.agents_enabled,
-                    settings.youtube_embedder_provider,
-                    settings.youtube_embedder_model,
-                ),
-                min(10, settings.max_tool_calls),
-            ),
-            ArxivDiscoveryAgent(
-                exa, ArxivPaperTool(settings.agents_enabled), min(10, settings.max_tool_calls)
-            ),
+            youtube,
+            arxiv,
             settings.max_tool_calls,
             settings.request_timeout_seconds,
+            youtube_enricher=youtube,
         )
         self.settings = settings
 

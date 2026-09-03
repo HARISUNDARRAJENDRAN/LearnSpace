@@ -4,8 +4,6 @@ import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, refreshInterval
 
 test("discovery jobs are scoped to one canonical concept", () => {
   const payload = discoveryPayload(
-    { level: "beginner", preferredFormats: ["clear_explanations"] },
-    "00000000-0000-0000-0000-000000000001",
     "trace",
     "00000000-0000-0000-0000-000000000101",
     "Physics",
@@ -13,13 +11,14 @@ test("discovery jobs are scoped to one canonical concept", () => {
   assert.deepEqual(payload.concept_ids, ["00000000-0000-0000-0000-000000000101"]);
   assert.deepEqual(payload.concept_names, ["Physics"]);
   assert.equal(payload.concept_id, "00000000-0000-0000-0000-000000000101");
+  assert.equal(payload.level, "mixed");
+  assert.deepEqual(payload.preferred_formats, []);
+  assert.equal(payload.audit_user_id, null);
 });
 
 test("agent requests exclude worker-only scheduling fields", () => {
   const payload = discoveryAgentPayload({
     ...discoveryPayload(
-      { level: "beginner", preferredFormats: ["clear_explanations"] },
-      "00000000-0000-0000-0000-000000000001",
       "trace",
       "00000000-0000-0000-0000-000000000101",
       "Physics",
@@ -31,6 +30,22 @@ test("agent requests exclude worker-only scheduling fields", () => {
   assert.equal("refresh_reason" in payload, false);
   assert.deepEqual(payload.concept_ids, ["00000000-0000-0000-0000-000000000101"]);
   assert.deepEqual(payload.concept_names, ["Physics"]);
+  assert.equal(payload.level, "mixed");
+  assert.deepEqual(payload.preferred_formats, []);
+  assert.equal(payload.audit_user_id, null);
+});
+
+test("shared concept agent requests cannot inherit a learner profile", () => {
+  const payload = discoveryAgentPayload({
+    concept_ids: ["00000000-0000-0000-0000-000000000101"],
+    concept_names: ["Physics"],
+    level: "beginner",
+    preferred_formats: ["clear_explanations"],
+    audit_user_id: "00000000-0000-0000-0000-000000000001",
+  });
+  assert.equal(payload.level, "mixed");
+  assert.deepEqual(payload.preferred_formats, []);
+  assert.equal(payload.audit_user_id, null);
 });
 
 test("refresh policy is tiered, configurable, and jittered deterministically", () => {
@@ -40,4 +55,19 @@ test("refresh policy is tiered, configurable, and jittered deterministically", (
   const first = nextRefreshAt("concept-a", "Physics", finishedAt);
   assert.equal(first.getTime(), nextRefreshAt("concept-a", "Physics", finishedAt).getTime());
   assert.ok(first.getTime() > finishedAt.getTime() + 60 * 60 * 1000);
+});
+
+test("scheduled payloads contain no learner-specific state", () => {
+  const scheduled = {
+    ...discoveryPayload("trace", "concept", "Physics"),
+    level: "beginner",
+    preferred_formats: ["hands_on"],
+    audit_user_id: "user",
+    refresh_reason: "scheduled",
+  };
+  const agentPayload = discoveryAgentPayload(scheduled);
+  assert.equal(agentPayload.level, "mixed");
+  assert.deepEqual(agentPayload.preferred_formats, []);
+  assert.equal(agentPayload.audit_user_id, null);
+  assert.equal("refresh_reason" in agentPayload, false);
 });

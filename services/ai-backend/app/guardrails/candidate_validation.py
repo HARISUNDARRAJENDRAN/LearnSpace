@@ -1,3 +1,4 @@
+import re
 from urllib.parse import parse_qs, urlparse
 
 from app.contracts.discovery import ArxivCandidate, YoutubeCandidate
@@ -29,10 +30,19 @@ def youtube_id_from_url(value: str) -> str | None:
 
 def is_allowed_arxiv_url(value: str) -> bool:
     parsed = urlparse(value)
+    arxiv_id = parsed.path.removeprefix("/abs/")
     return (
         parsed.scheme == "https"
         and parsed.hostname == "arxiv.org"
-        and parsed.path.startswith("/abs/")
+        and not parsed.username
+        and not parsed.password
+        and not parsed.port
+        and not parsed.query
+        and not parsed.fragment
+        and re.fullmatch(
+            r"(?:[A-Za-z][A-Za-z0-9.-]{1,31}/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)",
+            arxiv_id,
+        ) is not None
     )
 
 

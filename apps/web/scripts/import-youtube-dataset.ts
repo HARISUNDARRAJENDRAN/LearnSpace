@@ -112,9 +112,12 @@ function resolveConcepts(row: NormalizedYoutubeRow, conceptMap: Map<string, stri
     const normalized = normaliseLabel(label);
     const direct = conceptMap.get(normalized);
     if (direct) ids.add(direct);
-    for (const mapped of explicitLabelMappings[normalized] ?? []) {
+    else for (const mapped of explicitLabelMappings[normalized] ?? []) {
       const id = conceptMap.get(normaliseLabel(mapped));
-      if (id) ids.add(id);
+      if (id) {
+        ids.add(id);
+        break;
+      }
     }
   }
   return [...ids];

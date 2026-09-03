@@ -1,5 +1,15 @@
-export const DISCOVERY_STRATEGY_VERSION = "cold-start-v1";
-export const DISCOVERY_FEATURE_VERSION = "discovery-v1";
+export const DISCOVERY_STRATEGY_VERSION = "cold-start-v3";
+export const DISCOVERY_FEATURE_VERSION = "discovery-v2";
+
+export const DISCOVERY_EXPLORATION_CONFIG = {
+  version: "exploration-v1",
+  emergingConceptMatchMultiplier: 0.85,
+  emergingAffinityMultiplier: 0.8,
+  adjacentConceptMatchMultiplier: 0.45,
+  adjacentAffinityMultiplier: 0.4,
+  adjacentBehaviorMultiplier: 0.25,
+  emergingThreshold: 0.1,
+} as const;
 
 export const VIDEO_RANKING_WEIGHTS = {
   conceptMatch: 0.3,
@@ -35,6 +45,9 @@ export type LearnerAffinity = {
 
 export type LearnerProfile = {
   conceptIds: string[];
+  coreConceptIds?: string[];
+  emergingConceptIds?: string[];
+  adjacentConceptIds?: string[];
   conceptNames: Map<string, string>;
   affinities: Map<string, LearnerAffinity>;
   persona: string | null;
@@ -116,24 +129,47 @@ function freshness(value: Date | null, now: Date, halfLifeDays: number): number 
   return age === null ? 0.5 : Math.exp(-age / halfLifeDays);
 }
 
+function coreConceptIds(profile: LearnerProfile): string[] {
+  return profile.coreConceptIds ?? profile.conceptIds;
+}
+
+function adjacentConceptIds(profile: LearnerProfile): string[] {
+  return profile.adjacentConceptIds ?? [];
+}
+
+function emergingConceptIds(profile: LearnerProfile): string[] {
+  return profile.emergingConceptIds ?? [];
+}
+
 function conceptMatch(resource: DiscoveryResource, profile: LearnerProfile): number {
   return resource.concepts.reduce((best, concept) => {
-    if (!profile.conceptIds.includes(concept.id)) {
-      return best;
+    const relevance = clamp(concept.relevance);
+    if (coreConceptIds(profile).includes(concept.id)) return Math.max(best, relevance);
+    if (emergingConceptIds(profile).includes(concept.id)) {
+      return Math.max(best, relevance * DISCOVERY_EXPLORATION_CONFIG.emergingConceptMatchMultiplier);
     }
-    return Math.max(best, clamp(concept.relevance));
+    if (adjacentConceptIds(profile).includes(concept.id)) {
+      return Math.max(best, relevance * DISCOVERY_EXPLORATION_CONFIG.adjacentConceptMatchMultiplier);
+    }
+    return best;
   }, 0);
 }
 
 function learnerAffinity(resource: DiscoveryResource, profile: LearnerProfile): number {
   const matches = resource.concepts
-    .filter((concept) => profile.conceptIds.includes(concept.id))
+    .filter((concept) => coreConceptIds(profile).includes(concept.id) || emergingConceptIds(profile).includes(concept.id) || adjacentConceptIds(profile).includes(concept.id))
     .map((concept) => {
       const affinity = profile.affinities.get(concept.id);
       if (!affinity) {
-        return 0.5;
+        return adjacentConceptIds(profile).includes(concept.id) ? 0.25 : 0.5;
       }
-      return clamp(((affinity.score + 1) / 2) * affinity.confidence);
+      const value = clamp(((affinity.score + 1) / 2) * affinity.confidence);
+      if (emergingConceptIds(profile).includes(concept.id)) {
+        return value * DISCOVERY_EXPLORATION_CONFIG.emergingAffinityMultiplier;
+      }
+      return adjacentConceptIds(profile).includes(concept.id)
+        ? value * DISCOVERY_EXPLORATION_CONFIG.adjacentAffinityMultiplier
+        : value;
     });
   return matches.length === 0 ? 0 : Math.max(...matches);
 }
@@ -212,6 +248,7 @@ function reasonCodes(resource: DiscoveryResource, components: {
 }): string[] {
   const reasons: string[] = [];
   if (components.conceptMatch >= 0.5) reasons.push("concept_match");
+  else if (components.conceptMatch >= 0.2) reasons.push("adjacent_concept");
   if (components.learnerAffinity >= 0.55) reasons.push("learner_affinity");
   if (components.levelFit >= 0.75) reasons.push("level_fit");
   if ((components.formatFit ?? 0) >= 0.75) reasons.push("format_fit");
@@ -321,7 +358,9 @@ function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now
       learnerAffinity: learnerAffinity(resource, profile),
       researchIntent: paperResearchIntent(profile),
       levelFit: levelFit(resource, profile),
-      recency: freshness(resource.publicationDate ?? resource.publishedAt, now, 540),
+      recency: metadataText(resource.metadata, "paperClass") === "foundational"
+        ? 0.75
+        : freshness(resource.publicationDate ?? resource.publishedAt, now, 540),
       sourcePrior: paperSourcePrior(resource),
       exploration: stableExploration(resource.id),
     };

@@ -1,0 +1,32 @@
+name: Discovery staging smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      DATABASE_WORKER_URL: ${{ secrets.STAGING_DATABASE_WORKER_URL }}
+      DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
+      DISCOVERY_AGENT_URL: ${{ secrets.STAGING_DISCOVERY_AGENT_URL }}
+      INTERNAL_SERVICE_TOKEN: ${{ secrets.STAGING_INTERNAL_SERVICE_TOKEN }}
+      DISCOVERY_SMOKE_TIMEOUT_MS: "360000"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm discovery:smoke

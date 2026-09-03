@@ -7,6 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ResourceKind = Literal["video", "paper"]
 LearningLevel = Literal["beginner", "intermediate", "advanced", "mixed"]
 PaperStrategy = Literal["current", "foundational"]
+LearningFormat = Literal[
+    "clear_explanations",
+    "deep_dive",
+    "hands_on",
+    "research_backed",
+    "quick_learning",
+    "conversational",
+    "mixed",
+]
 
 
 class DiscoveryRefreshRequest(BaseModel):
@@ -50,10 +59,23 @@ class YoutubeCandidate(BaseModel):
     matched_concept_ids: list[UUID] = Field(default_factory=lambda: list[UUID](), max_length=20)
     learning_format: str | None = None
     estimated_level: LearningLevel | None = None
+    has_implementation: bool | None = None
     evidence: list[str] = Field(default_factory=list, max_length=5)
     source: str = "exa"
     confidence: float = Field(ge=0, le=1)
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class YoutubeEnrichment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relevant: bool
+    concept_coverage: float = Field(ge=0, le=1)
+    estimated_level: LearningLevel
+    learning_format: LearningFormat
+    has_implementation: bool | None = None
+    evidence: list[str] = Field(min_length=1, max_length=5)
+    confidence: float = Field(ge=0, le=1)
 
 
 class ArxivCandidate(BaseModel):
