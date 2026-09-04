@@ -27,7 +27,8 @@ export function StartStudyButton({ resourceId, origin, recommendationRunId, labe
   return <button className={className} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }
 
-export function SaveResourceButton({ resourceId, saved, className = "" }: { resourceId: string; saved: boolean; className?: string }) {
+export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {
+  const router = useRouter();
   const [isSaved, setSaved] = useState(saved);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
@@ -38,13 +39,14 @@ export function SaveResourceButton({ resourceId, saved, className = "" }: { reso
       const response = await fetch("/api/v1/library", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId, action: isSaved ? "remove" : "save" }) });
       if (!response.ok) throw new Error("Library update failed");
       setSaved(!isSaved);
+      router.refresh();
     } catch {
       setError(true);
     } finally {
       setLoading(false);
     }
   }
-  return <button className={className} type="button" onClick={() => void toggle()} disabled={loading}>{loading ? "Saving…" : error ? "Try again" : isSaved ? "Saved" : "Save"}</button>;
+  return <button className={className} type="button" onClick={() => void toggle()} disabled={loading}>{loading ? "Saving…" : error ? "Try again" : isSaved ? savedLabel : "Save"}</button>;
 }
 
 export function StartCollectionButton({ collectionId, label }: { collectionId: string; label: string }) {

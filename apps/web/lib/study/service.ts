@@ -33,16 +33,22 @@ import type {
   StudyProgressRequest,
   StudyProgressResponse,
   StudyResourceProgress,
+  StudyResourceProvenance,
   StudyResourceReadiness,
   StudySessionResource,
   StudySessionView,
 } from "@learnspace/shared";
 import {
+  activateSessionResourceRequestSchema,
+  collectionIdSchema,
   progressStatusSchema,
   resourceRoleSchema,
   sessionModeSchema,
   startStudySessionRequestSchema,
   studyAnchorSchema,
+  studySessionIdSchema,
+  studyResourceProvenanceReasonSchema,
+  studyResourceProvenanceSchema,
   studyResourceReadinessSchema,
 } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNull, max, ne, notInArray, or, sql } from "drizzle-orm";
@@ -55,6 +61,8 @@ type SessionRow = typeof studySessions.$inferSelect;
 type ProgressRow = typeof userResourceProgress.$inferSelect;
 type BindingRow = typeof sessionResources.$inferSelect;
 type IdempotencyResult = { status: string; response_body: Record<string, unknown> | null };
+// ponytail: keep the initial material window bounded; add cursor/search reads with transcript ingestion.
+const initialStudyChunkLimit = 80;
 
 type ResourceRecord = {
   id: string;
@@ -66,6 +74,7 @@ type ResourceRecord = {
   status: typeof resources.$inferSelect.status;
   deletedAt: Date | null;
   currentVersionId: string | null;
+  qualityScore: number | null;
   versionId: string | null;
   versionStatus: string | null;
   video: { youtubeId: string; durationMs: number | null; channelTitle: string | null } | null;
@@ -132,6 +141,11 @@ function parsedRole(value: string): StudySessionResource["role"] {
   return parsed.success ? parsed.data : "related";
 }
 
+function parsedProvenanceReason(value: string | null): StudyResourceProvenance["reasonCode"] | null {
+  const parsed = studyResourceProvenanceReasonSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 function parsedProgressStatus(value: string | null | undefined): StudyResourceProgress["status"] {
   const parsed = progressStatusSchema.safeParse(value ?? "not_started");
   return parsed.success ? parsed.data : "not_started";
@@ -168,6 +182,7 @@ function resourceFromRow(row: {
     status: row.resource.status,
     deletedAt: row.resource.deletedAt,
     currentVersionId: row.resource.currentVersionId,
+    qualityScore: row.resource.qualityScore,
     versionId: row.versionId,
     versionStatus: row.versionStatus,
     video: row.video
@@ -216,11 +231,12 @@ async function loadResource(
 }
 
 async function lockSession(tx: Transaction, userId: string, sessionId: string): Promise<SessionRow> {
-  await tx.execute(sql`SELECT id FROM study.study_sessions WHERE id = ${sessionId} AND user_id = ${userId} FOR UPDATE`);
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
+  await tx.execute(sql`SELECT id FROM study.study_sessions WHERE id = ${normalizedSessionId} AND user_id = ${userId} FOR UPDATE`);
   const rows = await tx
     .select()
     .from(studySessions)
-    .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId)))
+    .where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId)))
     .limit(1);
   const session = rows[0];
   if (!session) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session is not available.", 404);
@@ -288,6 +304,19 @@ async function insertStudyEvent(
   return Boolean(rows[0]);
 }
 
+async function loadSessionBinding(tx: Transaction, sessionId: string, resourceId: string): Promise<BindingRow | null> {
+  const rows = await tx
+    .select()
+    .from(sessionResources)
+    .where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, resourceId)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+function activationEventKey(sessionId: string, resourceId: string, intent: "open" | "start", requestKey: string): string {
+  return `study:${intent}:${sessionId}:${resourceId}:${requestKey}`;
+}
+
 async function activateResourceInTransaction(
   tx: Transaction,
   userId: string,
@@ -295,10 +324,37 @@ async function activateResourceInTransaction(
   resource: ResourceRecord,
   role: StudySessionResource["role"] | undefined,
   anchor: StudyAnchor | undefined,
-  eventContext: { origin: string; correlationId: string; intent: "open" | "start" },
+  eventContext: { origin: string; correlationId: string; intent: "open" | "start"; requestKey: string },
 ): Promise<{ session: SessionRow; binding: BindingRow; progress: ProgressRow | null; resourceVersionId: string | null; eventInserted: boolean }> {
   const session = await lockSession(tx, userId, sessionId);
+  const type = studyType(resource.type);
+  if (!type) throw new AuthError("UNSUPPORTED_STUDY_RESOURCE", "This material does not have a study experience yet.", 422);
   const previousResourceId = session.activeResourceId;
+  const currentBinding = await loadSessionBinding(tx, sessionId, resource.id);
+  const sameRequestedAnchor = anchor === undefined || JSON.stringify(parsedAnchor(session.activeAnchor, type)) === JSON.stringify(anchor);
+  if (session.status === "active" && previousResourceId === resource.id && sameRequestedAnchor && currentBinding) {
+    let binding = currentBinding;
+    let activeSession = session;
+    if (!binding.resourceVersionId && resource.versionId && resource.versionStatus === "ready") {
+      const [updated] = await tx
+        .update(sessionResources)
+        .set({ resourceVersionId: resource.versionId, bindingStatus: "ready" })
+        .where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, resource.id)))
+        .returning();
+      if (updated) binding = updated;
+    }
+    if (binding.resourceVersionId && session.activeVersionId !== binding.resourceVersionId) {
+      const [updated] = await tx
+        .update(studySessions)
+        .set({ activeVersionId: binding.resourceVersionId, updatedAt: new Date() })
+        .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId)))
+        .returning();
+      if (updated) activeSession = updated;
+    }
+    return { session: activeSession, binding, progress: await loadProgress(tx, userId, resource.id), resourceVersionId: binding.resourceVersionId, eventInserted: false };
+  }
+  let previousType: StudyType | null = null;
+  let previousAnchor: StudyAnchor | null = null;
   if (previousResourceId && previousResourceId !== resource.id) {
     const previousRows = await tx
       .select({ resource: resources })
@@ -306,8 +362,8 @@ async function activateResourceInTransaction(
       .innerJoin(resources, eq(resources.id, sessionResources.resourceId))
       .where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, previousResourceId)))
       .limit(1);
-    const previousType = previousRows[0] ? studyType(previousRows[0].resource.type) : null;
-    const previousAnchor = previousType ? parsedAnchor(session.activeAnchor, previousType) : null;
+    previousType = previousRows[0] ? studyType(previousRows[0].resource.type) : null;
+    previousAnchor = previousType ? parsedAnchor(session.activeAnchor, previousType) : null;
     if (previousAnchor) {
       await tx
         .update(sessionResources)
@@ -326,31 +382,35 @@ async function activateResourceInTransaction(
     }
   }
 
-  const bindingRows = await tx
-    .select()
-    .from(sessionResources)
-    .where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, resource.id)))
-    .limit(1);
-  let binding = bindingRows[0];
+  let binding = currentBinding;
   if (!binding) {
     const positionRows = await tx
       .select({ value: max(sessionResources.position) })
       .from(sessionResources)
       .where(eq(sessionResources.studySessionId, sessionId));
+    const introduction = eventContext.origin === "related" && previousResourceId && previousResourceId !== resource.id && previousType && previousType !== type
+      ? {
+          introducedByResourceId: previousResourceId,
+          introducedFromAnchor: jsonAnchor(previousAnchor),
+          introducedReasonCode: previousType === "paper" ? "related_explanation" : "deeper_dive",
+        }
+      : {};
     const [created] = await tx
       .insert(sessionResources)
       .values({
         studySessionId: sessionId,
         resourceId: resource.id,
-        resourceVersionId: resource.versionId,
-        bindingStatus: resource.versionId ? "ready" : "preparing",
+        resourceVersionId: resource.versionId && resource.versionStatus === "ready" ? resource.versionId : null,
+        bindingStatus: resource.versionId && resource.versionStatus === "ready" ? "ready" : "preparing",
         role: role ?? "related",
         position: Number(positionRows[0]?.value ?? -1) + 1,
         addedBy: eventContext.origin === "related" ? "related" : "user",
+        ...introduction,
       })
       .returning();
+    if (!created) throw new Error("Study material could not be attached");
     binding = created;
-  } else if (!binding.resourceVersionId && resource.versionId) {
+  } else if (!binding.resourceVersionId && resource.versionId && resource.versionStatus === "ready") {
     const [updated] = await tx
       .update(sessionResources)
       .set({ resourceVersionId: resource.versionId, bindingStatus: "ready" })
@@ -360,9 +420,20 @@ async function activateResourceInTransaction(
   }
   if (!binding) throw new Error("Study material could not be attached");
 
+  if (!binding.introducedByResourceId && eventContext.origin === "related" && previousResourceId && previousResourceId !== resource.id && previousType && previousType !== type) {
+    const [updated] = await tx
+      .update(sessionResources)
+      .set({
+        introducedByResourceId: previousResourceId,
+        introducedFromAnchor: jsonAnchor(previousAnchor),
+        introducedReasonCode: previousType === "paper" ? "related_explanation" : "deeper_dive",
+      })
+      .where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, resource.id)))
+      .returning();
+    if (updated) binding = updated;
+  }
+
   const previousProgress = await loadProgress(tx, userId, resource.id);
-  const type = studyType(resource.type);
-  if (!type) throw new AuthError("UNSUPPORTED_STUDY_RESOURCE", "This material does not have a study experience yet.", 422);
   const targetAnchor = anchor ?? parsedAnchor(binding.lastAnchor, type) ?? parsedAnchor(previousProgress?.lastAnchor, type);
   const now = new Date();
   const [updatedSession] = await tx
@@ -418,7 +489,7 @@ async function activateResourceInTransaction(
     actorType: "user",
     source: "web",
     correlationId: eventContext.correlationId,
-    idempotencyKey: `study:opened:${sessionId}:${resource.id}:${eventContext.correlationId}`,
+    idempotencyKey: activationEventKey(sessionId, resource.id, eventContext.intent, eventContext.requestKey),
     occurredAt: now,
     payload: { origin: eventContext.origin, progressFraction: (previousProgress?.progressPct ?? 0) / 100 },
   });
@@ -483,8 +554,10 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
   if (claimed[0]?.status === "completed") {
     const response = responseFromIdempotency(claimed[0].response_body);
     if (response) return response;
+    throw new AuthError("IDEMPOTENCY_RESPONSE_UNAVAILABLE", "The previous study start response is unavailable.", 500);
   }
 
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.start.resource:${userId}:${normalized.resourceId}`}, 0))`);
   const resource = await loadResource(tx, userId, normalized.resourceId);
   const type = resource ? studyType(resource.type) : null;
   if (!resource || !type) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This material is not ready to study here.", 404);
@@ -526,9 +599,9 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
     resource,
     resumed ? undefined : "primary",
     undefined,
-    { origin: normalized.origin, correlationId, intent: "start" },
+    { origin: normalized.origin, correlationId, intent: "start", requestKey: normalized.idempotencyKey },
   );
-  if (normalized.origin === "home" || normalized.origin === "discover" || normalized.origin === "research") {
+  if (activated.eventInserted && (normalized.origin === "home" || normalized.origin === "discover" || normalized.origin === "research")) {
     await tx.insert(discoveryInteractions).values({
       userId,
       resourceId: normalized.resourceId,
@@ -569,12 +642,13 @@ export async function startOrResumeStudySession(userId: string, input: StartStud
 }
 
 export async function getStudySession(userId: string, sessionId: string): Promise<StudySessionView> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   return withUserTransaction(userId, async (tx) => {
-    await pinReadyVersions(tx, sessionId);
+    await pinReadyVersions(tx, normalizedSessionId);
     const sessions = await tx
       .select()
       .from(studySessions)
-      .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId)))
+      .where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId)))
       .limit(1);
     const session = sessions[0];
     if (!session) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session is not available.", 404);
@@ -592,7 +666,7 @@ export async function getStudySession(userId: string, sessionId: string): Promis
       .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
       .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
       .leftJoin(resourceVersions, eq(resourceVersions.id, sessionResources.resourceVersionId))
-      .where(eq(sessionResources.studySessionId, sessionId))
+      .where(eq(sessionResources.studySessionId, normalizedSessionId))
       .orderBy(asc(sessionResources.position));
     const joined: JoinedBinding[] = rows.flatMap((row) => studyType(row.resource.type) ? [{ binding: row.binding, resource: resourceFromRow(row) }] : []);
     const resourceIds = joined.map((row) => row.resource.id);
@@ -606,9 +680,9 @@ export async function getStudySession(userId: string, sessionId: string): Promis
       resourceIds.length > 0
         ? tx.select({ resourceId: paperAuthors.paperResourceId, name: authors.preferredName }).from(paperAuthors).innerJoin(authors, eq(authors.id, paperAuthors.authorId)).where(inArray(paperAuthors.paperResourceId, resourceIds)).orderBy(asc(paperAuthors.ordinal))
         : Promise.resolve([]),
-      tx.select().from(sessionCheckpoints).where(eq(sessionCheckpoints.studySessionId, sessionId)).orderBy(desc(sessionCheckpoints.createdAt)).limit(30),
+      tx.select().from(sessionCheckpoints).where(eq(sessionCheckpoints.studySessionId, normalizedSessionId)).orderBy(desc(sessionCheckpoints.createdAt)).limit(30),
       session.activeVersionId
-        ? tx.select({ id: resourceChunks.id, chunkType: resourceChunks.chunkType, content: resourceChunks.content, startMs: resourceChunks.startMs, endMs: resourceChunks.endMs, pageFrom: resourceChunks.pageFrom, pageTo: resourceChunks.pageTo, headingPath: resourceChunks.headingPath }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, session.activeVersionId)).orderBy(asc(resourceChunks.ordinal)).limit(300)
+        ? tx.select({ id: resourceChunks.id, chunkType: resourceChunks.chunkType, content: resourceChunks.content, startMs: resourceChunks.startMs, endMs: resourceChunks.endMs, pageFrom: resourceChunks.pageFrom, pageTo: resourceChunks.pageTo, headingPath: resourceChunks.headingPath }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, session.activeVersionId)).orderBy(asc(resourceChunks.ordinal)).limit(initialStudyChunkLimit)
         : Promise.resolve([]),
     ]);
     const progressByResource = new Map(progressRows.map((row) => [row.resourceId, row]));
@@ -624,6 +698,23 @@ export async function getStudySession(userId: string, sessionId: string): Promis
       const type = studyType(row.resource.type);
       if (!type) throw new Error("Unsupported session resource");
       const progress = progressByResource.get(row.resource.id);
+      const source = row.binding.introducedByResourceId
+        ? joined.find((candidate) => candidate.resource.id === row.binding.introducedByResourceId)
+        : null;
+      const reasonCode = parsedProvenanceReason(row.binding.introducedReasonCode);
+      const sourceType = source ? studyType(source.resource.type) : null;
+      const introducedFromCandidate = source && sourceType && reasonCode
+        ? {
+            resourceId: source.resource.id,
+            title: source.resource.title,
+            type: sourceType,
+            anchor: parsedAnchor(row.binding.introducedFromAnchor, sourceType),
+            reasonCode,
+          }
+        : null;
+      const introducedFrom = introducedFromCandidate
+        ? studyResourceProvenanceSchema.safeParse(introducedFromCandidate).data ?? null
+        : null;
       return {
         resourceId: row.resource.id,
         type,
@@ -631,6 +722,7 @@ export async function getStudySession(userId: string, sessionId: string): Promis
         description: row.resource.description,
         role: parsedRole(row.binding.role),
         position: row.binding.position,
+        introducedFrom,
         resourceVersionId: row.binding.resourceVersionId,
         readiness: resourceReadiness(row.resource, row.binding.resourceVersionId),
         lastAnchor: parsedAnchor(row.binding.lastAnchor ?? progress?.lastAnchor, type),
@@ -703,8 +795,13 @@ async function findRelatedResources(tx: Transaction, userId: string, current: Re
   for (const row of rows) {
     const source = currentByConcept.get(row.conceptId);
     if (!source) continue;
-    const score = source.relevance * Number(row.relevance) * (source.isPrimary ? 1.25 : 1) * (row.isPrimary ? 1.25 : 1);
     const resource = resourceFromRow(row);
+    const readiness = resourceReadiness(resource, resource.versionId);
+    if (readiness === "unavailable") continue;
+    const conceptScore = source.relevance * Number(row.relevance) * (source.isPrimary ? 1.25 : 1) * (row.isPrimary ? 1.25 : 1);
+    const qualityScore = Math.min(1, Math.max(0, resource.qualityScore ?? 0.5));
+    const readinessScore = readiness === "ready" ? 1 : 0.4;
+    const score = conceptScore * 0.75 + qualityScore * 0.15 + readinessScore * 0.1;
     const previous = scored.get(resource.id);
     scored.set(resource.id, { resource, score: (previous?.score ?? 0) + score });
   }
@@ -721,6 +818,7 @@ async function findRelatedResources(tx: Transaction, userId: string, current: Re
         description: resource.description,
         role: "related",
         position: 0,
+        introducedFrom: null,
         resourceVersionId: null,
         readiness: resourceReadiness(resource, null),
         lastAnchor: null,
@@ -735,12 +833,65 @@ async function findRelatedResources(tx: Transaction, userId: string, current: Re
 }
 
 export async function attachSessionResource(userId: string, sessionId: string, input: ActivateSessionResourceRequest): Promise<StartStudySessionResponse> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
+  const normalized = activateSessionResourceRequestSchema.parse(input);
+  const scope = `study.resource.activate:${userId}:${normalizedSessionId}`;
+  const hash = createHash("sha256").update(JSON.stringify({ resourceId: normalized.resourceId, role: normalized.role ?? null, anchor: normalized.anchor ?? null })).digest("hex");
   const response = await withUserTransaction(userId, async (tx) => {
-    const resource = await loadResource(tx, userId, input.resourceId);
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${scope}:${normalized.idempotencyKey}`}, 0))`);
+    const existingIdempotency = await tx
+      .select()
+      .from(idempotencyRecords)
+      .where(and(eq(idempotencyRecords.scope, scope), eq(idempotencyRecords.idempotencyKey, normalized.idempotencyKey)))
+      .limit(1);
+    const existingRecord = existingIdempotency[0];
+    if (existingRecord) {
+      if (existingRecord.requestSha256 !== hash) throw new AuthError("IDEMPOTENCY_KEY_REUSED", "Use a new idempotency key for a different material activation.", 409);
+      const replay = existingRecord.status === "completed" ? responseFromIdempotency(existingRecord.responseBody) : null;
+      if (replay) return replay;
+      throw new AuthError("STUDY_RESOURCE_ACTIVATION_IN_PROGRESS", "That material activation is still being processed.", 409);
+    }
+    const claimed = await tx.execute<IdempotencyResult>(sql`
+      SELECT status, response_body
+      FROM ops.claim_idempotency(
+        ${scope},
+        ${normalized.idempotencyKey},
+        ${hash}::char(64),
+        ${new Date(Date.now() + 86_400_000).toISOString()}
+      )
+    `);
+    if (claimed[0]?.status === "completed") {
+      const replay = responseFromIdempotency(claimed[0].response_body);
+      if (replay) return replay;
+      throw new AuthError("IDEMPOTENCY_RESPONSE_UNAVAILABLE", "The previous material activation response is unavailable.", 500);
+    }
+
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.resource.activate:${userId}:${normalizedSessionId}:${normalized.resourceId}`}, 0))`);
+    const resource = await loadResource(tx, userId, normalized.resourceId);
     const type = resource ? studyType(resource.type) : null;
     if (!resource || !type) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This material is not ready to study here.", 404);
-    const activated = await activateResourceInTransaction(tx, userId, sessionId, resource, input.role && input.role !== "primary" ? input.role : "related", input.anchor, { origin: "related", correlationId: randomUUID(), intent: "open" });
-    return responseFor(sessionId, resource, resourceReadiness(resource, activated.resourceVersionId), true);
+    const activated = await activateResourceInTransaction(
+      tx,
+      userId,
+      normalizedSessionId,
+      resource,
+      normalized.role && normalized.role !== "primary" ? normalized.role : "related",
+      normalized.anchor,
+      { origin: normalized.role === "related" ? "related" : "session", correlationId: randomUUID(), intent: "open", requestKey: normalized.idempotencyKey },
+    );
+    const response = responseFor(normalizedSessionId, resource, resourceReadiness(resource, activated.resourceVersionId), true);
+    await tx.execute<IdempotencyResult>(sql`
+      SELECT status, response_body
+      FROM ops.complete_idempotency(
+        ${scope},
+        ${normalized.idempotencyKey},
+        'completed',
+        200,
+        ${JSON.stringify(response)}::jsonb,
+        ${normalized.resourceId}
+      )
+    `);
+    return response;
   });
   await invalidateHomeFeedCache(userId);
   return response;
@@ -770,8 +921,9 @@ async function advanceCollectionEnrollment(tx: Transaction, userId: string, reso
 }
 
 export async function updateStudyProgress(userId: string, sessionId: string, input: StudyProgressRequest): Promise<StudyProgressResponse> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   return withUserTransaction(userId, async (tx) => {
-    const session = await lockSession(tx, userId, sessionId);
+    const session = await lockSession(tx, userId, normalizedSessionId);
     if (session.activeResourceId !== input.resourceId) throw new AuthError("INACTIVE_STUDY_RESOURCE", "Switch to this material before saving progress.", 409);
     const resource = await loadResource(tx, userId, input.resourceId, true);
     const type = resource ? studyType(resource.type) : null;
@@ -789,23 +941,24 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
     const eventInserted = stale ? false : await insertStudyEvent(tx, {
       schemaVersion: 1,
       userId,
-      studySessionId: sessionId,
+      studySessionId: normalizedSessionId,
       resourceId: input.resourceId,
       resourceVersionId: session.activeVersionId,
       eventType,
       actorType: "user",
       source: "web",
-      idempotencyKey: `study:${milestone ? "milestone" : "progress"}:${sessionId}:${input.resourceId}:${milestone ?? input.idempotencyKey}`,
+      idempotencyKey: `study:${milestone ? "milestone" : "progress"}:${normalizedSessionId}:${input.resourceId}:${milestone ?? input.idempotencyKey}`,
       occurredAt: now,
       payload: { progressPct, anchor: jsonAnchor(input.anchor), event: input.event },
     });
-    if (eventInserted) {
+    const shouldPersist = !stale && (eventInserted || input.event === "checkpoint");
+    if (shouldPersist) {
       await tx
         .insert(userResourceProgress)
         .values({
           userId,
           resourceId: input.resourceId,
-          lastSessionId: sessionId,
+          lastSessionId: normalizedSessionId,
           status: input.event === "complete" ? "completed" : "active",
           progressPct,
           lastAnchor: jsonAnchor(input.anchor),
@@ -817,7 +970,7 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
         .onConflictDoUpdate({
           target: [userResourceProgress.userId, userResourceProgress.resourceId],
           set: {
-            lastSessionId: sessionId,
+            lastSessionId: normalizedSessionId,
             status: input.event === "complete" ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active",
             progressPct,
             lastAnchor: jsonAnchor(input.anchor),
@@ -826,34 +979,36 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
             updatedAt: now,
           },
         });
-      await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, sessionId), eq(sessionResources.resourceId, input.resourceId)));
-      await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, sessionId));
-      if (milestone) await projectStudyBehavior(tx, userId, input.resourceId, input.event === "complete" ? "resource.completed" : "resource.progressed", progressPct / 100, randomUUID(), now);
-      if (input.event === "complete") await advanceCollectionEnrollment(tx, userId, input.resourceId);
+      await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
+      await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
+      if (eventInserted && milestone) await projectStudyBehavior(tx, userId, input.resourceId, input.event === "complete" ? "resource.completed" : "resource.progressed", progressPct / 100, randomUUID(), now);
+      if (eventInserted && input.event === "complete") await advanceCollectionEnrollment(tx, userId, input.resourceId);
     }
     const status = input.event === "complete" ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active";
-    return { sessionId, resourceId: input.resourceId, progressPct, status };
+    return { sessionId: normalizedSessionId, resourceId: input.resourceId, progressPct, status };
   });
 }
 
 export async function pauseSession(userId: string, sessionId: string, idempotencyKey: string, action: "pause" | "complete"): Promise<void> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   await withUserTransaction(userId, async (tx) => {
-    const session = await lockSession(tx, userId, sessionId);
+    const session = await lockSession(tx, userId, normalizedSessionId);
     const now = new Date();
-    const eventType = action === "pause" ? "focus.ended" : "focus.ended";
-    const eventInserted = await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: sessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType, actorType: "user", source: "web", idempotencyKey: `study:session:${sessionId}:${idempotencyKey}`, occurredAt: now, payload: { action } });
+    const eventType = action === "pause" ? "session.paused" : "session.completed";
+    const eventInserted = await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType, actorType: "user", source: "web", idempotencyKey: `study:session:${normalizedSessionId}:${idempotencyKey}`, occurredAt: now, payload: { action } });
     if (!eventInserted) return;
-    await tx.update(studySessions).set({ status: action === "pause" ? "paused" : "completed", endedAt: action === "pause" ? null : now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId)));
+    await tx.update(studySessions).set({ status: action === "pause" ? "paused" : "completed", endedAt: action === "pause" ? null : now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId)));
   });
 }
 
 export async function askStudyQuestion(userId: string, sessionId: string, question: string, anchor: StudyAnchor | undefined, idempotencyKey: string): Promise<{ status: "preparing"; message: string; chunkCount: number; citations: [] }> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   return withUserTransaction(userId, async (tx) => {
-    const session = await lockSession(tx, userId, sessionId);
+    const session = await lockSession(tx, userId, normalizedSessionId);
     const type = session.activeResourceId ? await loadResource(tx, userId, session.activeResourceId, true).then((resource) => resource ? studyType(resource.type) : null) : null;
     if (!type || (anchor && anchor.kind !== type)) throw new AuthError("INVALID_STUDY_ANCHOR", "That question context does not match this material.", 422);
     const chunkRows = session.activeVersionId ? await tx.select({ id: resourceChunks.id }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, session.activeVersionId)).limit(1) : [];
-    await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: sessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType: "question.asked", actorType: "user", source: "web", correlationId: randomUUID(), idempotencyKey: `study:question:${sessionId}:${idempotencyKey}`, occurredAt: new Date(), payload: { question, anchor: jsonAnchor(anchor) } });
+    await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType: "question.asked", actorType: "user", source: "web", correlationId: randomUUID(), idempotencyKey: `study:question:${normalizedSessionId}:${idempotencyKey}`, occurredAt: new Date(), payload: { question, anchor: jsonAnchor(anchor) } });
     return { status: "preparing", message: chunkRows.length === 0 ? "The lesson context is still preparing. Grounded questions will be available when source text is ready." : "The lesson context is ready, but grounded answers are not connected yet. No generic answer was generated.", chunkCount: chunkRows.length, citations: [] };
   });
 }
@@ -892,11 +1047,13 @@ export async function listStudySessions(userId: string): Promise<Array<{ id: str
 }
 
 export async function startCollection(userId: string, collectionId: string, idempotencyKey: string): Promise<StartStudySessionResponse> {
+  const normalizedCollectionId = collectionIdSchema.parse(collectionId);
   const response = await withUserTransaction(userId, async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.collection.start:${userId}:${normalizedCollectionId}`}, 0))`);
     const collectionRows = await tx
       .select()
       .from(collections)
-      .where(and(eq(collections.id, collectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))))
+      .where(and(eq(collections.id, normalizedCollectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))))
       .limit(1);
     if (!collectionRows[0]) throw new AuthError("COLLECTION_NOT_FOUND", "That collection is not available.", 404);
     const items = await tx
@@ -904,18 +1061,18 @@ export async function startCollection(userId: string, collectionId: string, idem
       .from(collectionItems)
       .innerJoin(collectionSections, eq(collectionSections.id, collectionItems.sectionId))
       .innerJoin(resources, eq(resources.id, collectionItems.resourceId))
-      .where(eq(collectionSections.collectionId, collectionId))
+      .where(eq(collectionSections.collectionId, normalizedCollectionId))
       .orderBy(asc(collectionSections.position), asc(collectionItems.position));
     if (items.length === 0) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
-    const enrollmentRows = await tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, collectionId))).limit(1);
+    const enrollmentRows = await tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, normalizedCollectionId))).limit(1);
     const currentId = enrollmentRows[0]?.currentItemId;
     const selected = items.find((row) => row.item.id === currentId) ?? items.find((row) => row.item.required) ?? items[0];
     if (!selected) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
     const type = studyType(selected.resource.type);
     if (!type) throw new AuthError("UNSUPPORTED_COLLECTION_ITEM", "This collection item does not have a study experience yet.", 422);
-    const input: StartStudySessionRequest = { resourceId: selected.resource.id, origin: "collection", collectionId, collectionItemId: selected.item.id, idempotencyKey: `collection:${idempotencyKey}` };
+    const input: StartStudySessionRequest = { resourceId: selected.resource.id, origin: "collection", collectionId: normalizedCollectionId, collectionItemId: selected.item.id, idempotencyKey: `collection:${idempotencyKey}` };
     const result = await startOrResumeInTransaction(tx, userId, input);
-    await tx.insert(collectionEnrollments).values({ userId, collectionId, currentItemId: selected.item.id, status: "active", progressPct: enrollmentRows[0]?.progressPct ?? 0 }).onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: selected.item.id, status: "active", updatedAt: new Date() } });
+    await tx.insert(collectionEnrollments).values({ userId, collectionId: normalizedCollectionId, currentItemId: selected.item.id, status: "active", progressPct: enrollmentRows[0]?.progressPct ?? 0 }).onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: selected.item.id, status: "active", updatedAt: new Date() } });
     return result;
   });
   await invalidateHomeFeedCache(userId);

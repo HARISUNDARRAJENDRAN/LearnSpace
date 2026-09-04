@@ -22,7 +22,7 @@ type YouTubePlayerOptions = {
   width: string;
   videoId: string;
   playerVars: { playsinline: 1; rel: 0; modestbranding: 1 };
-  events: { onReady: (event: YouTubeReadyEvent) => void; onStateChange: (event: YouTubeStateEvent) => void };
+  events: { onReady: (event: YouTubeReadyEvent) => void; onStateChange: (event: YouTubeStateEvent) => void; onError: () => void };
 };
 type YouTubeApi = { Player: new (element: HTMLElement, options: YouTubePlayerOptions) => YouTubePlayer };
 
@@ -48,6 +48,19 @@ function formatTime(valueMs: number): string {
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+function anchorLabel(anchor: StudyAnchor | null): string | null {
+  if (!anchor) return null;
+  if (anchor.kind === "video") return formatTime(anchor.positionMs);
+  if (anchor.sectionId) return anchor.page ? `${anchor.sectionId} · page ${anchor.page}` : anchor.sectionId;
+  return anchor.page ? `Page ${anchor.page}` : null;
+}
+
+function provenanceLabel(resource: StudySessionResource["introducedFrom"]): string | null {
+  if (!resource) return null;
+  const anchor = anchorLabel(resource.anchor);
+  return `Opened from: ${resource.title}${anchor ? ` · ${anchor}` : ""}`;
 }
 
 async function youtubeApi(): Promise<YouTubeApi> {
@@ -140,6 +153,11 @@ function YouTubeLessonPlayer({ sessionId, resource, onProgress }: { sessionId: s
               void syncRef.current("complete", true);
             }
           },
+          onError: () => {
+            setPlaying(false);
+            playerRef.current = null;
+            setPlayerState("unavailable");
+          },
         },
       });
       playerRef.current = player;
@@ -177,7 +195,7 @@ function YouTubeLessonPlayer({ sessionId, resource, onProgress }: { sessionId: s
     void syncRef.current("seek", true);
   }
 
-  return <div className="study-video-stack"><div className="study-player-frame"><div className="study-player" ref={containerRef} />{playerState === "loading" ? <div className="study-player-state">Loading the lesson player…</div> : null}{playerState === "unavailable" ? <div className="study-player-state"><strong>The video player is unavailable.</strong><span>The learning context is still preserved. Try again later or open the source below.</span>{resource.canonicalUrl ? <a href={resource.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube</a> : null}</div> : null}</div><section className="study-transcript" aria-labelledby="transcript-title"><div className="study-section-heading"><div><p className="study-label">Supporting material</p><h2 id="transcript-title">Transcript</h2></div>{transcript.length > 0 ? <label className="study-search"><span className="sr-only">Search transcript</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search transcript" /></label> : null}</div>{transcript.length === 0 ? <div className="study-preparing"><strong>Transcript is preparing</strong><span>No timestamped transcript chunks exist for this version yet. Nothing has been invented here.</span></div> : <div className="study-transcript-list">{filteredTranscript.map((chunk) => { const active = chunk.startMs !== null && currentMs >= chunk.startMs && (chunk.endMs === null || currentMs < chunk.endMs); return <button className={active ? "is-current" : ""} type="button" key={chunk.id} onClick={() => seek(chunk.startMs ?? 0)}><time>{formatTime(chunk.startMs ?? 0)}</time><span>{chunk.content}</span></button>; })}</div>}{filteredTranscript.length === 0 && transcript.length > 0 ? <p className="muted-copy">No transcript segment matches that search.</p> : null}</section></div>;
+  return <div className="study-video-stack"><div className="study-player-frame"><div className="study-player" ref={containerRef} />{playerState === "loading" ? <div className="study-player-state">Loading the lesson player…</div> : null}{playerState === "unavailable" ? <div className="study-player-state"><strong>This video can&apos;t be played inside LearnSpace.</strong><span>Your StudySession is still available. Open the source to continue on YouTube.</span>{resource.canonicalUrl ? <a href={resource.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube</a> : null}</div> : null}</div><section className="study-transcript" aria-labelledby="transcript-title"><div className="study-section-heading"><div><p className="study-label">Supporting material</p><h2 id="transcript-title">Transcript</h2></div>{transcript.length > 0 ? <label className="study-search"><span className="sr-only">Search transcript</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search transcript" /></label> : null}</div>{transcript.length === 0 ? <div className="study-preparing"><strong>Transcript is preparing</strong><span>No timestamped transcript chunks exist for this version yet. Nothing has been invented here.</span></div> : <div className="study-transcript-list">{filteredTranscript.map((chunk) => { const active = chunk.startMs !== null && currentMs >= chunk.startMs && (chunk.endMs === null || currentMs < chunk.endMs); return <button className={active ? "is-current" : ""} type="button" key={chunk.id} onClick={() => seek(chunk.startMs ?? 0)}><time>{formatTime(chunk.startMs ?? 0)}</time><span>{chunk.content}</span></button>; })}</div>}{filteredTranscript.length === 0 && transcript.length > 0 ? <p className="muted-copy">No transcript segment matches that search.</p> : null}</section></div>;
 }
 
 function PaperReader({ sessionId, resource, onProgress }: { sessionId: string; resource: StudySessionResource; onProgress: (value: number) => void }) {
@@ -225,7 +243,7 @@ function StudyRail({ session, kind, onRelated }: { session: StudySessionView; ki
   const [question, setQuestion] = useState("");
   const [message, setMessage] = useState("");
   const active = session.activeResource;
-  const relatedContext = session.resources.find((resource) => resource.resourceId !== active?.resourceId && resource.type !== kind);
+  const contextLabel = provenanceLabel(active?.introducedFrom ?? null) ?? `For this ${kind === "video" ? "lesson" : "paper"}`;
   async function ask(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!question.trim()) return;
@@ -240,7 +258,7 @@ function StudyRail({ session, kind, onRelated }: { session: StudySessionView; ki
       setMessage("The lesson context could not be checked right now.");
     }
   }
-  return <aside className="study-rail"><section className="study-rail-panel ask-panel"><p className="study-label">Contextual help</p><h2>{kind === "video" ? "Ask the lesson" : "Ask this paper"}</h2><p>{kind === "video" ? "Questions will be grounded in the transcript when it is ready." : "Questions will be grounded in this paper when parsed text is ready."}</p><form onSubmit={(event) => void ask(event)}><label className="sr-only" htmlFor="study-question">Ask a question</label><textarea id="study-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should I understand here?" rows={3} /><button type="submit">Ask</button></form>{message ? <p className="study-inline-message" aria-live="polite">{message}</p> : null}</section><section className="study-rail-panel"><p className="study-label">Keep your thread</p><h2>Notes</h2><p className="muted-copy">No notes in this session yet.</p></section><section className="study-rail-panel"><p className="study-label">Concept context</p><h2>Concepts</h2>{active && active.concepts.length > 0 ? <ul className="concept-list">{active.concepts.slice(0, 8).map((concept) => <li key={concept.id}><span>{concept.name}</span>{concept.isPrimary ? <small>Primary</small> : null}</li>)}</ul> : <p className="muted-copy">Concept mappings will appear when the catalogue has them.</p>}</section><section className="study-rail-panel related-panel"><p className="study-label">{kind === "video" ? "Go deeper" : "Need another explanation?"}</p><h2>{kind === "video" ? "A paper for the next pass" : "A visual explanation"}</h2>{session.related.length > 0 ? session.related.slice(0, 2).map((resource) => <button className="related-resource" type="button" key={resource.resourceId} onClick={() => onRelated(resource)}><span className="related-context">Related to {relatedContext?.title ?? active?.title ?? "this session"}</span><strong>{resource.title}</strong><small>{kind === "video" ? "Study paper" : "Watch explanation"}</small></button>) : <p className="muted-copy">Related catalogue material will appear as the library grows.</p>}</section></aside>;
+  return <aside className="study-rail"><section className="study-rail-panel ask-panel"><p className="study-label">Contextual help</p><h2>{kind === "video" ? "Ask the lesson" : "Ask this paper"}</h2><p>{kind === "video" ? "Questions will be grounded in the transcript when it is ready." : "Questions will be grounded in this paper when parsed text is ready."}</p><form onSubmit={(event) => void ask(event)}><label className="sr-only" htmlFor="study-question">Ask a question</label><textarea id="study-question" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should I understand here?" rows={3} /><button type="submit">Ask</button></form>{message ? <p className="study-inline-message" aria-live="polite">{message}</p> : null}</section><section className="study-rail-panel"><p className="study-label">Keep your thread</p><h2>Notes</h2><p className="muted-copy">No notes in this session yet.</p></section><section className="study-rail-panel"><p className="study-label">Concept context</p><h2>Concepts</h2>{active && active.concepts.length > 0 ? <ul className="concept-list">{active.concepts.slice(0, 8).map((concept) => <li key={concept.id}><span>{concept.name}</span>{concept.isPrimary ? <small>Primary</small> : null}</li>)}</ul> : <p className="muted-copy">Concept mappings will appear when the catalogue has them.</p>}</section><section className="study-rail-panel related-panel"><p className="study-label">{kind === "video" ? "Go deeper" : "Need another explanation?"}</p><h2>{kind === "video" ? "A paper for the next pass" : "A visual explanation"}</h2>{session.related.length > 0 ? session.related.slice(0, 2).map((resource) => <button className="related-resource" type="button" key={resource.resourceId} onClick={() => onRelated(resource)}><span className="related-context">{contextLabel}</span><strong>{resource.title}</strong><small>{kind === "video" ? "Study paper" : "Watch explanation"}</small></button>) : <p className="muted-copy">Related catalogue material will appear as the library grows.</p>}</section></aside>;
 }
 
 function PaperOutline({ resource }: { resource: StudySessionResource }) {
@@ -251,16 +269,19 @@ function PaperOutline({ resource }: { resource: StudySessionResource }) {
 export function StudyWorkspace({ session, kind }: { session: StudySessionView; kind: StudyKind }) {
   const active = session.activeResource;
   const [progress, setProgress] = useState(active?.progress.progressPct ?? 0);
+  const [navigationError, setNavigationError] = useState("");
   const router = useRouter();
   if (!active) return <main className="study-page"><div className="study-error-state"><h1>This study session has no active material.</h1><Link href="/app/sessions">Back to Sessions</Link></div></main>;
-  async function related(resource: StudySessionResource) {
+  const sourceResource = active.introducedFrom ? session.resources.find((resource) => resource.resourceId === active.introducedFrom?.resourceId) ?? null : null;
+  async function openMaterial(resourceId: string, role?: "related") {
+    setNavigationError("");
     try {
-      const response = await fetch(`/api/v1/study-sessions/${session.id}/resources`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId: resource.resourceId, role: "related", idempotencyKey: crypto.randomUUID() }) });
-      if (!response.ok) throw new Error("Related material failed");
+      const response = await fetch(`/api/v1/study-sessions/${session.id}/resources`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId, ...(role ? { role } : {}), idempotencyKey: crypto.randomUUID() }) });
+      if (!response.ok) throw new Error("Material navigation failed");
       router.push(routeFromResponse(await response.json()));
     } catch {
-      router.refresh();
+      setNavigationError("This material could not be opened right now.");
     }
   }
-  return <main className={`study-page study-page-${kind}`}><header className="study-topbar"><Link className="study-back-link" href="/app/sessions">Back to Sessions</Link><span className="study-session-state">{session.status} session</span><SessionMaterials session={session} /></header><section className="study-hero"><div><p className="study-label">{kind === "video" ? "Video Study" : "Paper Study"}</p><h1>{active.title}</h1><p className="study-hero-description">{active.description ?? "A focused LearnSpace learning context."}</p><div className="study-hero-meta">{kind === "video" && active.video?.channelTitle ? <span>{active.video.channelTitle}</span> : null}{kind === "paper" && active.paper?.authors.length ? <span>{active.paper.authors.slice(0, 3).join(", ")}</span> : null}{kind === "paper" && active.paper?.venue ? <span>{active.paper.venue}</span> : null}{kind === "paper" && active.paper?.publicationDate ? <span>{active.paper.publicationDate}</span> : null}<span>{active.readiness === "ready" ? "Learning material ready" : active.readiness === "preparing" ? "Learning context preparing" : "Material unavailable"}</span></div></div><div className="study-hero-progress"><span>{Math.round(progress)}%</span><div className="progress-track"><span style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} /></div><small>{active.progress.completedAt ? `Completed ${formatDate(active.progress.completedAt)}` : active.progress.lastAnchor ? "Resuming your place" : "Not started"}</small></div></section><div className={`study-layout study-layout-${kind}`}>{kind === "paper" ? <PaperOutline resource={active} /> : null}<section className="study-main-column">{kind === "video" ? <YouTubeLessonPlayer sessionId={session.id} resource={active} onProgress={setProgress} /> : <PaperReader sessionId={session.id} resource={active} onProgress={setProgress} />}</section><StudyRail session={session} kind={kind} onRelated={(resource) => void related(resource)} /></div></main>;
+  return <main className={`study-page study-page-${kind}`}><header className="study-topbar"><Link className="study-back-link" href="/app/sessions">Back to Sessions</Link><span className="study-session-state">{session.status} session</span><SessionMaterials session={session} /></header><section className="study-hero"><div><p className="study-label">{kind === "video" ? "Video Study" : "Paper Study"}</p><h1>{active.title}</h1><p className="study-hero-description">{active.description ?? "A focused LearnSpace learning context."}</p><div className="study-hero-meta">{kind === "video" && active.video?.channelTitle ? <span>{active.video.channelTitle}</span> : null}{kind === "paper" && active.paper?.authors.length ? <span>{active.paper.authors.slice(0, 3).join(", ")}</span> : null}{kind === "paper" && active.paper?.venue ? <span>{active.paper.venue}</span> : null}{kind === "paper" && active.paper?.publicationDate ? <span>{active.paper.publicationDate}</span> : null}<span>{active.readiness === "ready" ? "Learning material ready" : active.readiness === "preparing" ? "Learning context preparing" : "Material unavailable"}</span></div></div><div className="study-hero-progress"><span>{Math.round(progress)}%</span><div className="progress-track"><span style={{ width: `${Math.min(100, Math.max(0, progress))}%` }} /></div><small>{active.progress.completedAt ? `Completed ${formatDate(active.progress.completedAt)}` : active.progress.lastAnchor ? "Resuming your place" : "Not started"}</small></div></section>{active.introducedFrom ? <section className="study-return-context" aria-label="Study context"><div><p className="study-label">Context</p><p>{provenanceLabel(active.introducedFrom)}</p></div>{sourceResource ? <button type="button" onClick={() => void openMaterial(sourceResource.resourceId)}>← Return to {sourceResource.type === "paper" ? "paper" : "video"}</button> : <span className="muted-copy">The source material is no longer available.</span>}</section> : null}{navigationError ? <p className="study-navigation-error" role="alert">{navigationError}</p> : null}<div className={`study-layout study-layout-${kind}`}>{kind === "paper" ? <PaperOutline resource={active} /> : null}<section className="study-main-column">{kind === "video" ? <YouTubeLessonPlayer sessionId={session.id} resource={active} onProgress={setProgress} /> : <PaperReader sessionId={session.id} resource={active} onProgress={setProgress} />}</section><StudyRail session={session} kind={kind} onRelated={(resource) => void openMaterial(resource.resourceId, "related")} /></div></main>;
 }

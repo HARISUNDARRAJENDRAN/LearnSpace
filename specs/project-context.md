@@ -341,12 +341,12 @@ The user-facing study experience is resource-specific over that same aggregate:
 - Paper Study: `/app/study/paper/[sessionId]`
 - Future Practice/Code Study: a later focused presentation
 
-Changing the active resource changes the presentation and route, not the persistent learning context or session mode. Related videos and papers can therefore be attached and activated within the same session.
+Changing the active resource changes the presentation and route, not the persistent learning context or session mode. Related videos and papers can therefore be attached and activated within the same session. Each related binding preserves its introducing resource, optional source anchor, and reason so a learner can return directly to the source material without guessing from the other resources in the session.
 
 The application information architecture is:
 
 - Home / Discover: algorithmic personalized discovery
-- Library: saved resources, playlists/collections, and learning paths
+- Library: individual saved resources, playlists/collections, and learning paths; unsave removes the saved relationship without dismissing the resource from discovery
 - Sessions: current and historical learning contexts
 - Research: scholarly discovery, search, and organization
 - Video Study and Paper Study: the focused places where learning happens

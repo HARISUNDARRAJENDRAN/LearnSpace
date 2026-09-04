@@ -186,6 +186,21 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(page.locator(".study-hero-progress").getByText("25%", { exact: true })).toBeVisible();
 });
 
+test("E2E player error — unavailable embeds keep the StudySession usable", async ({ page }) => {
+  if (!videoSessionId) throw new Error("video Study session is required for player error E2E");
+  await page.route("https://www.youtube.com/iframe_api", (route) => route.fulfill({
+    status: 200,
+    contentType: "application/javascript",
+    body: "window.YT={Player:class{constructor(element,options){setTimeout(()=>options.events.onError({data:150}),0)}destroy(){}}};window.onYouTubeIframeAPIReady();",
+  }));
+  await login(page);
+  await page.goto(sessionRoute("video", videoSessionId));
+  await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open on YouTube" })).toBeVisible();
+  await page.goto("/app/sessions");
+  await expect(page.locator("article.session-row").filter({ hasText: "A deterministic Study video" })).toBeVisible();
+});
+
 test("E2E B — Research opens Paper Study and preserves save and reading position", async ({ page }) => {
   await login(page);
   await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
@@ -193,7 +208,16 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   await expect(paper).toBeVisible();
   await paper.getByRole("button", { name: "Save" }).click();
   await expect(paper.getByRole("button", { name: "Saved" })).toBeVisible();
-  await paper.getByRole("button", { name: "Study paper" }).click();
+  await page.goto("/app/library");
+  const savedRow = page.locator("article.saved-resource-row").filter({ hasText: "A deterministic Study paper" });
+  await expect(savedRow.getByRole("button", { name: "Unsave" })).toBeVisible();
+  await savedRow.getByRole("button", { name: "Unsave" }).click();
+  await expect(savedRow).not.toBeVisible();
+  await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
+  const paperAfterUnsave = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
+  await paperAfterUnsave.getByRole("button", { name: "Save" }).click();
+  await expect(paperAfterUnsave.getByRole("button", { name: "Saved" })).toBeVisible();
+  await paperAfterUnsave.getByRole("button", { name: "Study paper" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
   await expect(page.getByText("Paper source unavailable")).toBeVisible();
   const pageInput = page.getByRole("spinbutton");
@@ -211,21 +235,21 @@ test("E2E C — related paper and video switch presentation while retaining one 
   await expect(relatedPaper).toBeVisible();
   await relatedPaper.click();
   await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
-  await expect(page.getByText("Related to A deterministic Study video")).toBeVisible();
+  await expect(page.getByLabel("Study context").getByText("Opened from: A deterministic Study video")).toBeVisible();
 
   const paperPage = page.getByRole("spinbutton");
   await paperPage.fill("4");
   await page.getByRole("button", { name: "Save position" }).click();
   await expect(page.getByText("Reading position saved")).toBeVisible();
 
-  await page.getByRole("button", { name: "Session materials" }).click();
-  const materials = page.getByRole("dialog", { name: "Session materials" });
-  await materials.getByRole("button").filter({ hasText: "A deterministic Study video" }).click();
+  await page.getByRole("button", { name: /Return to video/ }).click();
   await expect(page).toHaveURL(sessionRoute("video", videoSessionId));
   await page.getByRole("button", { name: "Session materials" }).click();
   await page.getByRole("dialog", { name: "Session materials" }).getByRole("button").filter({ hasText: "A deterministic Study paper" }).click();
   await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
   await expect(page.getByRole("spinbutton")).toHaveValue("4");
+  await page.goto(sessionRoute("video", videoSessionId));
+  await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
 });
 
 test("E2E D — Library opens a mixed collection and launches its current item", async ({ page }) => {

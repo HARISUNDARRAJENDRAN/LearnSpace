@@ -37,17 +37,21 @@ function SessionRow({ session }: { session: SessionSummary }) {
 }
 
 export function LibraryPage({ data }: { data: LibraryPageData }) {
-  const playlists = data.collections.filter((collection) => collection.kind === "manual");
-  const curated = data.collections.filter((collection) => collection.kind === "curated" || collection.kind === "learning_path");
-  const generated = data.collections.filter((collection) => collection.kind === "generated");
+  const playlists = data.collections.filter((collection) => collection.ownership === "user" && collection.kind === "manual");
+  const ownedPaths = data.collections.filter((collection) => collection.ownership === "user" && collection.kind === "learning_path");
+  const curated = data.collections.filter((collection) => collection.ownership === "learnspace" && collection.source === "learnspace");
+  const generated = data.collections.filter((collection) => collection.ownership === "user" && collection.source === "generated");
+  const otherPublic = data.collections.filter((collection) => collection.ownership === "other");
   return (
     <main className="product-page library-page">
       <div className="product-page-intro"><p className="application-eyebrow">Your chosen material</p><h1>Library</h1><p>Saved resources and collections with a sequence worth returning to.</p></div>
       <LibraryLane title="Continue a collection" description="Pick up where an ordered path left off." collections={data.continueCollections} />
       <LibraryLane title="Your playlists" description="The resources you intentionally grouped." collections={playlists} empty="Create a playlist when you have a sequence in mind." />
+      {ownedPaths.length > 0 ? <LibraryLane title="Your learning paths" description="Structured sequences you created." collections={ownedPaths} /> : null}
       <SavedLane resources={data.savedResources} />
       <LibraryLane title="LearnSpace collections" description="Editorial collections and structured learning paths." collections={curated} empty="Curated collections will appear here as they are published." />
       {generated.length > 0 ? <LibraryLane title="Made for you" description="Generated from real learning context." collections={generated} /> : null}
+      {otherPublic.length > 0 ? <LibraryLane title="Other public collections" description="Public collections from other learners and sources." collections={otherPublic} /> : null}
     </main>
   );
 }
@@ -58,7 +62,8 @@ function LibraryLane({ title, description, collections, empty = "Nothing here ye
 
 function CollectionCard({ collection }: { collection: LibraryCollectionSummary }) {
   const progress = collection.progressPct === null ? null : Math.round(collection.progressPct);
-  return <article className="collection-card"><div className="collection-card-top"><span className="collection-kind">{collection.kind.replace("_", " ")}</span><span>{collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}</span></div><h3><Link href={`/app/library/collections/${collection.id}`}>{collection.title}</Link></h3>{collection.description ? <p>{collection.description}</p> : null}{progress !== null ? <div className="collection-progress"><span>{progress}% complete</span><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div> : <Link className="product-secondary-link" href={`/app/library/collections/${collection.id}`}>View collection <span aria-hidden="true">→</span></Link>}</article>;
+  const sourceLabel = collection.source === "generated" ? "Made for you" : collection.source === "learnspace" ? "LearnSpace" : collection.source === "public" ? "Public" : collection.kind === "manual" ? "Your playlist" : collection.kind.replace("_", " ");
+  return <article className="collection-card"><div className="collection-card-top"><span className="collection-kind">{sourceLabel}</span><span>{collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}</span></div><h3><Link href={`/app/library/collections/${collection.id}`}>{collection.title}</Link></h3>{collection.description ? <p>{collection.description}</p> : null}{progress !== null ? <div className="collection-progress"><span>{progress}% complete</span><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div> : <Link className="product-secondary-link" href={`/app/library/collections/${collection.id}`}>View collection <span aria-hidden="true">→</span></Link>}</article>;
 }
 
 function SavedLane({ resources: saved }: { resources: SavedLibraryResource[] }) {
@@ -67,7 +72,7 @@ function SavedLane({ resources: saved }: { resources: SavedLibraryResource[] }) 
 
 function SavedResourceRow({ resource }: { resource: SavedLibraryResource }) {
   const canStudy = resource.type === "video" || resource.type === "paper" || resource.type === "pdf";
-  return <article className="saved-resource-row"><div><div className="product-meta"><span>{typeLabel(resource.type)}</span><span>{resource.readiness}</span></div><h3>{resource.title}</h3>{resource.description ? <p>{resource.description}</p> : null}</div><div className="saved-resource-action">{canStudy ? <StartStudyButton resourceId={resource.resourceId} origin="library" label={resource.progressPct > 0 ? "Continue" : resource.type === "video" ? "Start learning" : "Study paper"} /> : <span>Saved for later</span>}</div></article>;
+  return <article className="saved-resource-row"><div><div className="product-meta"><span>{typeLabel(resource.type)}</span><span>{resource.readiness}</span></div><h3>{resource.title}</h3>{resource.description ? <p>{resource.description}</p> : null}</div><div className="saved-resource-action">{canStudy ? <><StartStudyButton resourceId={resource.resourceId} origin="library" label={resource.progressPct > 0 ? "Continue" : resource.type === "video" ? "Start learning" : "Study paper"} /><SaveResourceButton resourceId={resource.resourceId} saved savedLabel="Unsave" /></> : <SaveResourceButton resourceId={resource.resourceId} saved savedLabel="Unsave" />}</div></article>;
 }
 
 export function ResearchPage({ data }: { data: ResearchPageData }) {
@@ -85,7 +90,8 @@ export function ResearchPage({ data }: { data: ResearchPageData }) {
 
 export function CollectionDetailPage({ collection }: { collection: LibraryCollectionDetail }) {
   const hasProgress = collection.progressPct !== null;
-  return <main className="product-page collection-detail-page"><Link className="back-link" href="/app/library">← Library</Link><div className="collection-detail-intro"><p className="application-eyebrow">{collection.kind.replace("_", " ")} collection</p><h1>{collection.title}</h1>{collection.description ? <p>{collection.description}</p> : null}<div className="collection-detail-meta"><span>{collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}</span>{hasProgress ? <span>{Math.round(collection.progressPct ?? 0)}% complete</span> : <span>Not started</span>}</div><StartCollectionButton collectionId={collection.id} label={hasProgress ? "Continue collection" : "Start collection"} /></div><div className="collection-detail-sections">{collection.sections.map((section) => <section className="collection-detail-section" key={section.id}><div><p className="application-eyebrow">Section</p><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</div><ol>{section.items.map((item) => <li className={item.id === collection.currentItemId ? "is-current" : ""} key={item.id}><span className="collection-item-index">{item.position + 1}</span><span><strong>{item.title}</strong><small>{typeLabel(item.type)}{item.note ? ` · ${item.note}` : ""}</small></span><span className="collection-item-progress">{Math.round(item.progressPct)}%</span></li>)}</ol></section>)}</div></main>;
+  const sourceLabel = collection.source === "generated" ? "Made for you" : collection.source === "learnspace" ? "LearnSpace" : collection.source === "public" ? "Public" : collection.kind.replace("_", " ");
+  return <main className="product-page collection-detail-page"><Link className="back-link" href="/app/library">← Library</Link><div className="collection-detail-intro"><p className="application-eyebrow">{sourceLabel} collection</p><h1>{collection.title}</h1>{collection.description ? <p>{collection.description}</p> : null}<div className="collection-detail-meta"><span>{collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}</span>{hasProgress ? <span>{Math.round(collection.progressPct ?? 0)}% complete</span> : <span>Not started</span>}</div><StartCollectionButton collectionId={collection.id} label={hasProgress ? "Continue collection" : "Start collection"} /></div><div className="collection-detail-sections">{collection.sections.map((section) => <section className="collection-detail-section" key={section.id}><div><p className="application-eyebrow">Section</p><h2>{section.title}</h2>{section.description ? <p>{section.description}</p> : null}</div><ol>{section.items.map((item) => <li className={item.id === collection.currentItemId ? "is-current" : ""} key={item.id}><span className="collection-item-index">{item.position + 1}</span><span><strong>{item.title}</strong><small>{typeLabel(item.type)}{item.note ? ` · ${item.note}` : ""}</small></span><span className="collection-item-progress">{Math.round(item.progressPct)}%</span></li>)}</ol></section>)}</div></main>;
 }
 
 function ResearchLane({ title, papers, empty }: { title: string; papers: ResearchPaperSummary[]; empty: string }) {

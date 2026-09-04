@@ -1165,6 +1165,8 @@ Rules:
 resource.opened
 resource.progressed
 resource.completed
+resource.saved
+resource.unsaved
 video.played
 video.paused
 video.seeked
@@ -1184,6 +1186,9 @@ hint.requested
 hint.presented
 research.started
 research.completed
+session.started
+session.paused
+session.completed
 tutor.started
 tutor.message
 concept.encountered
@@ -4343,3 +4348,7 @@ This architecture converts the current video-oriented schema into a production-g
 `catalog.library_items` remains the individual saved-resource relationship. `catalog.collections`, sections, items, and enrollments provide intentional ordering for playlists, curated collections, learning paths, and real generated collections; collections may mix resource types. Research is scholarly discovery/search/organization, not the paper reader.
 
 The v1 service boundary is HTTP/API → application service/domain rules → Drizzle transaction → PostgreSQL. Study events are immutable evidence and feed the existing Discovery affinity projection at meaningful progress milestones; play, pause, and seek are not strong learning signals. Resource-grounded transcript and question answers remain unavailable until real chunks and retrieval exist.
+
+`study.session_resources.resource_version_id` is nullable while `binding_status` is `preparing`; it becomes pinned only to a real ready resource version. Related bindings additionally preserve `introduced_by_resource_id`, an optional typed source anchor, and a small reason code. This relational provenance supports same-session Paper ↔ Video switching and direct return to the source material without inferring relationships from resource type or position.
+
+Library save and Discovery dismissal are separate semantics: unsave removes the `library_items` row, while dismissal retains a Discovery suppression record. Initial Study reads bound the active chunk window; transcript/page pagination and search remain a later ingestion milestone.

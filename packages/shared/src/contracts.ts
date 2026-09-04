@@ -19,10 +19,15 @@ export const activityActorTypeSchema = z.enum(ACTOR_TYPES);
 export const activitySourceSchema = z.enum(EVENT_SOURCES);
 export const resourceRoleSchema = z.enum(RESOURCE_ROLES);
 export const collectionKindSchema = z.enum(COLLECTION_KINDS);
+export const collectionOwnershipSchema = z.enum(["user", "learnspace", "other"]);
+export const collectionSourceSchema = z.enum(["user", "learnspace", "generated", "public"]);
 export const progressStatusSchema = z.enum(PROGRESS_STATUSES);
 
 export const studyOriginSchema = z.enum(["home", "discover", "research", "library", "collection", "session", "related"]);
+export const studySessionIdSchema = z.string().uuid();
+export const collectionIdSchema = z.string().uuid();
 export const studyResourceReadinessSchema = z.enum(["preparing", "ready", "unavailable"]);
+export const studyResourceProvenanceReasonSchema = z.enum(["related_explanation", "deeper_dive"]);
 export const studyAnchorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("video"), positionMs: z.number().int().min(0).max(86_400_000) }).strict(),
   z.object({
@@ -31,6 +36,13 @@ export const studyAnchorSchema = z.discriminatedUnion("kind", [
     sectionId: z.string().min(1).max(200).optional(),
   }).strict().refine((value) => value.page !== undefined || value.sectionId !== undefined, "A paper anchor needs a page or section."),
 ]);
+export const studyResourceProvenanceSchema = z.object({
+  resourceId: z.string().uuid(),
+  title: z.string().min(1),
+  type: z.enum(["video", "paper"]),
+  anchor: studyAnchorSchema.nullable(),
+  reasonCode: studyResourceProvenanceReasonSchema,
+}).strict().refine((value) => value.anchor === null || value.anchor.kind === value.type, "The provenance anchor must match its resource.");
 
 export const startStudySessionRequestSchema = z.object({
   resourceId: z.string().uuid(),
@@ -79,7 +91,9 @@ export const startCollectionRequestSchema = z.object({
 }).strict();
 
 export type StudyOrigin = z.infer<typeof studyOriginSchema>;
+export type StudySessionId = z.infer<typeof studySessionIdSchema>;
 export type StudyResourceReadiness = z.infer<typeof studyResourceReadinessSchema>;
+export type StudyResourceProvenance = z.infer<typeof studyResourceProvenanceSchema>;
 export type StudyAnchor = z.infer<typeof studyAnchorSchema>;
 export type StartStudySessionRequest = z.infer<typeof startStudySessionRequestSchema>;
 export type ActivateSessionResourceRequest = z.infer<typeof activateSessionResourceRequestSchema>;
@@ -105,6 +119,7 @@ export type StudySessionResource = {
   description: string | null;
   role: z.infer<typeof resourceRoleSchema>;
   position: number;
+  introducedFrom: StudyResourceProvenance | null;
   resourceVersionId: string | null;
   readiness: StudyResourceReadiness;
   lastAnchor: StudyAnchor | null;
@@ -168,6 +183,8 @@ export type LibraryCollectionSummary = {
   title: string;
   description: string | null;
   kind: z.infer<typeof collectionKindSchema>;
+  ownership: z.infer<typeof collectionOwnershipSchema>;
+  source: z.infer<typeof collectionSourceSchema>;
   visibility: "private" | "unlisted" | "public";
   itemCount: number;
   progressPct: number | null;

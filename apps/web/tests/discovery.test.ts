@@ -102,6 +102,18 @@ test("paper ranking stays separate from video engagement features", () => {
   assert.equal(ranked.videos[0]?.resource.type, "video");
 });
 
+test("paper recommendations respond to the shared learner affinity projection", () => {
+  const papers = [resource("paper-a", "paper", [conceptId]), resource("paper-b", "paper", [behavioralConceptId])];
+  const cold = rankDiscoveryResources(papers, profile({ conceptIds: [] }), now);
+  const warm = rankDiscoveryResources(papers, profile({
+    conceptIds: [],
+    coreConceptIds: [conceptId],
+    affinities: new Map([[conceptId, { conceptId, score: 0.95, confidence: 0.95, featureVersion: "discovery-behavior-v1" }]]),
+  }), now);
+  assert.equal(cold.papers[0]?.resource.id, "paper-b");
+  assert.equal(warm.papers[0]?.resource.id, "paper-a");
+});
+
 test("current and foundational papers remain distinct ranking inputs", () => {
   const ranked = rankDiscoveryResources(
     [

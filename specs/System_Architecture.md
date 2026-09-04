@@ -2908,15 +2908,15 @@ YouTube learning, paper research, Monaco practice, voice tutoring, Deep Research
 
 ## 40. v1 Application Information Architecture
 
-The canonical domain aggregate remains `StudySession`; the user-facing study workspace is selected by the active resource type. Video Study and Paper Study are purpose-built presentations over the same session, with future Practice/Code Study following the same pattern. Switching a related resource keeps the session ID, attaches the resource through `session_resources`, preserves a checkpoint, and changes only the route/presentation.
+The canonical domain aggregate remains `StudySession`; the user-facing study workspace is selected by the active resource type. Video Study and Paper Study are purpose-built presentations over the same session, with future Practice/Code Study following the same pattern. Switching a related resource keeps the session ID, attaches the resource through `session_resources`, preserves a checkpoint, and changes only the route/presentation. Related bindings record the source resource, optional source anchor, and reason code, which powers an explicit Return to source action even when a session contains many materials.
 
 The initial application surfaces have distinct responsibilities:
 
 - Home / Discover answers “What might I learn next?” through personalized discovery.
-- Library answers “What have I saved, organized, or chosen to follow?” through `library_items` and collections/playlists/learning paths.
+- Library answers “What have I saved, organized, or chosen to follow?” through `library_items` and collections/playlists/learning paths. An unsave removes only the saved-resource relationship; Discovery dismissal remains a separate suppression state.
 - Sessions answers “What am I actually learning?” through active, paused, and completed `StudySession` records.
 - Research provides scholarly discovery, catalogue search, and organization; paper reading belongs in Paper Study.
 - Video Study and Paper Study are the focused learning surfaces, not one all-media workspace.
 - Second Brain remains a later learner-state and knowledge surface.
 
-Collections are sequencing/organization primitives and may mix videos, papers, and future practice items. They do not create a parallel learning-state model. A catalogue resource without an ingested immutable version may have a preparing session binding; the binding is pinned to a real version transactionally once ingestion is ready. YouTube remains a resource provider, not the architecture.
+Collections are sequencing/organization primitives and may mix videos, papers, and future practice items. They do not create a parallel learning-state model. Library read models distinguish learner-owned, LearnSpace/editorial, generated-for-learner, and other public collections rather than inferring ownership from `kind`. A catalogue resource without an ingested immutable version may have a preparing session binding; the binding is pinned to a real version transactionally once ingestion is ready. YouTube remains a resource provider, not the architecture.

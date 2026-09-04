@@ -72,16 +72,26 @@ export const sessionResources = studySchema.table(
     state: jsonb("state").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
     lastOpenedAt: timestamp("last_opened_at", { withTimezone: true }),
+    introducedByResourceId: uuid("introduced_by_resource_id"),
+    introducedFromAnchor: jsonb("introduced_from_anchor").$type<Record<string, unknown>>(),
+    introducedReasonCode: text("introduced_reason_code"),
   },
   (table) => [
     primaryKey({ columns: [table.studySessionId, table.resourceId] }),
     uniqueIndex("session_resources_session_position_uq").on(table.studySessionId, table.position),
     check("session_resources_binding_status_chk", sql`${table.bindingStatus} IN ('preparing', 'ready')`),
     check("session_resources_binding_provenance_chk", sql`(${table.resourceVersionId} IS NULL AND ${table.bindingStatus} = 'preparing') OR (${table.resourceVersionId} IS NOT NULL AND ${table.bindingStatus} = 'ready')`),
+    check("session_resources_introduction_pair_chk", sql`(${table.introducedByResourceId} IS NULL) = (${table.introducedReasonCode} IS NULL)`),
+    check("session_resources_introduction_reason_chk", sql`${table.introducedReasonCode} IS NULL OR ${table.introducedReasonCode} IN ('related_explanation', 'deeper_dive')`),
     foreignKey({
       name: "session_resources_resource_version_fkey",
       columns: [table.resourceId, table.resourceVersionId],
       foreignColumns: [resourceVersions.resourceId, resourceVersions.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "session_resources_introduced_by_resource_fkey",
+      columns: [table.studySessionId, table.introducedByResourceId],
+      foreignColumns: [table.studySessionId, table.resourceId],
     }).onDelete("restrict"),
   ],
 );

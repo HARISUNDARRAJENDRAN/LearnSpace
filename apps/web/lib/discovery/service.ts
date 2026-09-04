@@ -358,6 +358,15 @@ async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserI
   });
 }
 
+export async function rankPaperResourcesForUser(tx: Transaction, userId: string, resourceIds: string[]): Promise<string[]> {
+  if (resourceIds.length === 0) return [];
+  const profileLoad = await loadProfile(tx, userId);
+  const dismissed = new Set(profileLoad.dismissedResourceIds);
+  return rankDiscoveryResources(await loadResources(tx, resourceIds, userId), profileLoad.profile, new Date()).papers
+    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id))
+    .map((candidate) => candidate.resource.id);
+}
+
 function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
   if (candidate.reasonCodes.includes("continue_learning")) return "Continue where you left off";
   const coreConcept = candidate.resource.concepts.find((concept) => (profile.coreConceptIds ?? profile.conceptIds).includes(concept.id));
@@ -626,9 +635,9 @@ export async function recordImpression(userId: string, input: DiscoveryImpressio
 
 const activityEventByAction: Record<DiscoveryAction, string> = {
   open: "resource.opened",
-  save: "artifact.saved",
+  save: "resource.saved",
   dismiss: "discovery.dismissed",
-  start_session: "focus.started",
+  start_session: "session.started",
   complete: "resource.completed",
 };
 

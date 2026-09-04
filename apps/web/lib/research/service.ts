@@ -3,6 +3,7 @@ import { authors, libraryItems, paperAuthors, paperDetails, resourceConcepts, re
 import type { ResearchPaperSummary } from "@learnspace/shared";
 import { studyResourceReadinessSchema } from "@learnspace/shared";
 import { and, asc, desc, eq, ilike, inArray, isNull, or } from "drizzle-orm";
+import { rankPaperResourcesForUser } from "../discovery/service";
 
 export type ResearchPageData = {
   query: string;
@@ -74,10 +75,15 @@ export async function getResearchPage(userId: string, query = ""): Promise<Resea
       const paperClass = row ? metadataValue(row.paper.metadata, "paperClass") : null;
       return paperClass === "foundational";
     });
+    const recommendedIds = normalizedQuery.length === 0 ? await rankPaperResourcesForUser(tx, userId, ids) : [];
+    const recommendedIdSet = new Set(recommendedIds);
+    const recommended = normalizedQuery.length === 0
+      ? [...recommendedIds.map((id) => summaries.find((paper) => paper.resourceId === id)).filter((paper): paper is ResearchPaperSummary => Boolean(paper)), ...summaries.filter((paper) => !recommendedIdSet.has(paper.resourceId))].slice(0, 12)
+      : summaries.slice(0, 12);
     return {
       query: normalizedQuery,
-      recommended: summaries.slice(0, 12),
-      foundational: byFoundational.length > 0 ? byFoundational.slice(0, 12) : summaries.filter((paper) => !byRecent.slice(0, 12).some((recent) => recent.resourceId === paper.resourceId)).slice(0, 12),
+      recommended,
+      foundational: byFoundational.slice(0, 12),
       recent: byRecent.slice(0, 12),
       saved: summaries.filter((paper) => paper.saved).slice(0, 12),
     };

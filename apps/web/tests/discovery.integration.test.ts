@@ -13,10 +13,11 @@ test(
   "discovery persists deterministic runs and idempotent telemetry",
   { skip: databaseAvailable ? false : "DATABASE_URL, DATABASE_AUTH_URL, and DATABASE_MIGRATOR_URL are required" },
   async () => {
-    const [{ createEmailUser }, { completeOnboarding }, { getHomeFeed, recordImpression, recordInteraction }, { closeDb }] = await Promise.all([
+    const [{ createEmailUser }, { completeOnboarding }, { getHomeFeed, recordImpression, recordInteraction }, { saveLibraryItem }, { closeDb }] = await Promise.all([
       import("../lib/auth/repository"),
       import("../lib/onboarding/service"),
       import("../lib/discovery/service"),
+      import("../lib/library/service"),
       import("@learnspace/db"),
     ]);
     const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
@@ -155,6 +156,27 @@ test(
         SELECT count(*)::text AS count FROM discovery.discovery_interactions WHERE user_id = ${user.id} AND correlation_id = ${correlationId}
       `;
       assert.equal(Number(interactions[0]?.count), 1);
+      const savedEvents = await migrator<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM activity.activity_events
+        WHERE user_id = ${user.id} AND resource_id = ${resourceId} AND event_type = 'resource.saved'
+      `;
+      assert.equal(savedEvents[0]?.count, 1);
+      const savedResource = await migrator<{ status: string }[]>`
+        SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}
+      `;
+      assert.equal(savedResource[0]?.status, "saved");
+      await saveLibraryItem(user.id, { resourceId: resourceId as string, action: "remove" });
+      const unsavedResource = await migrator<{ status: string }[]>`
+        SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}
+      `;
+      assert.equal(unsavedResource.length, 0);
+      const unsavedEvents = await migrator<{ count: number }[]>`
+        SELECT count(*)::int AS count FROM activity.activity_events
+        WHERE user_id = ${user.id} AND resource_id = ${resourceId} AND event_type = 'resource.unsaved'
+      `;
+      assert.equal(unsavedEvents[0]?.count, 1);
+      const eligibleAfterUnsave = await getHomeFeed(user.id);
+      assert.equal(eligibleAfterUnsave.sections.recommendedVideos.some((item) => item.resourceId === resourceId), true);
       const adjacentAffinity = await migrator<{ feature_version: string; positive_weight: number; negative_weight: number }[]>`
         SELECT feature_version, positive_weight, negative_weight
         FROM discovery.user_concept_affinity
@@ -244,6 +266,13 @@ test(
       const reusedDismissedRun = await getHomeFeed(user.id);
       assert.equal(reusedDismissedRun.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
       assert.equal(reusedDismissedRun.sections.freshForYou.some((item) => item.resourceId === resourceId), false);
+      await saveLibraryItem(user.id, { resourceId: resourceId as string, action: "save" });
+      const restored = await migrator<{ status: string }[]>`
+        SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}
+      `;
+      assert.equal(restored[0]?.status, "saved");
+      const restoredFeed = await getHomeFeed(user.id);
+      assert.equal(restoredFeed.sections.recommendedVideos.some((item) => item.resourceId === resourceId), true);
     } finally {
       if (activeSessionId) await migrator`DELETE FROM study.study_sessions WHERE id = ${activeSessionId}`;
       for (const userId of userIds) {

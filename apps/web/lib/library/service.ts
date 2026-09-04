@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { activityEvents, collectionEnrollments, collectionItems, collectionSections, collections, libraryItems, resources, userResourceProgress, videoDetails, paperDetails } from "@learnspace/db/schema";
 import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest, ResearchPaperSummary } from "@learnspace/shared";
-import { collectionKindSchema, studyResourceReadinessSchema } from "@learnspace/shared";
+import { collectionIdSchema, collectionKindSchema, studyResourceReadinessSchema } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
+import { invalidateHomeFeedCache } from "../discovery/cache";
 import { startCollection } from "../study/service";
 
 export type SavedLibraryResource = {
@@ -33,6 +34,18 @@ function iso(value: Date | string | null | undefined): string | null {
 function kind(value: string): LibraryCollectionSummary["kind"] {
   const parsed = collectionKindSchema.safeParse(value);
   return parsed.success ? parsed.data : "manual";
+}
+
+function collectionOwnership(collection: typeof collections.$inferSelect, userId: string): LibraryCollectionSummary["ownership"] {
+  if (collection.ownerUserId === userId) return "user";
+  if (collection.ownerUserId === null && (collection.kind === "curated" || collection.kind === "learning_path")) return "learnspace";
+  return "other";
+}
+
+function collectionSource(collection: typeof collections.$inferSelect, userId: string): LibraryCollectionSummary["source"] {
+  if (collection.ownerUserId === userId) return collection.kind === "generated" ? "generated" : "user";
+  if (collection.ownerUserId === null && (collection.kind === "curated" || collection.kind === "learning_path")) return "learnspace";
+  return "public";
 }
 
 function readiness(status: typeof resources.$inferSelect.status, hasVersion: boolean, hasDetail: boolean): SavedLibraryResource["readiness"] {
@@ -68,7 +81,7 @@ export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
     const enrollmentByCollection = new Map(enrollmentRows.map((row) => [row.collectionId, row]));
     const summaries = collectionRows.map((collection) => {
       const enrollment = enrollmentByCollection.get(collection.id);
-      return { id: collection.id, title: collection.title, description: collection.description, kind: kind(collection.kind), visibility: collection.visibility, itemCount: countByCollection.get(collection.id) ?? 0, progressPct: enrollment ? Number(enrollment.progressPct) : null, currentItemId: enrollment?.currentItemId ?? null } satisfies LibraryCollectionSummary;
+      return { id: collection.id, title: collection.title, description: collection.description, kind: kind(collection.kind), ownership: collectionOwnership(collection, userId), source: collectionSource(collection, userId), visibility: collection.visibility, itemCount: countByCollection.get(collection.id) ?? 0, progressPct: enrollment ? Number(enrollment.progressPct) : null, currentItemId: enrollment?.currentItemId ?? null } satisfies LibraryCollectionSummary;
     });
     return {
       savedResources: savedRows.map((row) => ({
@@ -92,24 +105,29 @@ export async function saveLibraryItem(userId: string, input: LibraryItemRequest)
     const resource = await visibleResource(tx, userId, input.resourceId);
     if (!resource) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This material is not available.", 404);
     const now = new Date();
-    await tx.insert(libraryItems).values({ userId, resourceId: input.resourceId, status: input.action === "save" ? "saved" : "removed", source: "user", addedAt: now, updatedAt: now }).onConflictDoUpdate({ target: [libraryItems.userId, libraryItems.resourceId], set: { status: input.action === "save" ? "saved" : "removed", updatedAt: now } });
     if (input.action === "save") {
-      await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "artifact.saved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing();
+      await tx.insert(libraryItems).values({ userId, resourceId: input.resourceId, status: "saved", source: "user", addedAt: now, updatedAt: now }).onConflictDoUpdate({ target: [libraryItems.userId, libraryItems.resourceId], set: { status: "saved", source: "user", updatedAt: now } });
+      await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "resource.saved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing();
+    } else {
+      await tx.delete(libraryItems).where(and(eq(libraryItems.userId, userId), eq(libraryItems.resourceId, input.resourceId)));
+      await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "resource.unsaved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing();
     }
   });
+  await invalidateHomeFeedCache(userId);
 }
 
 export async function getCollectionDetail(userId: string, collectionId: string): Promise<LibraryCollectionDetail> {
+  const normalizedCollectionId = collectionIdSchema.parse(collectionId);
   return withUserTransaction(userId, async (tx) => {
-    const collectionRows = await tx.select().from(collections).where(and(eq(collections.id, collectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public")))).limit(1);
+    const collectionRows = await tx.select().from(collections).where(and(eq(collections.id, normalizedCollectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public")))).limit(1);
     const collection = collectionRows[0];
     if (!collection) throw new AuthError("COLLECTION_NOT_FOUND", "That collection is not available.", 404);
-    const sections = await tx.select().from(collectionSections).where(eq(collectionSections.collectionId, collectionId)).orderBy(asc(collectionSections.position));
+    const sections = await tx.select().from(collectionSections).where(eq(collectionSections.collectionId, normalizedCollectionId)).orderBy(asc(collectionSections.position));
     const itemRows = await tx.select({ item: collectionItems, resource: resources }).from(collectionItems).innerJoin(resources, eq(resources.id, collectionItems.resourceId)).where(inArray(collectionItems.sectionId, sections.map((section) => section.id))).orderBy(asc(collectionItems.position));
     const resourceIds = itemRows.map((row) => row.resource.id);
     const [progressRows, enrollmentRows] = await Promise.all([
       resourceIds.length > 0 ? tx.select().from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), inArray(userResourceProgress.resourceId, resourceIds))) : Promise.resolve([]),
-      tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, collectionId))).limit(1),
+      tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, normalizedCollectionId))).limit(1),
     ]);
     const progressByResource = new Map(progressRows.map((row) => [row.resourceId, row]));
     const enrollment = enrollmentRows[0];
@@ -125,6 +143,8 @@ export async function getCollectionDetail(userId: string, collectionId: string):
       title: collection.title,
       description: collection.description,
       kind: kind(collection.kind),
+      ownership: collectionOwnership(collection, userId),
+      source: collectionSource(collection, userId),
       visibility: collection.visibility,
       itemCount,
       progressPct: enrollment ? Number(enrollment.progressPct) : null,
