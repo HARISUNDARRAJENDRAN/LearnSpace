@@ -9,9 +9,15 @@ type SmokeLearnerInput = {
   conceptId: string;
 };
 
+export const DISCOVERY_SMOKE_SYSTEM_ACCOUNT = "discovery-smoke-v1";
+
 function objectValue(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+export function hasSmokeAccountMarker(profile: unknown): boolean {
+  return objectValue(profile).systemAccount === DISCOVERY_SMOKE_SYSTEM_ACCOUNT;
 }
 
 function stringArray(value: unknown): string[] {
@@ -30,6 +36,13 @@ export async function provisionSmokeLearner(
 
   return sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`learnspace:smoke-learner:${email}`}))`;
+    const accounts = await tx<{ user_id: string; profile: unknown }[]>`
+      SELECT user_id, profile
+      FROM identity.auth_accounts
+      WHERE provider = 'email' AND lower(provider_account_id) = ${email}
+      FOR UPDATE
+    `;
+    const existingAccount = accounts[0];
     const users = await tx<{ id: string }[]>`
       SELECT id
       FROM identity.users
@@ -37,6 +50,14 @@ export async function provisionSmokeLearner(
       FOR UPDATE
     `;
     let userId = users[0]?.id;
+    if (existingAccount) {
+      if (!userId || existingAccount.user_id !== userId || !hasSmokeAccountMarker(existingAccount.profile)) {
+        throw new Error("smoke learner email belongs to a non-smoke account");
+      }
+    } else if (userId) {
+      throw new Error("smoke learner email has no smoke account marker");
+    }
+
     if (userId) {
       await tx`
         UPDATE identity.users
@@ -58,27 +79,19 @@ export async function provisionSmokeLearner(
     }
     if (!userId) throw new Error("smoke learner could not be provisioned");
 
-    const accounts = await tx<{ user_id: string }[]>`
-      SELECT user_id
-      FROM identity.auth_accounts
-      WHERE provider = 'email' AND lower(provider_account_id) = ${email}
-      FOR UPDATE
-    `;
-    const existingAccount = accounts[0];
-    if (existingAccount && existingAccount.user_id !== userId) {
-      throw new Error("smoke learner email is linked to another account");
-    }
     if (existingAccount) {
       await tx`
         UPDATE identity.auth_accounts
-        SET provider_email = ${email}, email_verified = true, updated_at = now()
+        SET provider_email = ${email}, email_verified = true,
+            profile = ${tx.json({ ...objectValue(existingAccount.profile), systemAccount: DISCOVERY_SMOKE_SYSTEM_ACCOUNT })},
+            updated_at = now()
         WHERE provider = 'email' AND lower(provider_account_id) = ${email}
       `;
     } else {
       await tx`
         INSERT INTO identity.auth_accounts
           (user_id, provider, provider_account_id, provider_email, email_verified, profile)
-        VALUES (${userId}, 'email', ${email}, ${email}, true, '{}'::jsonb)
+        VALUES (${userId}, 'email', ${email}, ${email}, true, ${tx.json({ systemAccount: DISCOVERY_SMOKE_SYSTEM_ACCOUNT })})
       `;
     }
 

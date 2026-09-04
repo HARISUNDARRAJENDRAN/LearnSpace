@@ -8,6 +8,8 @@ let database: ReturnType<typeof postgres> | null = null;
 let seededResourceIds: string[] = [];
 let adjacentRelationId: string | null = null;
 let behaviorCoreResourceId: string | null = null;
+let behaviorAdjacentResourceId: string | null = null;
+let behaviorDecoyResourceIds: string[] = [];
 
 test.beforeAll(async () => {
   const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
@@ -16,11 +18,12 @@ test.beforeAll(async () => {
   database = db;
   const concepts = await db<{ id: string; slug: string }[]>`
     SELECT id, slug FROM knowledge.concepts
-    WHERE slug IN ('ai-machine-learning', 'physics') AND status = 'active'
+    WHERE slug IN ('ai-machine-learning', 'physics', 'python', 'react') AND status = 'active'
   `;
   const concept = concepts.find((item) => item.slug === "ai-machine-learning");
   const adjacentConcept = concepts.find((item) => item.slug === "physics");
-  if (!concept || !adjacentConcept) throw new Error("AI and Physics concepts are required for discovery E2E");
+  const decoyConcepts = concepts.filter((item) => item.slug !== "physics");
+  if (!concept || !adjacentConcept || decoyConcepts.length < 3) throw new Error("AI, Physics, Python, and React concepts are required for discovery E2E");
   adjacentRelationId = randomUUID();
   await db`
     INSERT INTO knowledge.concept_relations
@@ -37,8 +40,10 @@ test.beforeAll(async () => {
   const arxivId = `e2e.${randomUUID().replaceAll("-", "").slice(0, 8)}`;
   const behaviorYoutubeA = `e2a${randomUUID().replaceAll("-", "").slice(0, 8)}`;
   const behaviorYoutubeB = `e2b${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+  behaviorDecoyResourceIds = Array.from({ length: 8 }, () => randomUUID());
   behaviorCoreResourceId = behaviorResourceAId;
-  seededResourceIds = [videoResourceId, paperResourceId, behaviorResourceAId, behaviorResourceBId];
+  behaviorAdjacentResourceId = behaviorResourceBId;
+  seededResourceIds = [videoResourceId, paperResourceId, behaviorResourceAId, behaviorResourceBId, ...behaviorDecoyResourceIds];
   await db.begin(async (tx) => {
     await tx`
       INSERT INTO catalog.resources
@@ -67,6 +72,26 @@ test.beforeAll(async () => {
         (${behaviorResourceAId}, ${concept.id}, 'e2e', 1, true),
         (${behaviorResourceBId}, ${adjacentConcept.id}, 'e2e', 1, true)
     `;
+    for (const [index, decoyResourceId] of behaviorDecoyResourceIds.entries()) {
+      const decoyYoutubeId = `e2d${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      const decoyConcept = decoyConcepts[index % decoyConcepts.length];
+      if (!decoyConcept) throw new Error("discovery E2E decoy concept was not created");
+      const decoyQuality = index === 5 ? 0.4 : [0, 3, 6].includes(index) ? 0.9 : 0.1;
+      await tx`
+        INSERT INTO catalog.resources
+          (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
+        VALUES
+          (${decoyResourceId}, NULL, 'video', 'youtube', ${decoyYoutubeId}, ${`https://www.youtube.com/watch?v=${decoyYoutubeId}`}, ${`Core concept decoy ${index + 1}`}, 'A deterministic core-concept decoy used to keep an adjacent resource outside the initial recommendation range.', 'en', 'public', 'ready', ${decoyQuality}, '{"test":true}'::jsonb)
+      `;
+      await tx`
+        INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
+        VALUES (${decoyResourceId}, ${decoyYoutubeId}, ${`LearnSpace Decoy Lab ${index + 1}`}, 600000, now())
+      `;
+      await tx`
+        INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary)
+        VALUES (${decoyResourceId}, ${decoyConcept.id}, 'e2e-decoy', 1, true)
+      `;
+    }
   });
 });
 
@@ -214,13 +239,22 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   await completeDiscoveryOnboarding(page);
 
   const coreCard = page.locator("article.discovery-card").filter({ hasText: "A behavior seed lesson" });
-  const adjacentCard = page.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
+  const recommendedSection = page.locator("section[aria-labelledby='section-recommended-videos']");
+  const adjacentCard = recommendedSection.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
   await expect(coreCard).toBeVisible();
-  await expect(adjacentCard).toBeVisible();
-  await coreCard.getByRole("button", { name: "Save" }).click();
+  await expect(adjacentCard).toHaveCount(0);
+
+  const initialHomeResponse = await page.request.get("/api/v1/discovery/home");
+  expect(initialHomeResponse.ok()).toBe(true);
+  const initialHome = await initialHomeResponse.json() as {
+    runId: string;
+    sections: { recommendedVideos: Array<{ resourceId: string }> };
+  };
+  if (!behaviorAdjacentResourceId) throw new Error("behavior adjacent resource was not created");
+  expect(initialHome.sections.recommendedVideos.some((card) => card.resourceId === behaviorAdjacentResourceId)).toBe(false);
 
   if (!behaviorCoreResourceId) throw new Error("behavior seed resource was not created");
-  for (let index = 0; index < 2; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const response = await page.request.post("/api/v1/discovery/interactions", {
       data: {
         resourceId: behaviorCoreResourceId,
@@ -232,8 +266,29 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
     expect(response.ok()).toBe(true);
   }
 
+  const changedHomeResponse = await page.request.get("/api/v1/discovery/home");
+  expect(changedHomeResponse.ok()).toBe(true);
+  const changedHome = await changedHomeResponse.json() as {
+    runId: string;
+    sections: { recommendedVideos: Array<{ resourceId: string; title: string; score: number; reason: string }> };
+  };
+  expect(changedHome.runId).not.toBe(initialHome.runId);
+  const changedCandidates = database
+    ? await database<{ resource_id: string; title: string; score: number; selected: boolean; final_rank: number | null }[]>`
+      SELECT c.resource_id, r.title, c.score, c.selected, c.final_rank
+      FROM discovery.recommendation_candidates AS c
+      INNER JOIN catalog.resources AS r ON r.id = c.resource_id
+      WHERE c.recommendation_run_id = ${changedHome.runId}
+      ORDER BY c.final_rank NULLS LAST, c.score DESC
+    `
+    : [];
+  expect(
+    changedHome.sections.recommendedVideos.some((card) => card.resourceId === behaviorAdjacentResourceId),
+    JSON.stringify(changedCandidates.map((candidate) => ({ title: candidate.title, score: candidate.score, selected: candidate.selected, finalRank: candidate.final_rank }))),
+  ).toBe(true);
+
   await page.reload();
-  const promotedCard = page.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
+  const promotedCard = page.locator("section[aria-labelledby='section-recommended-videos'] article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
   await expect(promotedCard).toBeVisible();
   await expect(promotedCard).toContainText("Because you've been learning Physics");
   await promotedCard.getByRole("button", { name: "Dismiss" }).click();

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult } from "./discovery.js";
+import { DISCOVERY_SMOKE_SYSTEM_ACCOUNT, hasSmokeAccountMarker } from "./discovery-smoke-provision.js";
 
 test("discovery jobs are scoped to one canonical concept", () => {
   const payload = discoveryPayload(
@@ -117,4 +118,11 @@ test("smoke ownership comes only from bounded job result resource IDs", () => {
     [createdResourceId, existingResourceId, unrelatedResourceId],
   );
   assert.deepEqual(resourceIdsFromJobResult({}), []);
+});
+
+test("smoke provisioning requires the permanent system-account marker", () => {
+  assert.equal(DISCOVERY_SMOKE_SYSTEM_ACCOUNT, "discovery-smoke-v1");
+  assert.equal(hasSmokeAccountMarker({ systemAccount: "discovery-smoke-v1" }), true);
+  assert.equal(hasSmokeAccountMarker({}), false);
+  assert.equal(hasSmokeAccountMarker({ systemAccount: "user-account" }), false);
 });
