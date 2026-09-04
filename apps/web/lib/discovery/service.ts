@@ -25,7 +25,9 @@ import { getCachedHomeFeed, invalidateHomeFeedCache, setCachedHomeFeed } from ".
 import { DISCOVERY_CATALOG_VERSION, discoveryFingerprint } from "./fingerprint";
 import {
   DISCOVERY_FEATURE_VERSION,
+  DISCOVERY_BEHAVIOR_CONFIG,
   DISCOVERY_EXPLORATION_CONFIG,
+  DISCOVERY_REFRESH_CONFIG,
   DISCOVERY_STRATEGY_VERSION,
   rankDiscoveryResources,
   type DiscoveryResource,
@@ -240,6 +242,8 @@ function profileFingerprint(profileLoad: ProfileLoad): string {
   return discoveryFingerprint({
     version: "profile-v4",
     explorationVersion: DISCOVERY_EXPLORATION_CONFIG.version,
+    behaviorVersion: DISCOVERY_BEHAVIOR_CONFIG.version,
+    refreshVersion: DISCOVERY_REFRESH_CONFIG.version,
     conceptIds: [...profileLoad.profile.conceptIds].sort(),
     emergingConceptIds: [...profileLoad.emergingConceptIds].sort(),
     adjacentConceptIds: [...profileLoad.adjacentConceptIds].sort(),
@@ -300,7 +304,7 @@ async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserI
   const ids = rows.map((row) => row.resource.id);
   const [conceptRows, qualityRows] = await Promise.all([
     tx
-      .select({ resourceId: resourceConcepts.resourceId, conceptId: concepts.id, name: concepts.name, relevance: resourceConcepts.relevance })
+      .select({ resourceId: resourceConcepts.resourceId, conceptId: concepts.id, name: concepts.name, relevance: resourceConcepts.relevance, isPrimary: resourceConcepts.isPrimary })
       .from(resourceConcepts)
       .innerJoin(concepts, eq(concepts.id, resourceConcepts.conceptId))
       .where(inArray(resourceConcepts.resourceId, ids)),
@@ -658,26 +662,47 @@ function behaviorSignal(action: DiscoveryAction, metadata: Record<string, unknow
 async function loadResourceConcepts(
   tx: Transaction,
   resourceId: string,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<Array<{ id: string; name: string; relevance: number; isPrimary: boolean }>> {
   return tx
-    .select({ id: concepts.id, name: concepts.name })
+    .select({
+      id: concepts.id,
+      name: concepts.name,
+      relevance: resourceConcepts.relevance,
+      isPrimary: resourceConcepts.isPrimary,
+    })
     .from(resourceConcepts)
     .innerJoin(concepts, eq(concepts.id, resourceConcepts.conceptId))
     .where(eq(resourceConcepts.resourceId, resourceId));
 }
 
+function behaviorRelevanceMultiplier(concept: { relevance: number; isPrimary: boolean }): number {
+  const relevance = Math.min(1, Math.max(0, concept.relevance));
+  if (concept.isPrimary || relevance >= DISCOVERY_BEHAVIOR_CONFIG.fullRelevance) return 1;
+  if (relevance >= DISCOVERY_BEHAVIOR_CONFIG.strongRelevance) {
+    return DISCOVERY_BEHAVIOR_CONFIG.secondaryMultiplier;
+  }
+  return relevance >= DISCOVERY_BEHAVIOR_CONFIG.minimumRelevance ? 0.1 : 0;
+}
+
 async function projectBehaviorAffinity(
   tx: Transaction,
   userId: string,
-  conceptIds: string[],
+  conceptsForResource: Array<{ id: string; relevance: number; isPrimary: boolean }>,
   signal: BehaviorSignal,
   now: Date,
 ): Promise<string[]> {
-  const uniqueConceptIds = [...new Set(conceptIds)];
+  const weightedConcepts = [...new Map(conceptsForResource.map((concept) => [concept.id, concept])).values()]
+    .map((concept) => ({ ...concept, multiplier: behaviorRelevanceMultiplier(concept) }))
+    .filter((concept) => concept.multiplier > 0);
+  const uniqueConceptIds = weightedConcepts.map((concept) => concept.id);
   const relationRows = uniqueConceptIds.length === 0
     ? []
     : await tx
-      .select({ sourceConceptId: conceptRelations.sourceConceptId, targetConceptId: conceptRelations.targetConceptId })
+      .select({
+        sourceConceptId: conceptRelations.sourceConceptId,
+        targetConceptId: conceptRelations.targetConceptId,
+        relationStrength: sql`${conceptRelations.weight} * ${conceptRelations.confidence}`,
+      })
       .from(conceptRelations)
       .where(and(
         or(
@@ -686,17 +711,25 @@ async function projectBehaviorAffinity(
         ),
         eq(conceptRelations.status, "accepted"),
         inArray(conceptRelations.relationType, ["related_to", "part_of", "applies_to", "prerequisite"]),
-        sql`${conceptRelations.weight} * ${conceptRelations.confidence} >= 0.5`,
+        sql`${conceptRelations.weight} * ${conceptRelations.confidence} >= ${DISCOVERY_BEHAVIOR_CONFIG.adjacentSourceRelevance}`,
       ));
-  const core = new Set(uniqueConceptIds);
+  const core = new Map(weightedConcepts.map((concept) => [concept.id, concept.multiplier]));
   const targets = [
-    ...uniqueConceptIds.map((conceptId) => ({ conceptId, multiplier: 1 })),
-    ...[...new Set(relationRows.map((row) => (
-      core.has(row.sourceConceptId) ? row.targetConceptId : row.sourceConceptId
-    )))].filter((conceptId) => !core.has(conceptId)).map((conceptId) => ({
-      conceptId,
-      multiplier: DISCOVERY_EXPLORATION_CONFIG.adjacentBehaviorMultiplier,
-    })),
+    ...weightedConcepts.map((concept) => ({ conceptId: concept.id, multiplier: concept.multiplier })),
+    ...(signal.negative > 0 ? [] : [...new Map(relationRows.map((row) => {
+      const sourceMultiplier = core.get(row.sourceConceptId);
+      const reverseMultiplier = core.get(row.targetConceptId);
+      const sourceConceptId = sourceMultiplier ? row.sourceConceptId : row.targetConceptId;
+      const multiplier = sourceMultiplier ?? reverseMultiplier;
+      return [row.targetConceptId === sourceConceptId ? row.sourceConceptId : row.targetConceptId, {
+        conceptId: row.targetConceptId === sourceConceptId ? row.sourceConceptId : row.targetConceptId,
+        multiplier: (multiplier ?? 0) * DISCOVERY_BEHAVIOR_CONFIG.adjacentBehaviorMultiplier,
+        relationStrength: Number(row.relationStrength),
+      }];
+    })).values()].filter((target) => (
+      !core.has(target.conceptId)
+      && target.relationStrength >= DISCOVERY_BEHAVIOR_CONFIG.adjacentSourceRelevance
+    ))),
   ];
   for (const target of targets) {
     const positive = signal.positive * target.multiplier;
@@ -767,7 +800,7 @@ async function enqueueConditionalRefresh(
     ))
     .groupBy(resourceConcepts.conceptId, resources.type);
   const coverageByConcept = new Map(coverageRows.map((row) => [`${row.conceptId}:${row.type}`, Number(row.count)]));
-  const coverageFloor = 12;
+  const coverageFloor = DISCOVERY_REFRESH_CONFIG.catalogCoverageFloor;
   const refreshable = conceptsForResource.filter((concept) => (
     (coverageByConcept.get(`${concept.id}:video`) ?? 0) < coverageFloor
     || (coverageByConcept.get(`${concept.id}:paper`) ?? 0) < coverageFloor
@@ -816,7 +849,7 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
     const now = new Date();
     const signal = behaviorSignal(input.action, input.metadata);
     const conceptsForResource = await loadResourceConcepts(tx, input.resourceId);
-    const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource.map((concept) => concept.id), signal, now);
+    const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource, signal, now);
     await tx.insert(activityEvents).values({
       schemaVersion: 1,
       userId,
@@ -846,9 +879,7 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
         });
     }
     if (signal.refresh) {
-      const refreshConceptIds = signal.positive > 0
-        ? projectedConceptIds
-        : conceptsForResource.map((concept) => concept.id);
+      const refreshConceptIds = projectedConceptIds;
       await enqueueConditionalRefresh(
         tx,
         userId,

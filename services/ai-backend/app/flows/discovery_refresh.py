@@ -80,7 +80,9 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         )
         format_key = "any"
         budget = ToolBudget(self.max_tool_calls)
-        budget.reserve_primary(len(request.concept_ids) * 3)
+        if len(request.concept_ids) != 1 or len(request.concept_names) != 1:
+            raise ValueError("discovery refresh requires one canonical concept pool")
+        budget.reserve_primary(3)
         skipped: list[ResourceKind] = []
         youtube_candidates: list[YoutubeCandidate] = []
         arxiv_candidates: list[ArxivCandidate] = []
@@ -99,7 +101,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             youtube_key = youtube_cache_key(
                 concept_key, neutral_request.level, format_key, request.window_days
             )
-            if await self.cache.has_enough([youtube_key], 6):
+            if not request.force_refresh and await self.cache.has_enough([youtube_key], 6):
                 cache_hit = True
                 cached = await self._cached_youtube(youtube_key, concept_id)
                 youtube_candidates.extend(cached)
@@ -140,7 +142,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                 arxiv_key = arxiv_cache_key(
                     concept_key, neutral_request.level, paper_request.window_days, paper_strategy
                 )
-                if await self.cache.has_enough([arxiv_key], 2):
+                if not request.force_refresh and await self.cache.has_enough([arxiv_key], 2):
                     cache_hit = True
                     arxiv_candidates.extend(await self._cached_arxiv(arxiv_key, concept_id))
                     budget.release_primary()
@@ -201,6 +203,9 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             cache_hit=cache_hit,
             failures=failures,
             audit_run_id=uuid4(),
+            provider_calls=budget.call_counts.get("exa_discovery", 0),
+            fallback_calls=budget.call_counts.get("arxiv_paper_search", 0),
+            enrichment_calls=budget.call_counts.get("youtube_content_search", 0),
         )
         logger.info(
             "discovery_refresh_completed",

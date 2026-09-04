@@ -1,8 +1,12 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class ToolBudgetExceeded(RuntimeError):
     pass
+
+
+def empty_call_counts() -> dict[str, int]:
+    return {}
 
 
 @dataclass
@@ -11,6 +15,7 @@ class ToolBudget:
     used: int = 0
     primary_reserved: int = 0
     optional_phase: bool = False
+    call_counts: dict[str, int] = field(default_factory=empty_call_counts)
 
     @property
     def remaining(self) -> int:
@@ -32,5 +37,6 @@ class ToolBudget:
         if self.used >= self.limit:
             raise ToolBudgetExceeded(f"discovery tool budget exhausted before {tool_name}")
         self.used += 1
+        self.call_counts[tool_name] = self.call_counts.get(tool_name, 0) + 1
         if not optional and self.primary_reserved > 0:
             self.primary_reserved -= 1

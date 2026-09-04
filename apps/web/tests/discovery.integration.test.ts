@@ -27,6 +27,7 @@ test(
     let activeResourceId: string | null = null;
     let activeVersionId: string | null = null;
     let activeSessionId: string | null = null;
+    let weightedResourceId: string | null = null;
     const adjacentConceptId = randomUUID();
 
     try {
@@ -37,6 +38,8 @@ test(
         ORDER BY slug
       `;
       assert.equal(concepts.length, 3);
+      const [conceptA, conceptB, conceptC] = concepts;
+      if (!conceptA || !conceptB || !conceptC) throw new Error("expected three canonical concepts");
       const interestConcept = concepts[1];
       if (!interestConcept) throw new Error("expected a canonical interest concept");
       await migrator`
@@ -77,6 +80,26 @@ test(
       await migrator`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary)
         VALUES (${resourceId}, ${interestConcept.id}, 'integration', 1, true)
+      `;
+
+      const weightedYoutubeId = `wgt${randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      const [weightedResource] = await migrator<{ id: string }[]>`
+        INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, visibility, status, quality_score, metadata)
+        VALUES ('video', 'youtube', ${`weighted-${randomUUID()}`}, 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 'Weighted concept lesson', 'A lesson with weighted concept mappings.', 'public', 'ready', 0.9, '{}'::jsonb)
+        RETURNING id
+      `;
+      weightedResourceId = weightedResource?.id ?? null;
+      assert.ok(weightedResourceId);
+      await migrator`
+        INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
+        VALUES (${weightedResourceId}, ${weightedYoutubeId}, 'Weighted Concept Lab', 1200000, now())
+      `;
+      await migrator`
+        INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary)
+        VALUES
+          (${weightedResourceId}, ${conceptA.id}, 'integration-weighted', 0.95, true),
+          (${weightedResourceId}, ${conceptB.id}, 'integration-weighted', 0.70, false),
+          (${weightedResourceId}, ${conceptC.id}, 'integration-weighted', 0.20, false)
       `;
 
       activeResourceId = randomUUID();
@@ -132,8 +155,8 @@ test(
         SELECT count(*)::text AS count FROM discovery.discovery_interactions WHERE user_id = ${user.id} AND correlation_id = ${correlationId}
       `;
       assert.equal(Number(interactions[0]?.count), 1);
-      const adjacentAffinity = await migrator<{ feature_version: string; positive_weight: number }[]>`
-        SELECT feature_version, positive_weight
+      const adjacentAffinity = await migrator<{ feature_version: string; positive_weight: number; negative_weight: number }[]>`
+        SELECT feature_version, positive_weight, negative_weight
         FROM discovery.user_concept_affinity
         WHERE user_id = ${user.id} AND concept_id = ${adjacentConceptId}
       `;
@@ -150,6 +173,32 @@ test(
         true,
       );
 
+      const beforeWeighted = await migrator<{ concept_id: string; positive_weight: number }[]>`
+        SELECT concept_id, positive_weight
+        FROM discovery.user_concept_affinity
+        WHERE user_id = ${user.id} AND concept_id IN ${migrator(concepts.map((concept) => concept.id))}
+      `;
+      const weightedCorrelationId = randomUUID();
+      assert.equal((await recordInteraction(user.id, {
+        runId: card.runId,
+        resourceId: weightedResourceId,
+        action: "complete",
+        correlationId: weightedCorrelationId,
+        metadata: {},
+      })).duplicate, false);
+      const afterWeighted = await migrator<{ concept_id: string; positive_weight: number }[]>`
+        SELECT concept_id, positive_weight
+        FROM discovery.user_concept_affinity
+        WHERE user_id = ${user.id} AND concept_id IN ${migrator(concepts.map((concept) => concept.id))}
+      `;
+      const weightedDelta = (conceptId: string): number => {
+        const before = Number(beforeWeighted.find((row) => row.concept_id === conceptId)?.positive_weight ?? 0);
+        const after = Number(afterWeighted.find((row) => row.concept_id === conceptId)?.positive_weight ?? 0);
+        return after - before;
+      };
+      assert.ok(weightedDelta(conceptA.id) > weightedDelta(conceptB.id));
+      assert.equal(weightedDelta(conceptC.id), 0);
+
       const concurrentCorrelationId = randomUUID();
       const concurrentResults = await Promise.all([
         recordInteraction(user.id, { runId: card.runId, resourceId: card.resourceId, action: "open", correlationId: concurrentCorrelationId, metadata: {} }),
@@ -161,6 +210,12 @@ test(
       `;
       assert.equal(Number(concurrentInteractions[0]?.count), 1);
 
+      const adjacentBeforeDismiss = await migrator<{ positive_weight: number; negative_weight: number }[]>`
+        SELECT positive_weight, negative_weight
+        FROM discovery.user_concept_affinity
+        WHERE user_id = ${user.id} AND concept_id = ${adjacentConceptId}
+      `;
+
       const dismissCorrelationId = randomUUID();
       assert.equal((await recordInteraction(user.id, { runId: card.runId, resourceId: card.resourceId, action: "dismiss", correlationId: dismissCorrelationId, metadata: {} })).duplicate, false);
       assert.equal((await recordInteraction(user.id, { runId: card.runId, resourceId: card.resourceId, action: "dismiss", correlationId: dismissCorrelationId, metadata: {} })).duplicate, true);
@@ -168,6 +223,13 @@ test(
         SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}
       `;
       assert.equal(removed[0]?.status, "removed");
+      const adjacentAfterDismiss = await migrator<{ positive_weight: number; negative_weight: number }[]>`
+        SELECT positive_weight, negative_weight
+        FROM discovery.user_concept_affinity
+        WHERE user_id = ${user.id} AND concept_id = ${adjacentConceptId}
+      `;
+      assert.equal(Number(adjacentAfterDismiss[0]?.positive_weight), Number(adjacentBeforeDismiss[0]?.positive_weight));
+      assert.equal(Number(adjacentAfterDismiss[0]?.negative_weight), Number(adjacentBeforeDismiss[0]?.negative_weight));
 
       const dismissedFeed = await getHomeFeed(user.id);
       assert.equal(dismissedFeed.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
@@ -204,6 +266,11 @@ test(
         await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id = ${resourceId}`;
         await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${resourceId}`;
         await migrator`DELETE FROM catalog.resources WHERE id = ${resourceId}`;
+      }
+      if (weightedResourceId) {
+        await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id = ${weightedResourceId}`;
+        await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${weightedResourceId}`;
+        await migrator`DELETE FROM catalog.resources WHERE id = ${weightedResourceId}`;
       }
       await migrator`DELETE FROM knowledge.concepts WHERE id = ${adjacentConceptId}`;
       await migrator.end({ timeout: 5 });

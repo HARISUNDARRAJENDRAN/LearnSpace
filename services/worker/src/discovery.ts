@@ -64,6 +64,10 @@ type CandidateBatch = {
   youtube: YoutubeProposal[];
   arxiv: ArxivProposal[];
   audit_run_id: string | null;
+  cache_hit: boolean;
+  provider_calls: number;
+  fallback_calls: number;
+  enrichment_calls: number;
 };
 
 function configuredNumber(name: string, fallback: number, minimum: number, maximum: number): number {
@@ -100,6 +104,19 @@ function stringValue(value: unknown): string | null {
 
 function numberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function countValue(value: unknown): number {
+  const count = numberValue(value);
+  return count === null ? 0 : Math.min(100, Math.max(0, Math.floor(count)));
+}
+
+export function resourceIdsFromJobResult(value: unknown): string[] {
+  const body = objectValue(value);
+  if (!body || !Array.isArray(body.resourceIds)) return [];
+  return [...new Set(body.resourceIds.filter((id): id is string => (
+    typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id)
+  )))].slice(0, 100);
 }
 
 function stringArray(value: unknown): string[] {
@@ -237,6 +254,10 @@ export function parseBatch(value: unknown): CandidateBatch {
     youtube,
     arxiv,
     audit_run_id: stringValue(body.audit_run_id),
+    cache_hit: body.cache_hit === true,
+    provider_calls: countValue(body.provider_calls),
+    fallback_calls: countValue(body.fallback_calls),
+    enrichment_calls: countValue(body.enrichment_calls),
   };
 }
 
@@ -252,6 +273,7 @@ export function discoveryPayload(traceId: string, conceptId: string, conceptName
     paper_coverage: 0,
     window_days: 30,
     audit_user_id: null,
+    force_refresh: false,
     trace_id: traceId,
   };
 }
@@ -449,6 +471,7 @@ const discoveryAgentPayloadKeys = [
   "window_days",
   "paper_strategy",
   "audit_user_id",
+  "force_refresh",
   "trace_id",
 ] as const;
 
@@ -456,11 +479,17 @@ export function discoveryAgentPayload(payload: JsonObject): JsonObject {
   const request = Object.fromEntries(
     discoveryAgentPayloadKeys.flatMap((key) => key in payload ? [[key, payload[key]]] : []),
   );
+  const conceptIds = stringArray(payload.concept_ids);
+  const conceptNames = stringArray(payload.concept_names);
+  if (conceptIds.length !== 1 || conceptNames.length !== 1) {
+    throw new Error("discovery agent requests require one canonical concept");
+  }
   return {
     ...request,
     level: "mixed",
     preferred_formats: [],
     audit_user_id: null,
+    force_refresh: payload.force_refresh === true,
   };
 }
 
@@ -474,15 +503,16 @@ async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<strin
   return rows.map((row) => row.id);
 }
 
-async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<{ videos: number; papers: number }> {
+async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<{ videos: number; papers: number; resourceIds: string[] }> {
   const userId = stringValue(job.payload.audit_user_id);
   return sql.begin(async (tx) => {
     const targetConceptId = (await validConceptIds(tx, [
       stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0] ?? "",
     ]))[0];
-    if (!targetConceptId) return { videos: 0, papers: 0 };
+    if (!targetConceptId) return { videos: 0, papers: 0, resourceIds: [] };
     let videos = 0;
     let papers = 0;
+    const resourceIds = new Set<string>();
     for (const candidate of batch.youtube) {
       if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
@@ -493,6 +523,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         RETURNING id
       `;
       if (!resource) continue;
+      resourceIds.add(resource.id);
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at, default_audio_language, fetched_at)
         VALUES (${resource.id}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
@@ -515,6 +546,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         RETURNING id
       `;
       if (!resource) continue;
+      resourceIds.add(resource.id);
       await tx`
         INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, submitted_at, primary_category, metadata)
         VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: "discovery-agent" })})
@@ -528,7 +560,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       papers += 1;
     }
     if (userId && batch.audit_run_id) await persistAudit(sql, job, batch);
-    return { videos, papers };
+    return { videos, papers, resourceIds: [...resourceIds].slice(0, 100) };
   });
 }
 
@@ -609,8 +641,16 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
     try {
       const batch = await callAgent(agentUrl, token, job);
       const persisted = await persistBatch(sql, job, batch);
-      await finishJob(sql, job, { traceId: batch.trace_id, ...persisted });
-      return { status: "done", jobId: job.id, traceId: batch.trace_id, scheduledCount, reclaimedCount, ...persisted };
+      const result = {
+        traceId: batch.trace_id,
+        providerCalls: batch.provider_calls,
+        fallbackCalls: batch.fallback_calls,
+        enrichmentCalls: batch.enrichment_calls,
+        cacheHit: batch.cache_hit,
+        ...persisted,
+      };
+      await finishJob(sql, job, result);
+      return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
     } catch (error) {
       await failJob(sql, job, error);
       throw error;

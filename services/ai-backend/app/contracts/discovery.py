@@ -29,6 +29,7 @@ class DiscoveryRefreshRequest(BaseModel):
     paper_coverage: int = Field(default=0, ge=0, le=100)
     window_days: int = Field(default=30, ge=1, le=365)
     paper_strategy: PaperStrategy = "current"
+    force_refresh: bool = False
     audit_user_id: UUID | None = None
     trace_id: str | None = Field(default=None, min_length=1, max_length=128)
 
@@ -111,4 +112,7 @@ class DiscoveryCandidateBatch(BaseModel):
     cache_hit: bool = False
     failures: list[str] = Field(default_factory=list, max_length=10)
     audit_run_id: UUID | None = None
+    provider_calls: int = Field(default=0, ge=0, le=100)
+    fallback_calls: int = Field(default=0, ge=0, le=100)
+    enrichment_calls: int = Field(default=0, ge=0, le=100)
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

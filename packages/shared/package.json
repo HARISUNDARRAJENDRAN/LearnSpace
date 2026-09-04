@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./domain-values": "./src/domain-values.ts",
     "./contracts": "./src/contracts.ts",
-    "./onboarding": "./src/onboarding.ts"
+    "./onboarding": "./src/onboarding.ts",
+    "./password": "./src/password.ts"
   },
   "scripts": {
     "build": "tsc --build",

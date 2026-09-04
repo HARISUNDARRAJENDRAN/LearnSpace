@@ -21,6 +21,7 @@ jobs:
       DISCOVERY_SMOKE_WEB_URL: https://learnspace-staging.vercel.app
       DISCOVERY_SMOKE_EMAIL: ${{ secrets.STAGING_DISCOVERY_SMOKE_EMAIL }}
       DISCOVERY_SMOKE_PASSWORD: ${{ secrets.STAGING_DISCOVERY_SMOKE_PASSWORD }}
+      DISCOVERY_SMOKE_REQUIRE_PROVIDER: "true"
       DISCOVERY_SMOKE_TIMEOUT_MS: "360000"
     steps:
       - uses: actions/checkout@v4

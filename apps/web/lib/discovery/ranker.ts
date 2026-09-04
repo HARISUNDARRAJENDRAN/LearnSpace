@@ -11,6 +11,21 @@ export const DISCOVERY_EXPLORATION_CONFIG = {
   emergingThreshold: 0.1,
 } as const;
 
+export const DISCOVERY_BEHAVIOR_CONFIG = {
+  version: "behavior-v2",
+  minimumRelevance: 0.35,
+  strongRelevance: 0.7,
+  fullRelevance: 0.9,
+  secondaryMultiplier: 0.7,
+  adjacentSourceRelevance: 0.7,
+  adjacentBehaviorMultiplier: 0.25,
+} as const;
+
+export const DISCOVERY_REFRESH_CONFIG = {
+  version: "refresh-v1",
+  catalogCoverageFloor: 12,
+} as const;
+
 export const VIDEO_RANKING_WEIGHTS = {
   conceptMatch: 0.3,
   learnerAffinity: 0.2,
