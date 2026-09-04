@@ -837,6 +837,33 @@ async function enqueueConditionalRefresh(
   });
 }
 
+export async function projectStudyBehavior(
+  tx: Transaction,
+  userId: string,
+  resourceId: string,
+  eventType: "resource.opened" | "resource.progressed" | "resource.completed",
+  progress: number,
+  correlationId: string,
+  now: Date,
+  intent: "open" | "start" = "open",
+): Promise<void> {
+  const conceptsForResource = await loadResourceConcepts(tx, resourceId);
+  const action = intent === "start" ? "start_session" : eventType === "resource.completed" ? "complete" : "open";
+  const signal = behaviorSignal(action, { progressFraction: progress });
+  const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource, signal, now);
+  if (signal.refresh) {
+    await enqueueConditionalRefresh(
+      tx,
+      userId,
+      resourceId,
+      correlationId,
+      action,
+      await loadConceptsByIds(tx, projectedConceptIds),
+      now,
+    );
+  }
+}
+
 export async function recordInteraction(userId: string, input: DiscoveryInteractionRequest): Promise<{ duplicate: boolean }> {
   const result = await withUserTransaction(userId, async (tx) => {
     let impressionId = input.impressionId;

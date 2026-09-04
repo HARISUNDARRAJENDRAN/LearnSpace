@@ -2905,3 +2905,18 @@ The immediate architectural objective is not to add more independent pages. It i
 4. **Concept/Mastery Projection** — what the system can defensibly infer and revisit.
 
 YouTube learning, paper research, Monaco practice, voice tutoring, Deep Research, Focus, and Second Brain should become specialized views and workflows over those primitives. Once those boundaries are stable, individual workloads can scale independently without fragmenting learner context or data provenance.
+
+## 40. v1 Application Information Architecture
+
+The canonical domain aggregate remains `StudySession`; the user-facing study workspace is selected by the active resource type. Video Study and Paper Study are purpose-built presentations over the same session, with future Practice/Code Study following the same pattern. Switching a related resource keeps the session ID, attaches the resource through `session_resources`, preserves a checkpoint, and changes only the route/presentation.
+
+The initial application surfaces have distinct responsibilities:
+
+- Home / Discover answers “What might I learn next?” through personalized discovery.
+- Library answers “What have I saved, organized, or chosen to follow?” through `library_items` and collections/playlists/learning paths.
+- Sessions answers “What am I actually learning?” through active, paused, and completed `StudySession` records.
+- Research provides scholarly discovery, catalogue search, and organization; paper reading belongs in Paper Study.
+- Video Study and Paper Study are the focused learning surfaces, not one all-media workspace.
+- Second Brain remains a later learner-state and knowledge surface.
+
+Collections are sequencing/organization primitives and may mix videos, papers, and future practice items. They do not create a parallel learning-state model. A catalogue resource without an ingested immutable version may have a preparing session binding; the binding is pinned to a real version transactionally once ingestion is ready. YouTube remains a resource provider, not the architecture.

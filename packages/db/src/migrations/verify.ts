@@ -487,8 +487,8 @@ try {
     LEFT JOIN catalog.resources r ON r.id = s.active_resource_id
     LEFT JOIN catalog.resource_versions rv ON rv.resource_id = s.active_resource_id AND rv.id = s.active_version_id
     LEFT JOIN retrieval.resource_chunks c ON c.resource_version_id = s.active_version_id AND c.id = s.active_chunk_id
-    WHERE (s.active_resource_id IS NULL) <> (s.active_version_id IS NULL)
-      OR (s.active_resource_id IS NOT NULL AND rv.id IS NULL)
+    WHERE (s.active_resource_id IS NULL AND s.active_version_id IS NOT NULL)
+      OR (s.active_version_id IS NOT NULL AND rv.id IS NULL)
       OR (s.active_chunk_id IS NOT NULL AND c.id IS NULL)
   `);
   await requireCondition(invalidSessionPins === 0, `found ${invalidSessionPins} invalid active session resource pins`);

@@ -9,7 +9,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint app components tests next.config.mjs types.d.ts",
-    "test": "tsx --tsconfig tsconfig.test.json --test tests/hero.test.tsx tests/auth.test.ts tests/auth.integration.test.ts tests/onboarding.integration.test.ts tests/discovery.test.ts tests/discovery.integration.test.ts",
+    "test": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/hero.test.tsx tests/auth.test.ts tests/auth.integration.test.ts tests/onboarding.integration.test.ts tests/discovery.test.ts tests/discovery.integration.test.ts tests/study.integration.test.ts",
     "test:e2e": "node tests/e2e/run.mjs",
     "discovery:import:youtube-dataset": "tsx scripts/import-youtube-dataset.ts"
   },

@@ -956,7 +956,8 @@ A session pins the exact resource version used for learning.
 ```text
 study_session_id      uuid FK study_sessions ON DELETE CASCADE
 resource_id           uuid FK catalog.resources ON DELETE RESTRICT
-resource_version_id   uuid FK catalog.resource_versions ON DELETE RESTRICT
+resource_version_id   uuid NULL FK catalog.resource_versions ON DELETE RESTRICT
+binding_status        text NOT NULL default ready # preparing, ready
 role                  text NOT NULL       # primary, prerequisite, related, evidence, implementation
 position              integer NOT NULL default 0
 added_by              text NOT NULL
@@ -969,6 +970,8 @@ UNIQUE (study_session_id, position)
 ```
 
 A composite FK enforces that `resource_version_id` belongs to `resource_id`.
+
+`binding_status = preparing` is the explicit provisional state for a valid catalogue resource whose immutable source version has not been ingested yet; it requires a null `resource_version_id`. Once a real ready version exists, the session resource is pinned to it transactionally and becomes `ready`. The database never treats catalogue metadata as an ingested source snapshot.
 
 ### 12.4 `study.session_context_snapshots`
 
@@ -4332,3 +4335,11 @@ This architecture converts the current video-oriented schema into a production-g
 - Drizzle vector similarity search: `https://orm.drizzle.team/docs/guides/vector-similarity-search`
 - pgvector: `https://github.com/pgvector/pgvector`
 - PostgreSQL documentation: `https://www.postgresql.org/docs/current/`
+
+## 49. v1 Study and Application Clarification
+
+`study.study_sessions` is the single canonical learning-context aggregate. `study.session_resources` may contain multiple resource types, while the active resource selects the focused application presentation: Video Study or Paper Study today, with Practice/Code Study later. Related-resource activation preserves the same session, stores the prior anchor/checkpoint, and changes the route rather than creating a second learning-state system.
+
+`catalog.library_items` remains the individual saved-resource relationship. `catalog.collections`, sections, items, and enrollments provide intentional ordering for playlists, curated collections, learning paths, and real generated collections; collections may mix resource types. Research is scholarly discovery/search/organization, not the paper reader.
+
+The v1 service boundary is HTTP/API → application service/domain rules → Drizzle transaction → PostgreSQL. Study events are immutable evidence and feed the existing Discovery affinity projection at meaningful progress milestones; play, pause, and seek are not strong learning signals. Resource-grounded transcript and question answers remain unavailable until real chunks and retrieval exist.

@@ -2,6 +2,7 @@
 
 import type { DiscoveryAction, DiscoveryCard, DiscoveryHomeResponse, DiscoverySurface } from "@learnspace/shared";
 import { useEffect, useRef, useState } from "react";
+import { StartStudyButton } from "../study/StudyActions";
 
 function formatDuration(durationMs: number | null): string | null {
   if (durationMs === null) return null;
@@ -68,7 +69,8 @@ function DiscoveryCardView({ card, surface, onDismiss }: { card: DiscoveryCard; 
         {card.description ? <p>{card.description}</p> : null}
         <p className="discovery-card-reason">{card.reason}</p>
         <div className="discovery-card-actions">
-          {card.url ? <a className="discovery-open-link" href={card.url} target="_blank" rel="noreferrer" onClick={() => void interact("open")}>Open <span aria-hidden="true">↗</span></a> : null}
+          <StartStudyButton resourceId={card.resourceId} origin={surface === "home" ? "home" : "discover"} recommendationRunId={card.runId} label={isContinue ? "Continue" : card.type === "video" ? "Start learning" : "Study paper"} className="discovery-start-button" />
+          {card.url ? <a className="discovery-open-link" href={card.url} target="_blank" rel="noreferrer" onClick={() => void interact("open")}>{card.type === "video" ? "Open on YouTube (external)" : "View on arXiv (external)"}</a> : null}
           <button type="button" onClick={() => void interact("save")} disabled={action !== null}>{action === "save" ? "Saving…" : "Save"}</button>
           <button type="button" onClick={() => void interact("dismiss")} disabled={action !== null}>{action === "dismiss" ? "Removing…" : "Dismiss"}</button>
         </div>

@@ -330,3 +330,26 @@ Agents should exchange typed events/artifacts through persistent session state; 
 - Second Brain writes should be evidence-backed and reversible/updateable rather than unrestricted LLM memory writes.
 
 ---
+
+## 11. v1 User-Facing Learning Architecture
+
+`StudySession` remains the canonical persistent learning-context aggregate. It owns the shared context for resources, progress, questions, notes/artifacts, tutor state, concepts, activity, checkpoints, and future practice or research state.
+
+The user-facing study experience is resource-specific over that same aggregate:
+
+- Video Study: `/app/study/video/[sessionId]`
+- Paper Study: `/app/study/paper/[sessionId]`
+- Future Practice/Code Study: a later focused presentation
+
+Changing the active resource changes the presentation and route, not the persistent learning context or session mode. Related videos and papers can therefore be attached and activated within the same session.
+
+The application information architecture is:
+
+- Home / Discover: algorithmic personalized discovery
+- Library: saved resources, playlists/collections, and learning paths
+- Sessions: current and historical learning contexts
+- Research: scholarly discovery, search, and organization
+- Video Study and Paper Study: the focused places where learning happens
+- Second Brain: a later learner-state and knowledge surface
+
+YouTube remains a resource provider, not the product architecture. A catalogue resource may begin a session before immutable source ingestion exists; the session records a preparing binding and pins a real `resource_version` only after ingestion makes one available. No synthetic transcript, PDF snapshot, hash, or citation is valid.

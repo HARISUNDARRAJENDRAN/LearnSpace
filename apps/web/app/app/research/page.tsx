@@ -1,2 +1,13 @@
-import { ComingLater } from "../../../components/application/ComingLater";
-export default function ResearchPage() { return <ComingLater title="Research" />; }
+import { ResearchPage } from "../../../components/application/ProductPages";
+import { requireCompletedSession } from "../../../lib/discovery/access";
+import { getResearchPage } from "../../../lib/research/service";
+
+export const dynamic = "force-dynamic";
+
+type Props = { searchParams?: Promise<{ q?: string }> };
+
+export default async function ResearchRoute({ searchParams }: Props) {
+  const session = await requireCompletedSession();
+  const params = searchParams ? await searchParams : {};
+  return <ResearchPage data={await getResearchPage(session.user.id, params.q ?? "")} />;
+}

@@ -37,7 +37,7 @@ export const studySessions = studySchema.table(
     check("study_sessions_end_after_start_chk", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
     check("study_sessions_context_version_chk", sql`${table.contextVersion} >= 0`),
     check("study_sessions_lock_version_chk", sql`${table.lockVersion} >= 0`),
-    check("study_sessions_active_pin_pair_chk", sql`(${table.activeResourceId} IS NULL) = (${table.activeVersionId} IS NULL)`),
+    check("study_sessions_active_pin_pair_chk", sql`${table.activeResourceId} IS NOT NULL OR ${table.activeVersionId} IS NULL`),
     check("study_sessions_active_chunk_pair_chk", sql`${table.activeChunkId} IS NULL OR ${table.activeVersionId} IS NOT NULL`),
     unique("study_sessions_user_id_uq").on(table.userId, table.id),
     foreignKey({
@@ -63,7 +63,8 @@ export const sessionResources = studySchema.table(
   {
     studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
     resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
+    resourceVersionId: uuid("resource_version_id").references(() => resourceVersions.id, { onDelete: "restrict" }),
+    bindingStatus: text("binding_status").notNull().default("ready"),
     role: text("role").notNull(),
     position: integer("position").notNull().default(0),
     addedBy: text("added_by").notNull(),
@@ -75,6 +76,8 @@ export const sessionResources = studySchema.table(
   (table) => [
     primaryKey({ columns: [table.studySessionId, table.resourceId] }),
     uniqueIndex("session_resources_session_position_uq").on(table.studySessionId, table.position),
+    check("session_resources_binding_status_chk", sql`${table.bindingStatus} IN ('preparing', 'ready')`),
+    check("session_resources_binding_provenance_chk", sql`(${table.resourceVersionId} IS NULL AND ${table.bindingStatus} = 'preparing') OR (${table.resourceVersionId} IS NOT NULL AND ${table.bindingStatus} = 'ready')`),
     foreignKey({
       name: "session_resources_resource_version_fkey",
       columns: [table.resourceId, table.resourceVersionId],
