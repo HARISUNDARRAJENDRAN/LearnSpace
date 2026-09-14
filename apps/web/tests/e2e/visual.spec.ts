@@ -35,11 +35,17 @@ test("landing hero visual regression", async ({ page }) => {
     ["mobile", mobile],
   ] as const) {
     await page.setViewportSize(viewport);
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await expect(page.locator("[data-testid=marketing-hero]")).toBeVisible();
     await stabilize(page);
     await expect(page.locator("[data-testid=marketing-hero]")).toHaveScreenshot(
       `landing-hero-${name}.png`,
-      { animations: "disabled", caret: "hide" },
+      {
+        animations: "disabled",
+        caret: "hide",
+        // Chromium can rasterize the large hero image a handful of pixels differently between hosts.
+        maxDiffPixels: 32,
+      },
     );
   }
 });
@@ -117,9 +123,14 @@ test.describe("authenticated app shell visual regression", () => {
       await expect(page.locator(".application-page")).toHaveScreenshot(`app-shell-${name}.png`, {
         animations: "disabled",
         caret: "hide",
-        mask: [page.locator(".application-account")],
-        maskColor: "#fbfaf7",
       });
+      if (name === "desktop") {
+        await page.getByRole("button", { name: "Collapse sidebar" }).click();
+        await expect(page.locator(".application-page")).toHaveScreenshot("app-shell-collapsed-desktop.png", {
+          animations: "disabled",
+          caret: "hide",
+        });
+      }
     }
   });
 });

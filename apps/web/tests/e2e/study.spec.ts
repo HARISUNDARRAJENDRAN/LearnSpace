@@ -215,8 +215,11 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   await page.goto("/app/library");
   const savedRow = page.locator("article.saved-resource-row").filter({ hasText: "A deterministic Study paper" });
   await expect(savedRow.getByRole("button", { name: "Unsave" })).toBeVisible();
+  const unsaveResponse = page.waitForResponse((response) => response.url().endsWith("/api/v1/library") && response.request().method() === "POST");
   await savedRow.getByRole("button", { name: "Unsave" }).click();
-  await expect(savedRow).not.toBeVisible();
+  expect((await unsaveResponse).status()).toBe(200);
+  await page.goto("/app/library");
+  await expect(page.locator("article.saved-resource-row").filter({ hasText: "A deterministic Study paper" })).toHaveCount(0);
   await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
   const paperAfterUnsave = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
   await paperAfterUnsave.getByRole("button", { name: "Save" }).click();
@@ -264,8 +267,9 @@ test("E2E D — Library opens a mixed collection and launches its current item",
   await expect(collection).toBeVisible();
   await collection.getByRole("link", { name: "A mixed Study collection" }).click();
   await expect(page).toHaveURL(`/app/library/collections/${collectionId}`);
-  await expect(page.getByText("A deterministic Study video")).toBeVisible();
-  await expect(page.getByText("A deterministic Study paper")).toBeVisible();
+  const collectionDetail = page.locator("main.collection-detail-page");
+  await expect(collectionDetail.getByText("A deterministic Study video")).toBeVisible();
+  await expect(collectionDetail.getByText("A deterministic Study paper")).toBeVisible();
   await page.getByRole("button", { name: "Start collection" }).click();
   await expect(page).toHaveURL(sessionRoute("video", videoSessionId));
 });

@@ -125,10 +125,29 @@ async function clearGoogleTestUser(): Promise<void> {
   if (!databaseUrl) return;
   const database = postgres(databaseUrl, { max: 1 });
   try {
+    const users = await database<{ id: string }[]>`SELECT id FROM identity.users WHERE lower(email) = lower(${googleEmail})`;
+    const userIds = users.map((user) => user.id);
+    if (userIds.length > 0) {
+      await database`DELETE FROM discovery.discovery_interactions WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM discovery.recommendation_impressions WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id IN ${database(userIds)})`;
+      await database`DELETE FROM discovery.recommendation_runs WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM ops.outbox_events WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM ops.idempotency_records WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM activity.activity_events WHERE user_id IN ${database(userIds)}`;
+    }
     await database`DELETE FROM identity.users WHERE lower(email) = lower(${googleEmail})`;
   } finally {
     await database.end({ timeout: 5 });
   }
+}
+
+async function logout(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Account menu" }).click();
+  const logoutButton = page.getByRole("menu").getByRole("menuitem", { name: "Log out" });
+  await expect(logoutButton).toBeVisible();
+  await logoutButton.click();
+  await expect(page).toHaveURL("/");
 }
 
 test("register, verify, log in, access the app, and log out", async ({ page }) => {
@@ -140,11 +159,8 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await completeOnboarding(page, true);
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
-  await expect(page.getByRole("button", { name: "Log out" })).toBeVisible();
   await page.waitForLoadState("load");
-
-  await page.getByRole("button", { name: "Log out" }).click();
-  await expect(page).toHaveURL("/");
+  await logout(page);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/login\?next=(?:%2F|\/)app$/i);
 
@@ -203,7 +219,7 @@ test("Google takeover clears the unverified password credential", async ({ page 
   await expect(page).toHaveURL(/\/onboarding/);
   await completeOnboarding(page);
   await page.waitForLoadState("load");
-  await page.getByRole("button", { name: "Log out" }).click();
+  await logout(page);
 
   await page.goto("/login");
   await page.getByLabel("Email address").fill(googleEmail);

@@ -1,60 +1,238 @@
 "use client";
 
+import {
+  BookOpen,
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
+  CircleHelp,
+  FileText,
+  House,
+  Library,
+  LogOut,
+  MoreHorizontal,
+  PanelLeft,
+  Plus,
+  Search,
+  Settings,
+  Sparkles,
+  UserRound,
+  Video,
+} from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { LearnSpaceLogo } from "../marketing/hero/LearnSpaceLogo";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 
-const navigation = [
-  ["Home", "/app", "home"],
-  ["Discover", "/app/discover", "discover"],
-  ["Sessions", "/app/sessions", "sessions"],
-  ["Library", "/app/library", "library"],
-  ["Research", "/app/research", "research"],
-  ["Second Brain", "/app/second-brain", "brain"],
-  ["Settings", "/app/settings", "settings"],
+type NavigationMode = "learn" | "research";
+type IconComponent = typeof House;
+
+export type RecentSession = {
+  id: string;
+  title: string;
+  mode: string;
+  route: string | null;
+  activeResource: { type: "video" | "paper" } | null;
+};
+
+type ApplicationUser = {
+  email: string;
+  displayName: string | null;
+};
+
+type AppSidebarProps = {
+  user: ApplicationUser;
+  recentSessions: RecentSession[];
+  isOpen: boolean;
+  isCollapsed: boolean;
+  isLoggingOut: boolean;
+  onClose: () => void;
+  onLogout: () => void;
+  onToggleCollapsed: () => void;
+};
+
+const learnNavigation = [
+  { label: "Home", href: "/app", icon: House, tone: "home" },
+  { label: "Discover", href: "/app/discover", icon: Sparkles, tone: "discover" },
 ] as const;
 
-function Icon({ name }: { name: string }) {
-  const paths: Record<string, string> = {
-    home: "M3 10.5 12 3l9 7.5v8a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z M9 20v-5h6v5",
-    discover: "m21 3-8.2 8.2M21 3l-5.4 15.1-2.8-6.9-6.9-2.8z",
-    sessions: "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M7 8h10M7 12h6M7 16h8",
-    library: "M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z M4 5.5v16M8 7h8",
-    research: "M10.5 18a7.5 7.5 0 1 1 5.3-2.2L21 21 M10.5 13a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9z",
-    brain: "M9 4.5A3 3 0 0 0 6 7.4 3 3 0 0 0 6.7 13 3.5 3.5 0 0 0 9 19.5M15 4.5a3 3 0 0 1 3 2.9 3 3 0 0 1-.7 5.6 3.5 3.5 0 0 1-2.3 6.5M9 4.5v15M15 4.5v15M9 9h6M9 14h6",
-    settings: "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.8 1.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-2.6v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1-1.8-1.8.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H4.4v-2.6h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 1.8-1.8.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2h2.6v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.8 1.8-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2V14h-.2a1.7 1.7 0 0 0-1.5 1z",
-  };
-  return <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d={paths[name]} /></svg>;
+const researchNavigation = [
+  { label: "Research Home", href: "/app/research", icon: House, tone: "research" },
+  { label: "Find Papers", href: "/app/research", icon: Search, tone: "papers" },
+  { label: "Saved Papers", href: "/app/library", icon: BookOpen, tone: "saved" },
+] as const;
+
+const sharedNavigation = [
+  { label: "Sessions", href: "/app/sessions", icon: PanelLeft, tone: "sessions" },
+  { label: "Library", href: "/app/library", icon: Library, tone: "library" },
+  { label: "Second Brain", href: "/app/second-brain", icon: Brain, tone: "brain" },
+] as const;
+
+function isActivePath(pathname: string, href: string): boolean {
+  return href === "/app" ? pathname === href : pathname.startsWith(href);
 }
 
-export function AppSidebar({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+function modeFromPath(pathname: string): NavigationMode {
+  return pathname.startsWith("/app/research") ? "research" : "learn";
+}
+
+function sessionIcon(session: RecentSession): IconComponent {
+  return session.activeResource?.type === "video" ? Video : FileText;
+}
+
+export function AppSidebar({
+  user,
+  recentSessions,
+  isOpen,
+  isCollapsed,
+  isLoggingOut,
+  onClose,
+  onLogout,
+  onToggleCollapsed,
+}: AppSidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [mode, setMode] = useState<NavigationMode>(() => modeFromPath(pathname));
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState(true);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
+  const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
+  const visibleRecentSessions = useMemo(
+    () => recentSessions.filter((session) => (mode === "research" ? session.mode === "research" : session.mode !== "research")).slice(0, 5),
+    [mode, recentSessions],
+  );
+
+  useEffect(() => {
+    if (pathname.startsWith("/app/research")) setMode("research");
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!modeMenuOpen && !accountMenuOpen) return;
+    function closeMenus(event: MouseEvent) {
+      const target = event.target as Node;
+      if (!(target instanceof Element)) return;
+      if (!target.closest(".application-mode-control")) setModeMenuOpen(false);
+      if (!target.closest(".application-account-control")) setAccountMenuOpen(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      setModeMenuOpen(false);
+      setAccountMenuOpen(false);
+    }
+    document.addEventListener("click", closeMenus);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("click", closeMenus);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [accountMenuOpen, modeMenuOpen]);
+
+  function selectMode(nextMode: NavigationMode) {
+    setMode(nextMode);
+    setModeMenuOpen(false);
+    router.push(nextMode === "research" ? "/app/research" : "/app");
+  }
+
   return (
     <>
       <button className={`application-backdrop ${isOpen ? "is-open" : ""}`} type="button" aria-label="Close navigation" onClick={onClose} />
-      <aside className={`application-sidebar ${isOpen ? "is-open" : ""}`} aria-label="Application navigation">
-        <div className="application-sidebar-top">
-          <Link className="application-sidebar-brand" href="/" aria-label="LearnSpace home" onClick={onClose}>
-            <LearnSpaceLogo />
-          </Link>
+      <aside className={`application-sidebar ${isOpen ? "is-open" : ""} ${isCollapsed ? "is-collapsed" : ""}`} aria-label="Application navigation">
+        <div className="application-workspace-row">
+          <div className="application-workspace-identity">
+            <span className="application-workspace-avatar" aria-hidden="true">{firstName.slice(0, 1).toUpperCase()}</span>
+            <span className="application-workspace-name">{firstName}&apos;s Space</span>
+            <ChevronDown className="application-workspace-chevron" aria-hidden="true" />
+          </div>
+          <span className="application-workspace-status" aria-hidden="true" />
+          <button className="application-sidebar-collapse" type="button" aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={onToggleCollapsed}>
+            {isCollapsed ? <ChevronsRight aria-hidden="true" /> : <ChevronsLeft aria-hidden="true" />}
+          </button>
           <button className="application-close-nav" type="button" aria-label="Close navigation" onClick={onClose}>×</button>
         </div>
+
+        <div className="application-control-row">
+          <div className="application-mode-control">
+            <button className="application-mode-trigger" type="button" aria-label={`Switch mode (currently ${mode})`} aria-haspopup="menu" aria-expanded={modeMenuOpen} onClick={() => setModeMenuOpen((open) => !open)}>
+              {mode === "learn" ? <House aria-hidden="true" /> : <Search aria-hidden="true" />}
+              <ChevronDown className="application-mode-trigger-chevron" aria-hidden="true" />
+            </button>
+            {modeMenuOpen ? (
+              <div className="application-mode-menu" role="menu" aria-label="Switch mode">
+                <p>Switch mode</p>
+                <button type="button" role="menuitemradio" aria-checked={mode === "learn"} className={mode === "learn" ? "is-selected" : ""} onClick={() => selectMode("learn")}>
+                  <House aria-hidden="true" />
+                  <span>Learn</span>
+                  {mode === "learn" ? <Check aria-hidden="true" /> : null}
+                </button>
+                <button type="button" role="menuitemradio" aria-checked={mode === "research"} className={mode === "research" ? "is-selected" : ""} onClick={() => selectMode("research")}>
+                  <Search aria-hidden="true" />
+                  <span>Research</span>
+                  {mode === "research" ? <Check aria-hidden="true" /> : null}
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <Link className="application-new-session" href={mode === "research" ? "/app/research" : "/app/sessions"} onClick={onClose}>
+            <Plus aria-hidden="true" />
+            <span>{mode === "research" ? "New research" : "New session"}</span>
+          </Link>
+          <button className="application-search-button" type="button" aria-label={`Search ${mode === "research" ? "papers" : "LearnSpace"}`} onClick={() => router.push(mode === "research" ? "/app/research" : "/app/discover")}>
+            <Search aria-hidden="true" />
+          </button>
+        </div>
+
         <nav className="application-nav">
-          {navigation.map(([label, href, icon]) => {
-            const active = href === "/app" ? pathname === href : pathname.startsWith(href);
-            return (
-              <Link className={`application-nav-link ${active ? "is-active" : ""}`} href={href} key={href} aria-current={active ? "page" : undefined} onClick={onClose}>
-                <Icon name={icon} />
-                <span>{label}</span>
-              </Link>
-            );
-          })}
+          <div className="application-nav-section">
+            <p className="application-nav-label">{mode === "research" ? "RESEARCH" : "LEARN"}</p>
+            {modeNavigation.map(({ label, href, icon: Icon, tone }) => {
+              const active = isActivePath(pathname, href) && !(mode === "research" && label === "Find Papers");
+              return <NavLink key={`${mode}-${label}`} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
+            })}
+          </div>
+          <div className="application-nav-section">
+            <p className="application-nav-label">WORKSPACE</p>
+            {sharedNavigation.map(({ label, href, icon: Icon, tone }) => {
+              const active = isActivePath(pathname, href) && !(mode === "research" && label === "Library");
+              return <NavLink key={href} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
+            })}
+          </div>
+          <div className={`application-recent-section ${recentOpen ? "is-open" : ""}`}>
+            <button className="application-nav-section-heading" type="button" aria-expanded={recentOpen} onClick={() => setRecentOpen((open) => !open)}>
+              <span>RECENT {mode === "research" ? "RESEARCH" : "CONTEXT"}</span>
+              <span className="application-nav-section-actions"><MoreHorizontal aria-hidden="true" /><ChevronDown aria-hidden="true" /></span>
+            </button>
+            {recentOpen ? (
+              <div className="application-recent-list">
+                {visibleRecentSessions.length > 0 ? visibleRecentSessions.map((session) => {
+                  const Icon = sessionIcon(session);
+                  return <Link className="application-recent-link" data-nav-tone={session.activeResource?.type ?? "session"} href={session.route ?? "/app/sessions"} key={session.id} onClick={onClose}><Icon aria-hidden="true" /><span>{session.title}</span></Link>;
+                }) : <p className="application-recent-empty">No recent {mode === "research" ? "research" : "sessions"} yet.</p>}
+              </div>
+            ) : null}
+          </div>
         </nav>
-        <div className="application-sidebar-note">
-          <span className="application-sidebar-note-dot" />
-          <span>Your space to learn</span>
+
+        <div className="application-sidebar-footer">
+          <Link className="application-footer-button" href="/app/settings" aria-label="Settings" onClick={onClose}><Settings aria-hidden="true" /></Link>
+          <button className="application-footer-button" type="button" aria-label="Help"><CircleHelp aria-hidden="true" /></button>
+          <div className="application-account-control">
+            <button className="application-footer-button" type="button" aria-label="Account menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><UserRound aria-hidden="true" /></button>
+            {accountMenuOpen ? (
+              <div className="application-account-menu" role="menu">
+                <p>{user.email}</p>
+                <Link href="/app/settings" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Account settings</Link>
+                <button type="button" role="menuitem" disabled={isLoggingOut} onClick={onLogout}><LogOut aria-hidden="true" />{isLoggingOut ? "Signing out…" : "Log out"}</button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </aside>
     </>
   );
+}
+
+function NavLink({ href, label, Icon, tone, active, onClose }: { href: string; label: string; Icon: IconComponent; tone: string; active: boolean; onClose: () => void }) {
+  return <Link className={`application-nav-link ${active ? "is-active" : ""}`} data-nav-tone={tone} href={href} aria-current={active ? "page" : undefined} onClick={onClose}><Icon aria-hidden="true" /><span>{label}</span></Link>;
 }
