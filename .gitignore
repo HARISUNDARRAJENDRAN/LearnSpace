@@ -8,6 +8,9 @@ coverage/
 *.tsbuildinfo
 # Local environment files and secrets.
 .env*
+.envrc
+*.pem
+*.key
 infra/postgres/data/
 *.log
 drizzle-meta/

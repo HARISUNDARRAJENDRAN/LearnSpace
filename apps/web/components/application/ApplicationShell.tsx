@@ -4,16 +4,17 @@ import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AppHeader } from "./AppHeader";
-import { AppSidebar } from "./AppSidebar";
+import { AppSidebar, type RecentSession } from "./AppSidebar";
 
 type ApplicationUser = {
   email: string;
   displayName: string | null;
 };
 
-export function ApplicationShell({ user, children }: { user: ApplicationUser; children: ReactNode }) {
+export function ApplicationShell({ user, recentSessions, children }: { user: ApplicationUser; recentSessions: RecentSession[]; children: ReactNode }) {
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   async function logout() {
@@ -26,10 +27,19 @@ export function ApplicationShell({ user, children }: { user: ApplicationUser; ch
   }
 
   return (
-    <div className="application-page">
-      <AppSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+    <div className={`application-page ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}`}>
+      <AppSidebar
+        user={user}
+        recentSessions={recentSessions}
+        isOpen={sidebarOpen}
+        isCollapsed={sidebarCollapsed}
+        isLoggingOut={isLoggingOut}
+        onClose={() => setSidebarOpen(false)}
+        onLogout={logout}
+        onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
+      />
       <div className="application-main">
-        <AppHeader user={user} onMenu={() => setSidebarOpen(true)} onLogout={logout} isLoggingOut={isLoggingOut} />
+        <AppHeader onMenu={() => setSidebarOpen(true)} />
         <div className="application-body">{children}</div>
       </div>
     </div>
