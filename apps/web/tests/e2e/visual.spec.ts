@@ -56,6 +56,8 @@ test("login and register auth layouts visual regression", async ({ page }) => {
     await expect(page.locator(".auth-page")).toHaveScreenshot(`${name}.png`, {
       animations: "disabled",
       caret: "hide",
+      // The thin desktop SVG paths rasterize a few pixels differently across CI hosts.
+      maxDiffPixels: 256,
     });
   }
 });
