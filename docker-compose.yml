@@ -87,11 +87,16 @@ services:
       DB_LOCK_TIMEOUT_MS: "500"
       APP_URL: "${APP_URL:-http://localhost:3000}"
       AUTH_SECRET: "${AUTH_SECRET:-local-development-auth-secret-change-me-please}"
+      AUTH_SECURE_COOKIES: "${AUTH_SECURE_COOKIES:-false}"
       AUTH_RATE_LIMIT_BACKEND: "${AUTH_RATE_LIMIT_BACKEND:-memory}"
       AUTH_EXPOSE_VERIFICATION_LINK: "${AUTH_EXPOSE_VERIFICATION_LINK:-true}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
       GOOGLE_REDIRECT_URI: "${GOOGLE_REDIRECT_URI:-http://localhost:3000/api/auth/google/callback}"
+      KV_URL: "${KV_URL:-}"
+      KV_REST_API_URL: "${KV_REST_API_URL:-}"
+      KV_REST_API_TOKEN: "${KV_REST_API_TOKEN:-}"
+      KV_REST_API_READ_ONLY_TOKEN: "${KV_REST_API_READ_ONLY_TOKEN:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       EMAIL_FROM: "${EMAIL_FROM:-LearnSpace <noreply@example.com>}"
     depends_on:
@@ -108,7 +113,7 @@ services:
       - learnspace_runner_node_modules:/workspace/services/runner/node_modules
       - learnspace_worker_node_modules:/workspace/services/worker/node_modules
       - learnspace_web_next:/workspace/apps/web/.next
-    command: ["sh", "-c", "pnpm --filter '@learnspace/web...' run build && exec pnpm --filter @learnspace/web dev --hostname 0.0.0.0 --port 3000"]
+    command: ["sh", "-c", "pnpm --filter @learnspace/shared build && pnpm --filter @learnspace/db build && find apps/web/.next -mindepth 1 -maxdepth 1 -exec rm -rf {} + && exec pnpm --filter @learnspace/web dev --hostname 0.0.0.0 --port 3000"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s

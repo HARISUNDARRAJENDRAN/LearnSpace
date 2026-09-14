@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const runId = process.env.PLAYWRIGHT_RUN_ID ?? "local";
+const productionServer = process.env.PLAYWRIGHT_E2E_SERVER === "production" || process.env.CI === "true";
 process.env.APP_URL = "http://localhost:3100";
 process.env.AUTH_SECRET = "playwright-auth-secret-that-is-long-enough";
 process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
@@ -38,7 +39,9 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: "pnpm exec next dev --webpack --hostname localhost --port 3100",
+      command: productionServer
+        ? "pnpm exec next start --hostname localhost --port 3100"
+        : "pnpm exec next dev --webpack --hostname localhost --port 3100",
       url: "http://localhost:3100",
       timeout: 120_000,
       reuseExistingServer: false,

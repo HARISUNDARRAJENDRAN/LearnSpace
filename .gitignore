@@ -6,9 +6,8 @@ out/
 coverage/
 .turbo/
 *.tsbuildinfo
-# Local environment files; keep committed examples visible.
+# Local environment files and secrets.
 .env*
-!.env.example
 infra/postgres/data/
 *.log
 drizzle-meta/

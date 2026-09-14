@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { expect, test } from "@playwright/test";
+import postgres from "postgres";
 
 test.describe.configure({ mode: "serial" });
+
+test.beforeEach(async ({ page }) => {
+  await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-${randomUUID()}` });
+});
 
 let database: ReturnType<typeof postgres> | null = null;
 let seededResourceIds: string[] = [];

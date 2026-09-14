@@ -8,7 +8,7 @@ This section is the authoritative implementation brief for the attached screensh
 - Raster size: `1365 × 646px`; aspect ratio `2.113:1`.
 - The screenshot includes a dark `4px` browser/window edge at the far left and a scrollbar occupying approximately `19px` at the far right. CSS measurements below describe the page viewport between those browser artifacts.
 - Live reference inspection: `https://www.craft.do/`. When the live page and screenshot disagree, the screenshot wins.
-- Implemented asset bundle: `apps/web/public/assets/craft/`; the rendered page uses these local files rather than the Craft CDN.
+- The original reconstruction assets in `apps/web/public/assets/craft/` were historical-only and have been removed; the current hero uses authored LearnSpace artwork.
 
 ## Canvas and hero frame
 

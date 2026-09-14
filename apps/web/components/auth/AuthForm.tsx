@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type FormEvent, type SVGProps } from "react";
-import { useRouter } from "next/navigation";
 import { AtSignIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -46,9 +46,6 @@ export function AuthForm({
   const router = useRouter();
   const [values, setValues] = useState(initialValues);
   const isRegister = mode === "register";
-  const [showCredentials, setShowCredentials] = useState(
-    isRegister || Boolean(initialError || reset || verified),
-  );
   const [error, setError] = useState(initialError ?? "");
   const [notice, setNotice] = useState(
     reset
@@ -136,10 +133,6 @@ export function AuthForm({
           </svg>
           Continue with Google
         </a>
-        <button className="auth-provider-button" type="button" disabled title="GitHub sign-in is not configured">
-          <GithubMark aria-hidden="true" />
-          Continue with GitHub
-        </button>
       </div>
       <div className="auth-divider" aria-hidden="true"><span>OR</span></div>
       <form className="auth-form" onSubmit={submit}>
@@ -168,32 +161,27 @@ export function AuthForm({
               name="email"
               type="email"
               value={values.email}
-              onChange={(event) => {
-                updateValue("email", event.target.value);
-                if (!isRegister) setShowCredentials(true);
-              }}
+              onChange={(event) => updateValue("email", event.target.value)}
               autoComplete="email"
               placeholder="your.email@example.com"
               required
             />
           </span>
         </label>
-        {showCredentials ? (
-          <label htmlFor="auth-password">
-            <span>Password</span>
-            <Input
-              id="auth-password"
-              name="password"
-              type="password"
-              value={values.password}
-              onChange={(event) => updateValue("password", event.target.value)}
-              autoComplete={isRegister ? "new-password" : "current-password"}
-              placeholder="At least 8 characters"
-              minLength={8}
-              required
-            />
-          </label>
-        ) : null}
+        <label htmlFor="auth-password">
+          <span>Password</span>
+          <Input
+            id="auth-password"
+            name="password"
+            type="password"
+            value={values.password}
+            onChange={(event) => updateValue("password", event.target.value)}
+            autoComplete={isRegister ? "new-password" : "current-password"}
+            placeholder="At least 8 characters"
+            minLength={8}
+            required
+          />
+        </label>
         {isRegister ? (
           <label htmlFor="confirm-password">
             <span>Confirm password</span>
@@ -210,11 +198,11 @@ export function AuthForm({
             />
           </label>
         ) : null}
-        <Button className="auth-submit" type="submit" disabled={isSubmitting} aria-label={isRegister ? "Create account" : "Log in"}>
-          {isSubmitting ? "Please wait…" : "Continue With Email"}
+        <Button className="auth-submit" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Please wait…" : isRegister ? "Create account" : "Log in"}
         </Button>
       </form>
-      {!isRegister && showCredentials ? (
+      {!isRegister ? (
         <p className="auth-forgot">
           <a href="/forgot-password">Forgot password?</a>
         </p>
@@ -226,15 +214,5 @@ export function AuthForm({
         </a>
       </p>
     </div>
-  );
-}
-
-function GithubMark(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <title>GitHub</title>
-      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-1.5 6-5.5a4.6 4.6 0 0 0-1-3c.1-.3.5-1.5-.1-3 0 0-1.6-.5-4.9 1.2a16.8 16.8 0 0 0-6 0C4.7 2.5 3.1 3 3.1 3c-.6 1.5-.2 2.7-.1 3a4.6 4.6 0 0 0-1 3c0 4 3 5.5 6 5.5a4.8 4.8 0 0 0-1 3v4" />
-      <path d="M9 18c-4.51 2-5-2-7-2" />
-    </svg>
   );
 }

@@ -15,8 +15,9 @@ export function getAuthSecret(): string {
 
 export function getAppBaseUrl(request?: Request): string {
   const configuredUrl = process.env.APP_URL;
+  const testMode = process.env.AUTH_TEST_MODE === "true";
 
-  if (!configuredUrl && process.env.NODE_ENV === "production") {
+  if (!configuredUrl && process.env.NODE_ENV === "production" && !testMode) {
     throw new AuthError(
       "APP_URL_NOT_CONFIGURED",
       "The application URL is not configured.",
@@ -27,7 +28,7 @@ export function getAppBaseUrl(request?: Request): string {
   try {
     if (configuredUrl) {
       const parsed = new URL(configuredUrl);
-      if (process.env.NODE_ENV === "production" && parsed.protocol !== "https:") {
+      if (process.env.NODE_ENV === "production" && !testMode && parsed.protocol !== "https:") {
         throw new AuthError(
           "APP_URL_INVALID",
           "The application URL must use HTTPS in production.",
@@ -54,6 +55,7 @@ export function getGoogleConfig(request: Request): {
 } {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const testMode = process.env.AUTH_TEST_MODE === "true";
 
   if (!clientId || !clientSecret) {
     throw new AuthError(
@@ -63,12 +65,12 @@ export function getGoogleConfig(request: Request): {
     );
   }
 
-  const redirectUri = process.env.GOOGLE_REDIRECT_URI ??
-    getAppBaseUrl(request) + "/api/auth/google/callback";
+  const redirectUri =
+    process.env.GOOGLE_REDIRECT_URI ?? `${getAppBaseUrl(request)}/api/auth/google/callback`;
 
   try {
     const parsedRedirectUri = new URL(redirectUri);
-    if (process.env.NODE_ENV === "production" && parsedRedirectUri.protocol !== "https:") {
+    if (process.env.NODE_ENV === "production" && !testMode && parsedRedirectUri.protocol !== "https:") {
       throw new AuthError(
         "GOOGLE_REDIRECT_URI_INVALID",
         "The Google redirect URL must use HTTPS in production.",
@@ -94,7 +96,7 @@ export function getGoogleOAuthEndpoints(): {
   tokenUrl: string;
   userInfoUrl: string;
 } {
-  const testMode = process.env.NODE_ENV !== "production" && process.env.AUTH_TEST_MODE === "true";
+  const testMode = process.env.AUTH_TEST_MODE === "true";
   const endpoint = (name: string, fallback: string): string => {
     if (!testMode || !process.env[name]) {
       return fallback;
@@ -123,8 +125,10 @@ export function getGoogleOAuthEndpoints(): {
 }
 
 export function assertEmailDeliveryConfigured(): void {
+  const testMode = process.env.AUTH_TEST_MODE === "true";
   if (
     process.env.NODE_ENV === "production" &&
+    !testMode &&
     (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
   ) {
     throw new AuthError(

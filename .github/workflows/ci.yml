@@ -57,7 +57,18 @@ jobs:
       - run: pnpm run test
       - run: pnpm run db:test
       - run: pnpm --filter @learnspace/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @learnspace/web run test:e2e
+      - run: pnpm --filter @learnspace/web run test:e2e:production
+      - name: Verify auth layouts against production server
+        run: |
+          pnpm --filter @learnspace/web exec next start --hostname localhost --port 3200 > /tmp/learnspace-next.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://localhost:3200/login > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:3200/login > /dev/null
+          BASE_URL=http://localhost:3200 pnpm --filter @learnspace/web run verify:auth-layout
       - run: pnpm run db:ledger > before
       - run: pnpm run db:migrate
       - run: pnpm run db:verify

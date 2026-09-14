@@ -20,7 +20,6 @@ backend. Provider-backed discovery is disabled by default, so no API keys are
 required for the first boot.
 
 ```text
-cp .env.example .env
 docker compose up --build -d
 docker compose ps
 ```
@@ -29,6 +28,17 @@ Open <http://localhost:3000>. The web container runs Next.js in development
 mode and mounts the repository, so source changes are picked up without
 rebuilding the image. Verification and password-reset links are returned by
 the local UI because email delivery is disabled by default.
+
+Compose uses safe local defaults. Put any local-only overrides in the ignored
+root `.env` file. For an intentional staging-like run, use the Vercel project
+environment without writing production secrets into the repository:
+
+```text
+pnpm dlx vercel env run --environment=production --project=learnspace-staging -- pnpm --filter @learnspace/web dev
+```
+
+That command connects the app to the staging services configured in Vercel;
+do not use it for destructive local database work.
 
 Useful commands:
 

@@ -1,21 +1,5 @@
 /* LearnSpace marketing page ------------------------------------------------ */
 
-@font-face {
-	font-family: "GT America Trial Rg";
-	src: url("/assets/fonts/GT-America-Standard-Regular-Trial.otf") format("opentype");
-	font-display: swap;
-	font-style: normal;
-	font-weight: 400;
-}
-
-@font-face {
-	font-family: "Instrument Sans";
-	src: url("/assets/fonts/InstrumentSans-SemiBold.ttf") format("truetype");
-	font-display: swap;
-	font-style: normal;
-	font-weight: 600;
-}
-
 html:has(.marketing-page),
 body:has(.marketing-page) {
 	width: 100%;
@@ -229,7 +213,7 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 	align-items: center;
 	gap: 9px;
 	color: #101416;
-	font-family: "Instrument Sans", "DM Sans", Arial, sans-serif;
+	font-family: "DM Sans", Arial, sans-serif;
 	font-size: 19px;
 	font-weight: 600;
 	letter-spacing: 1px;
@@ -415,7 +399,7 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 
 .hero-copy h1 {
 	max-width: 900px;
-	font-family: "GT America Trial Rg", "DM Sans", Arial, sans-serif;
+	font-family: "DM Sans", Arial, sans-serif;
 	font-size: clamp(64px, 5.6vw, 82px);
 	font-weight: 400;
 	letter-spacing: -0.04em;
@@ -730,7 +714,6 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 
 .intro-copy h2,
 .platforms h2,
-.feature-copy h2,
 .feature-grid-heading h2 {
 	font-size: clamp(32px, 3.1vw, 46px);
 	font-weight: 500;
@@ -1015,7 +998,7 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 	width: 28px;
 	height: 28px;
 	place-items: center;
-	border-radius: 9px;
+	border-radius: 14px;
 	background: #f5fff4;
 }
 
@@ -1297,75 +1280,120 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 
 .feature-grid {
 	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 24px;
-	margin-top: 44px;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 16px;
+	margin-top: 36px;
 }
 
 .feature-card {
 	display: grid;
 	grid-template-rows: auto auto 1fr;
 	align-content: start;
-	gap: 14px;
+	gap: 9px;
 	min-width: 0;
-	padding: 10px 10px 28px;
+	padding: 8px 8px 18px;
 	border: 1px solid #e9f0f2;
-	border-radius: 28px;
+	border-radius: 14px;
 	background: #fff;
-	box-shadow: 0 6px 18px rgb(42 90 113 / .04);
+	box-shadow: 0 4px 12px rgb(42 90 113 / .055);
 	color: #171719;
-	transition: transform 500ms cubic-bezier(.22, 1, .36, 1), box-shadow 500ms cubic-bezier(.22, 1, .36, 1), border-color 200ms ease;
+	transition: transform 300ms cubic-bezier(.22, 1, .36, 1), box-shadow 300ms cubic-bezier(.22, 1, .36, 1), border-color 160ms ease;
 }
 
 .feature-visual {
 	grid-row: 1;
 	min-width: 0;
 	width: 100%;
-	aspect-ratio: 360 / 260;
-	border-radius: 20px;
-	background: #c7e3f9;
+	aspect-ratio: 360 / 244;
+	border-radius: 14px;
+	background: #c5e1fb;
 	isolation: isolate;
-	transition: transform 500ms cubic-bezier(.22, 1, .36, 1);
+	overflow: hidden;
+	position: relative;
+	transition: transform 300ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.feature-visual::after {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	content: "";
+	pointer-events: none;
+	background: linear-gradient(108deg, transparent 38%, rgb(255 255 255 / .28) 50%, transparent 62%);
+	opacity: 0;
+	transform: translateX(-120%);
 }
 
 .feature-card:hover {
 	border-color: #c8e2eb;
-	box-shadow: 0 18px 38px rgb(42 90 113 / .1);
-	transform: translateY(-6px);
+	box-shadow: 0 9px 18px rgb(42 90 113 / .09);
+	transform: translateY(-3px);
 }
 
 html.motion-ready .marketing-page .feature-card[data-reveal].is-visible:hover {
-	transform: translateY(-6px);
+	transform: translateY(-3px);
 }
 
 .feature-card:hover .feature-visual {
-	transform: translateY(-2px) scale(1.01);
+	transform: translateY(-1px) scale(1.005);
+}
+
+.feature-illustration {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	object-position: center;
+	font-family: inherit;
+	position: relative;
+	z-index: 0;
+	transform-origin: center;
+	transition: transform 420ms cubic-bezier(.22, 1, .36, 1), filter 420ms ease;
+}
+
+.feature-card:hover .feature-illustration,
+.feature-card:focus-within .feature-illustration {
+	transform: scale(1.018);
+	filter: saturate(1.04) brightness(1.01);
+}
+
+.feature-card:hover .feature-visual::after,
+.feature-card:focus-within .feature-visual::after {
+	opacity: 1;
+	animation: feature-visual-sheen 900ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.feature-card:active .feature-illustration {
+	transform: scale(1.008);
+}
+
+@keyframes feature-visual-sheen {
+	from { transform: translateX(-120%); }
+	to { transform: translateX(120%); }
 }
 
 .feature-card-context .feature-visual,
 .feature-card-practice .feature-visual,
 .feature-card-mastery .feature-visual {
-	background: #c6f2b8;
+	background: #c1f6be;
 }
-
-.feature-illustration { display: block; width: 100%; height: auto; font-family: inherit; }
 
 .feature-card h3 {
 	grid-row: 2;
-	padding-inline: 16px;
-	margin-top: 8px;
-	font-size: 23px;
+	padding-inline: 10px;
+	margin-top: 3px;
+	font-size: clamp(17px, 1.45vw, 20px);
 	font-weight: 600;
-	letter-spacing: -.04em;
-	line-height: 1.15;
+	letter-spacing: -.045em;
+	line-height: 1.1;
 }
 
 .feature-card p {
 	grid-row: 3;
-	padding-inline: 16px;
+	padding-inline: 10px;
 	color: #647078;
-	font-size: 14px;
-	line-height: 1.55;
+	font-size: 12px;
+	line-height: 1.38;
 	letter-spacing: -.015em;
 }
 
@@ -1421,97 +1449,6 @@ html.motion-ready .marketing-page .feature-card[data-reveal].is-visible:hover {
 
 .banner-cta .hero-actions {
 	margin-top: 22px;
-}
-
-/* Feature overview -------------------------------------------------------- */
-.features {
-	margin-top: 150px;
-}
-
-.eyebrow {
-	display: inline-flex;
-	padding: 6px 11px;
-	border: 1px solid #a8a8a8;
-	border-radius: 999px;
-	box-shadow: 0 2px 5px rgb(0 0 0 / 0.08);
-	font-size: 11px;
-	line-height: 1;
-}
-
-.feature-copy h2 {
-	max-width: 870px;
-	margin-top: 18px;
-}
-
-.feature-copy > p {
-	width: min(770px, 100%);
-	margin-top: 20px;
-	color: #646464;
-	font-size: 16px;
-	letter-spacing: -0.02em;
-	line-height: 1.4;
-}
-
-.feature-layout {
-	display: grid;
-	grid-template-columns: minmax(320px, 430px) minmax(0, 1fr);
-	align-items: center;
-	gap: clamp(44px, 7vw, 100px);
-	margin-top: 58px;
-}
-
-.organization-illustration {
-	width: 100%;
-	aspect-ratio: 1 / 1;
-	padding: 10px;
-	border-radius: 30px;
-	background: #e0f2ff;
-	box-shadow: 0 25px 48px rgb(0 0 0 / 0.08);
-	overflow: hidden;
-}
-
-.organization-illustration svg {
-	display: block;
-	width: 100%;
-	height: 100%;
-}
-
-.feature-list {
-	display: grid;
-	gap: 42px;
-}
-
-.feature-list article {
-	display: grid;
-	grid-template-columns: 25px minmax(0, 1fr);
-	gap: 17px;
-}
-
-.feature-icon {
-	display: block;
-	width: 23px;
-	height: 23px;
-	fill: none;
-	stroke: currentColor;
-	stroke-linecap: round;
-	stroke-linejoin: round;
-	stroke-width: 1.5;
-}
-
-.feature-list h3 {
-	margin-bottom: 8px;
-	font-size: 19px;
-	font-weight: 700;
-	letter-spacing: -0.04em;
-	line-height: 1.05;
-}
-
-.feature-list p {
-	max-width: 570px;
-	color: #777;
-	font-size: 14px;
-	letter-spacing: -0.01em;
-	line-height: 1.4;
 }
 
 /* Pricing ----------------------------------------------------------------- */
@@ -2094,20 +2031,6 @@ html.motion-ready .marketing-page .plan[data-reveal].is-visible:hover {
 		padding-top: 74px;
 	}
 
-	.features {
-		margin-top: 106px;
-	}
-
-	.feature-layout {
-		grid-template-columns: 1fr;
-		gap: 42px;
-	}
-
-	.organization-illustration {
-		width: min(430px, 100%);
-		justify-self: center;
-	}
-
 	.pricing {
 		margin-top: 116px;
 	}
@@ -2162,7 +2085,6 @@ html.motion-ready .marketing-page .plan[data-reveal].is-visible:hover {
 	}
 
 	.intro-copy h2,
-	.feature-copy h2,
 	.feature-grid-heading h2 {
 		font-size: 32px;
 	}
@@ -2188,15 +2110,6 @@ html.motion-ready .marketing-page .plan[data-reveal].is-visible:hover {
 
 	.banner-cta p {
 		font-size: 15px;
-	}
-
-	.feature-copy > p,
-	.feature-list p {
-		font-size: 14px;
-	}
-
-	.feature-list {
-		gap: 30px;
 	}
 
 	.plan {
@@ -2248,6 +2161,19 @@ html.motion-ready .marketing-page .plan[data-reveal].is-visible:hover {
 	.marketing-page .editor-preview:hover,
 	.marketing-page .feature-card:hover .feature-visual {
 		transform: none !important;
+	}
+
+	.marketing-page .feature-card:hover .feature-illustration,
+	.marketing-page .feature-card:focus-within .feature-illustration,
+	.marketing-page .feature-card:active .feature-illustration {
+		transform: none !important;
+		filter: none !important;
+	}
+
+	.marketing-page .feature-card:hover .feature-visual::after,
+	.marketing-page .feature-card:focus-within .feature-visual::after {
+		animation: none !important;
+		opacity: 0;
 	}
 
 	.marketing-hero *,

@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
-import { expect, test, type Page } from "@playwright/test";
 
 test.describe.configure({ mode: "serial" });
+
+test.beforeEach(async ({ page }) => {
+  await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-${randomUUID()}` });
+});
 
 const runKey = process.env.PLAYWRIGHT_RUN_ID ?? String(Date.now());
 const email = `study-e2e-${runKey}@example.test`;

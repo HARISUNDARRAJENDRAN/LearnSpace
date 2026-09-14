@@ -2,12 +2,17 @@ import type { NextResponse } from "next/server";
 
 export const sessionCookieName = "learnspace_session";
 export const oauthStateCookieName = "learnspace_oauth_state";
-const secureCookies = process.env.NODE_ENV === "production";
+
+function secureCookies(): boolean {
+  if (process.env.AUTH_SECURE_COOKIES === "true") return true;
+  if (process.env.AUTH_SECURE_COOKIES === "false") return false;
+  return process.env.NODE_ENV === "production" && process.env.AUTH_TEST_MODE !== "true";
+}
 
 function cookieOptions(maxAge: number) {
   return {
     httpOnly: true,
-    secure: secureCookies,
+    secure: secureCookies(),
     sameSite: "lax" as const,
     path: "/",
     maxAge,

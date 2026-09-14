@@ -17,12 +17,13 @@ async function deliverEmail(input: {
 }): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   const from = process.env.EMAIL_FROM;
+  const testMode = process.env.AUTH_TEST_MODE === "true";
 
   if (apiKey && from) {
     const response = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
-        Authorization: "Bearer " + apiKey,
+        Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -45,7 +46,7 @@ async function deliverEmail(input: {
     return true;
   }
 
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV === "production" && !testMode) {
     throw new AuthError(
       "EMAIL_NOT_CONFIGURED",
       "Email delivery is not configured on this server.",
@@ -57,7 +58,10 @@ async function deliverEmail(input: {
 }
 
 function exposeDevelopmentLink(): boolean {
-  return process.env.NODE_ENV !== "production" && process.env.AUTH_EXPOSE_VERIFICATION_LINK !== "false";
+  return (
+    (process.env.NODE_ENV !== "production" || process.env.AUTH_TEST_MODE === "true") &&
+    process.env.AUTH_EXPOSE_VERIFICATION_LINK !== "false"
+  );
 }
 
 export async function sendVerificationEmail(input: {

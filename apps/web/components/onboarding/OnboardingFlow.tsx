@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  ONBOARDING_VERSION,
   PERSONA_INTENTS,
   PERSONAS,
   PREFERRED_DURATIONS,
@@ -15,9 +14,8 @@ import {
   type SelfReportedLevel,
   type StartingLevelOptionId,
 } from "@learnspace/shared/onboarding";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LearnSpaceLogo } from "../marketing/hero/LearnSpaceLogo";
 
 type Concept = {
   id: string;
@@ -131,6 +129,46 @@ function apiErrorMessage(data: ApiError): string {
   return data.error?.message ?? "We could not save your learning preferences.";
 }
 
+const BLOOM_SEED = 174074637;
+const BLOOM_GRAIN_LAYER =
+  "url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.280'/></svg>\")";
+
+const BLOOM_BLOBS = [
+  { baseX: 66.94, baseY: 46.43, color: "251, 233, 240", stops: [19.02, 38.05, 57.07, 76.1] },
+  { baseX: 34.69, baseY: 66.31, color: "205, 231, 240", stops: [12.73, 25.45, 38.18, 50.9] },
+  { baseX: 48.93, baseY: 19.32, color: "230, 214, 245", stops: [16.75, 33.5, 50.25, 67] },
+  { baseX: 80.23, baseY: 87.54, color: "214, 240, 228", stops: [10.28, 20.55, 30.83, 41.1] },
+] as const;
+
+function seededBloomPhase(index: number, offset: number): number {
+  return (Math.sin(BLOOM_SEED + index * 13.37 + offset * 29.11) * 0.5 + 0.5) * Math.PI * 2;
+}
+
+const BLOOM_PHASES = BLOOM_BLOBS.map((_, index) => ({
+  p: seededBloomPhase(index, 0),
+  p2: seededBloomPhase(index, 1),
+}));
+
+function buildBloomBackground(ph: number): string {
+  const amt = 0.40;
+  const dir = 1;
+  const spin = ph * dir;
+  const layers = BLOOM_BLOBS.map((blob, index) => {
+    const phase = BLOOM_PHASES[index];
+    if (!phase) {
+      return "";
+    }
+    const { p, p2 } = phase;
+    const x = blob.baseX + (Math.sin(spin * 0.55 + p) - Math.sin(p)) * 14 * amt;
+    const y = blob.baseY + (Math.sin(spin * 0.43 + p2) - Math.sin(p2)) * 14 * amt;
+    const [stop1, stop2, stop3, stop4] = blob.stops;
+
+    return `radial-gradient(circle at ${x}% ${y}%, rgba(${blob.color}, 1) 0%, rgba(${blob.color}, 0.844) ${stop1}%, rgba(${blob.color}, 0.5) ${stop2}%, rgba(${blob.color}, 0.156) ${stop3}%, rgba(${blob.color}, 0) ${stop4}%)`;
+  });
+
+  return [BLOOM_GRAIN_LAYER, ...layers].join(",\n");
+}
+
 export function OnboardingFlow({
   firstName,
   initialState,
@@ -139,6 +177,7 @@ export function OnboardingFlow({
   initialState: InitialState;
 }) {
   const router = useRouter();
+  const pageRef = useRef<HTMLElement>(null);
   const [step, setStep] = useState(0);
   const [flow, setFlow] = useState(() => initialFlow(initialState.draft));
   const [selectedConcepts, setSelectedConcepts] = useState(() =>
@@ -157,6 +196,30 @@ export function OnboardingFlow({
 
   useEffect(() => {
     setIsHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const page = pageRef.current;
+    if (!page) {
+      return;
+    }
+
+    page.style.backgroundImage = buildBloomBackground(0);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      return;
+    }
+
+    const start = performance.now();
+    let raf = 0;
+    const frame = (now: number) => {
+      const t = (now - start) / 1000;
+      const ph = t * 1.0;
+      page.style.backgroundImage = buildBloomBackground(ph);
+      raf = requestAnimationFrame(frame);
+    };
+
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
@@ -342,28 +405,23 @@ export function OnboardingFlow({
   );
 
   return (
-    <main className="onboarding-page">
-      <div className="onboarding-orb onboarding-orb-left" aria-hidden="true" />
-      <div className="onboarding-orb onboarding-orb-right" aria-hidden="true" />
+    <main ref={pageRef} className="onboarding-page">
       <section
         className="onboarding-shell"
         aria-labelledby="onboarding-title"
         data-onboarding-hydrated={isHydrated ? "true" : "false"}
       >
-        <header className="onboarding-header">
-          <a className="onboarding-brand" href="/" aria-label="LearnSpace home">
-            <LearnSpaceLogo />
-          </a>
-          {step > 0 ? (
+        {step > 0 ? (
+          <header className="onboarding-header">
             <span className="onboarding-progress">Step {step} of 5</span>
-          ) : null}
-        </header>
+          </header>
+        ) : null}
 
         <div className="onboarding-content">
           {step === 0 ? (
             <div className="onboarding-welcome">
               <span className="onboarding-kicker">A space made for your mind</span>
-              <h1 id="onboarding-title">Welcome to LearnSpace, {firstName}.</h1>
+              <h1 id="onboarding-title">Welcome, {firstName}.</h1>
               <p>Let&apos;s shape this place around how you learn.</p>
               <button className="onboarding-primary" type="button" onClick={goForward}>
                 Get started <span aria-hidden="true">↗</span>
@@ -372,7 +430,7 @@ export function OnboardingFlow({
           ) : (
             <>
               <div className="onboarding-heading">
-                <span className="onboarding-kicker">{ONBOARDING_VERSION === 1 ? "Your learning profile" : "LearnSpace"}</span>
+                <span className="onboarding-kicker">Your learning profile</span>
                 {step === 1 ? <h1 id="onboarding-title">How do you see yourself learning?</h1> : null}
                 {step === 2 ? <h1 id="onboarding-title">What brings you here?</h1> : null}
                 {step === 3 ? <h1 id="onboarding-title">What could you spend hours learning about?</h1> : null}

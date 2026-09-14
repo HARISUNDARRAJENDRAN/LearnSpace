@@ -1,12 +1,7 @@
 import { AuthShell } from "../../../components/auth/AuthShell";
 import { VerifyEmailClient } from "../../../components/auth/VerifyEmailClient";
 import { safeRedirectPath } from "../../../lib/auth/validation";
-
-type SearchParams = Promise<Record<string, string | string[] | undefined>>;
-
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
+import { first, type SearchParams } from "../../../lib/search-params";
 
 export const dynamic = "force-dynamic";
 

@@ -57,12 +57,13 @@ Configure these Vercel Production variables for the staging deployment:
 - `DATABASE_URL`, `DATABASE_AUTH_URL`
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `RESEND_API_KEY`, `EMAIL_FROM`, `AUTH_EXPOSE_VERIFICATION_LINK=false`
+- `KV_REST_API_URL`, `KV_REST_API_TOKEN` for shared rate limiting and discovery cache
 - the server-safe `DB_*` values described above
 
 The Google callback must be exactly
-`https://<staging-domain>/api/auth/google/callback`. Redis is not provisioned
-for this milestone because the current auth implementation has no Redis
-dependency or rate-limit path.
+`https://<staging-domain>/api/auth/google/callback`. The web app reads the
+Vercel KV REST variables when present and falls back to the local in-memory
+rate limiter only when those variables are absent outside production.
 
 Catalogue imports must use `DATABASE_WORKER_URL`; `DATABASE_MIGRATOR_URL` is
 reserved for schema migrations and verification.

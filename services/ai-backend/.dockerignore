@@ -7,4 +7,3 @@ tests
 *.log
 .env
 .env.*
-!.env.example
