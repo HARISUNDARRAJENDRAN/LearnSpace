@@ -142,7 +142,7 @@ test("forgot and reset password revoke the old session", async ({ page }) => {
   await page.getByLabel("Email address").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("region", { name: "Welcome back." }).getByRole("alert")).toContainText("incorrect");
+  await expect(page.getByRole("region", { name: "Sign In or Join Now!" }).getByRole("alert")).toContainText("incorrect");
 
   await page.getByLabel("Password", { exact: true }).fill("browser-password-456");
   await page.getByRole("button", { name: "Log in" }).click();
@@ -169,7 +169,7 @@ test("Google takeover clears the unverified password credential", async ({ page 
   await page.getByLabel("Email address").fill(googleEmail);
   await page.getByLabel("Password", { exact: true }).fill("attacker-password-789");
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page.getByRole("region", { name: "Welcome back." }).getByRole("alert")).toContainText("incorrect");
+  await expect(page.getByRole("region", { name: "Sign In or Join Now!" }).getByRole("alert")).toContainText("incorrect");
 });
 
 test("auth login rate limit returns HTTP 429", async ({ request }) => {
