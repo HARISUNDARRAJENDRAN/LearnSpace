@@ -4,11 +4,31 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./domain-values": "./src/domain-values.ts",
-    "./contracts": "./src/contracts.ts",
-    "./onboarding": "./src/onboarding.ts",
-    "./password": "./src/password.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./domain-values": {
+      "types": "./src/domain-values.ts",
+      "import": "./dist/domain-values.js",
+      "default": "./dist/domain-values.js"
+    },
+    "./contracts": {
+      "types": "./src/contracts.ts",
+      "import": "./dist/contracts.js",
+      "default": "./dist/contracts.js"
+    },
+    "./onboarding": {
+      "types": "./src/onboarding.ts",
+      "import": "./dist/onboarding.js",
+      "default": "./dist/onboarding.js"
+    },
+    "./password": {
+      "types": "./src/password.ts",
+      "import": "./dist/password.js",
+      "default": "./dist/password.js"
+    }
   },
   "scripts": {
     "build": "tsc --build",

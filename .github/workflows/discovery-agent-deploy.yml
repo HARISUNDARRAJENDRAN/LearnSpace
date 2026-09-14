@@ -1,0 +1,40 @@
+name: Deploy discovery agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Optional ECR image tag; defaults to the commit SHA.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      LEARNSPACE_STAGE: staging
+      AWS_STACK_NAME: learnspace-discovery-agent-staging
+      AWS_FUNCTION_NAME: learnspace-discovery-agent-staging
+      AWS_ECR_REPOSITORY: learnspace-discovery-agent-staging
+      IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
+      EXA_API_KEY_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
+      INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity --query '{Account:Account,Arn:Arn}' --output json
+
+      - name: Deploy Lambda container
+        run: bash infra/aws/discovery-agent/deploy.sh

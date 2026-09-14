@@ -15,8 +15,8 @@ import {
 const sessionLifetimeSeconds = 60 * 60 * 24 * 30;
 
 async function getAuthDatabase() {
-  const { authDb } = await import("@learnspace/db");
-  return authDb;
+  const { getAuthDatabase } = await import("@learnspace/db");
+  return getAuthDatabase();
 }
 
 export type UserRecord = typeof users.$inferSelect;

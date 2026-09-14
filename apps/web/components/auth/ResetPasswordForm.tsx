@@ -2,6 +2,8 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 type ResetResponse = { redirectTo?: string; error?: { message?: string } };
 
@@ -48,9 +50,10 @@ export function ResetPasswordForm({ token }: { token: string }) {
     <>
       {error ? <p className="auth-error" role="alert">{error}</p> : null}
       <form className="auth-form" onSubmit={submit}>
-        <label>
+        <label htmlFor="new-password">
           <span>New password</span>
-          <input
+          <Input
+            id="new-password"
             name="password"
             type="password"
             value={password}
@@ -61,9 +64,10 @@ export function ResetPasswordForm({ token }: { token: string }) {
             required
           />
         </label>
-        <label>
+        <label htmlFor="reset-confirm-password">
           <span>Confirm password</span>
-          <input
+          <Input
+            id="reset-confirm-password"
             name="confirmPassword"
             type="password"
             value={confirmPassword}
@@ -74,9 +78,9 @@ export function ResetPasswordForm({ token }: { token: string }) {
             required
           />
         </label>
-        <button className="auth-submit" type="submit" disabled={isSubmitting || !token}>
+        <Button className="auth-submit" type="submit" disabled={isSubmitting || !token}>
           {isSubmitting ? "Updating…" : "Reset password"}
-        </button>
+        </Button>
       </form>
       <p className="auth-switch">
         Need a new link? <a href="/forgot-password">Start again</a>

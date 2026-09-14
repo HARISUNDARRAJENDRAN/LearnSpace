@@ -18,8 +18,8 @@ export default async function RegisterPage({
   const params = await searchParams;
   return (
     <AuthShell
-      title="Make space to learn."
-      subtitle="Create a focused home for your research, practice, and progress."
+      title="Sign In or Join Now!"
+      subtitle="login or create your LearnSpace account."
     >
       <AuthForm mode="register" next={safeRedirectPath(first(params.next))} />
     </AuthShell>

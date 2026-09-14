@@ -20,6 +20,7 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: docker compose config --quiet
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run build
@@ -49,7 +50,7 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm run db:check
-      - run: docker compose -f infra/postgres/docker-compose.yml up -d --wait
+      - run: docker compose up -d --wait postgres
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
       - run: pnpm run db:seed:dev
@@ -63,7 +64,7 @@ jobs:
       - run: pnpm run db:ledger > after
       - run: diff -u before after
       - if: always()
-        run: docker compose -f infra/postgres/docker-compose.yml down -v
+        run: docker compose down -v
 
   python:
     runs-on: ubuntu-latest

@@ -6,8 +6,8 @@ out/
 coverage/
 .turbo/
 *.tsbuildinfo
-.env
-.env.*
+# Local environment files; keep committed examples visible.
+.env*
 !.env.example
 infra/postgres/data/
 *.log
@@ -23,6 +23,7 @@ test-results/
 artifacts/discovery/raw/
 artifacts/discovery/*.zip
 /educational_youtube_content.csv
+/apps/web/public/*.zip
 
 # TypeScript source directories must not collect compiler output.
 **/*.js

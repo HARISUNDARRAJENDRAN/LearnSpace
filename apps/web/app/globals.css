@@ -1,4 +1,25 @@
+/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind expands this directive during the CSS build. */
+@tailwind utilities;
+
 :root {
+	--background: 200 33% 98%;
+	--foreground: 198 31% 12%;
+	--card: 0 0% 100%;
+	--card-foreground: 198 31% 12%;
+	--primary: 196 68% 31%;
+	--primary-foreground: 0 0% 100%;
+	--secondary: 194 48% 92%;
+	--secondary-foreground: 198 31% 18%;
+	--muted: 195 28% 94%;
+	--muted-foreground: 198 12% 43%;
+	--accent: 194 48% 92%;
+	--accent-foreground: 198 31% 18%;
+	--destructive: 0 68% 50%;
+	--destructive-foreground: 0 0% 100%;
+	--border: 195 18% 84%;
+	--input: 195 18% 84%;
+	--ring: 196 68% 31%;
+	--radius: 0.75rem;
   --hero-sky: #9ed4ef;
   --hero-sky-light: #d1eef9;
   --paper: #fcf9f7;
@@ -35,7 +56,6 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
-  overflow-x: hidden;
 }
 
 a {

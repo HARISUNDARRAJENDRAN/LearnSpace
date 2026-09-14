@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 type ResendResponse = {
   message?: string;
@@ -71,9 +73,10 @@ export function VerifyEmailClient({
         </a>
       ) : null}
       <form className="auth-form verify-form" onSubmit={resend}>
-        <label>
+        <label htmlFor="verify-email">
           <span>Email address</span>
-          <input
+          <Input
+            id="verify-email"
             type="email"
             value={address}
             onChange={(event) => setAddress(event.target.value)}
@@ -81,9 +84,9 @@ export function VerifyEmailClient({
             required
           />
         </label>
-        <button className="auth-submit" type="submit" disabled={isSubmitting}>
+        <Button className="auth-submit" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Sending…" : "Resend verification email"}
-        </button>
+        </Button>
       </form>
       <p className="auth-switch">
         Ready to continue? <a href="/login">Go to login</a>

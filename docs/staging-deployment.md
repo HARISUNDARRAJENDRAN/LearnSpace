@@ -1,8 +1,9 @@
 # LearnSpace staging deployment
 
 The staging web app runs on Vercel with `apps/web` as the project root. Neon
-PostgreSQL is the persistent database. Local development continues to use the
-Docker PostgreSQL instance in `infra/postgres`.
+PostgreSQL is the persistent database. Local development uses the repository
+root `docker-compose.yml`; its PostgreSQL initialization files live in
+`infra/postgres`.
 
 ## Connection responsibilities
 
@@ -74,14 +75,15 @@ records owner authorization as provenance and is not a public licence claim:
 pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educational_youtube_content.csv --owner-authorized
 ```
 
-The discovery agent runs as the AWS Lambda function
-`learnspace-discovery-agent-staging` in `us-east-1`. Its Function URL is
-`https://ecjpwlgoajulb4heuvlb7gpuuu0bbrfj.lambda-url.us-east-1.on.aws/` and the
-refresh route remains protected by `INTERNAL_SERVICE_TOKEN`. The discovery
-worker uses the same worker connection for catalogue writes and durable job
-state. Run it outside Vercel with `pnpm discovery:worker` and set
-`DISCOVERY_AGENT_URL` to that Function URL plus `INTERNAL_SERVICE_TOKEN`. Its
-recurring scheduler reads these optional policy overrides (hours):
+The discovery agent is the AWS Lambda function
+`learnspace-discovery-agent-staging` in `us-east-1`. Deploy it from
+`infra/aws/discovery-agent/README.md`; the CloudFormation stack output is the
+current Function URL. The refresh route remains protected by
+`INTERNAL_SERVICE_TOKEN`. The discovery worker uses the same worker connection
+for catalogue writes and durable job state. Run it outside Vercel with
+`pnpm discovery:worker` and set `DISCOVERY_AGENT_URL` to the stack output plus
+`INTERNAL_SERVICE_TOKEN`. Its recurring scheduler reads these optional policy
+overrides (hours):
 
 - `DISCOVERY_REFRESH_FAST_HOURS` (default 12)
 - `DISCOVERY_REFRESH_MEDIUM_HOURS` (default 24)
@@ -93,13 +95,15 @@ recurring scheduler reads these optional policy overrides (hours):
 - `DISCOVERY_AGENT_TIMEOUT_SECONDS` (default 120)
 
 The agent service requires `INTERNAL_SERVICE_TOKEN` and, when
-`DISCOVERY_AGENTS_ENABLED=true`, `EXA_API_KEY`. `REDIS_URL` enables the shared
-candidate cache; without it the service uses a bounded per-instance cache and
-still serves stale entries when available. `DISCOVERY_MAX_TOOL_CALLS` defaults
-to 4 and is reserved for mandatory video/current-paper/foundational-paper
-calls before optional work. Keep `DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED=false`
-until a deployed content tool returns the strict structured enrichment schema;
-raw validated Exa candidates remain the safe default.
+`DISCOVERY_AGENTS_ENABLED=true`, `EXA_API_KEY`. In AWS, both values are kept in
+Secrets Manager and loaded by the Lambda container at cold start. `REDIS_URL`
+enables the shared candidate cache; without it the service uses a bounded
+per-instance cache and still serves stale entries when available.
+`DISCOVERY_MAX_TOOL_CALLS` defaults to 4 and is reserved for mandatory
+video/current-paper/foundational-paper calls before optional work. Keep
+`DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED=false` until a deployed content tool
+returns the strict structured enrichment schema; raw validated Exa candidates
+remain the safe default.
 
 The optional `Discovery staging smoke` workflow runs manually or every six
 hours. It requires `STAGING_DATABASE_WORKER_URL`,

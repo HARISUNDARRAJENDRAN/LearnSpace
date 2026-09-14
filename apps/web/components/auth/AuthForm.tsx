@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, type FormEvent, type SVGProps } from "react";
 import { useRouter } from "next/navigation";
+import { AtSignIcon } from "lucide-react";
+import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 
 type AuthFormMode = "login" | "register";
 
@@ -42,6 +45,10 @@ export function AuthForm({
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initialValues);
+  const isRegister = mode === "register";
+  const [showCredentials, setShowCredentials] = useState(
+    isRegister || Boolean(initialError || reset || verified),
+  );
   const [error, setError] = useState(initialError ?? "");
   const [notice, setNotice] = useState(
     reset
@@ -51,7 +58,6 @@ export function AuthForm({
         : "",
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const isRegister = mode === "register";
 
   function updateValue(field: keyof typeof initialValues, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
@@ -109,7 +115,7 @@ export function AuthForm({
   const googleUrl = `/api/auth/google?next=${encodeURIComponent(next)}`;
 
   return (
-    <>
+    <div className={`auth-form-flow auth-form-flow-${mode}`}>
       {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
       {error ? (
         <div className="auth-error" role="alert">
@@ -123,21 +129,25 @@ export function AuthForm({
           ) : null}
         </div>
       ) : null}
-      <a className="google-button" href={googleUrl}>
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path fill="#4285f4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-1.99 3.02v2.51h3.22c1.89-1.74 2.99-4.3 2.99-7.36Z" />
-          <path fill="#34a853" d="M12 22c2.7 0 4.96-.89 6.61-2.41l-3.22-2.51c-.89.6-2.02.96-3.39.96-2.61 0-4.82-1.76-5.61-4.13H3.06v2.59A9.98 9.98 0 0 0 12 22Z" />
-          <path fill="#fbbc05" d="M6.39 13.91a6.02 6.02 0 0 1 0-3.82V7.5H3.06a10 10 0 0 0 0 9l3.33-2.59Z" />
-          <path fill="#ea4335" d="M12 5.96c1.47 0 2.79.51 3.83 1.51l2.87-2.87C16.96 2.97 14.7 2 12 2a9.98 9.98 0 0 0-8.94 5.5l3.33 2.59C7.18 7.72 9.39 5.96 12 5.96Z" />
-        </svg>
-        Continue with Google
-      </a>
-      <div className="auth-divider" aria-hidden="true"><span>or use email</span></div>
+      <div className="auth-providers">
+        <a className="auth-provider-button" href={googleUrl}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M12.479 14.265v-3.279h11.049c.108.571.164 1.247.164 1.979 0 2.46-.672 5.502-2.84 7.669C18.744 22.829 16.051 24 12.483 24 5.869 24 .308 18.613.308 12S5.869 0 12.483 0c3.659 0 6.265 1.436 8.223 3.307L18.392 5.62c-1.404-1.317-3.307-2.341-5.913-2.341C7.65 3.279 3.873 7.171 3.873 12s3.777 8.721 8.606 8.721c3.132 0 4.916-1.258 6.059-2.401.927-.927 1.537-2.251 1.777-4.059l-7.836.004Z" />
+          </svg>
+          Continue with Google
+        </a>
+        <button className="auth-provider-button" type="button" disabled title="GitHub sign-in is not configured">
+          <GithubMark aria-hidden="true" />
+          Continue with GitHub
+        </button>
+      </div>
+      <div className="auth-divider" aria-hidden="true"><span>OR</span></div>
       <form className="auth-form" onSubmit={submit}>
         {isRegister ? (
-          <label>
+          <label htmlFor="display-name">
             <span>Your name</span>
-            <input
+            <Input
+              id="display-name"
               name="displayName"
               type="text"
               value={values.displayName}
@@ -148,35 +158,47 @@ export function AuthForm({
             />
           </label>
         ) : null}
-        <label>
-          <span>Email address</span>
-          <input
-            name="email"
-            type="email"
-            value={values.email}
-            onChange={(event) => updateValue("email", event.target.value)}
-            autoComplete="email"
-            placeholder="you@example.com"
-            required
-          />
+        <label htmlFor="auth-email">
+          <span className="auth-email-prompt">Enter your email address to sign in or create an account</span>
+          <span className="auth-input-wrap">
+            <AtSignIcon aria-hidden="true" />
+            <Input
+              id="auth-email"
+              aria-label="Email address"
+              name="email"
+              type="email"
+              value={values.email}
+              onChange={(event) => {
+                updateValue("email", event.target.value);
+                if (!isRegister) setShowCredentials(true);
+              }}
+              autoComplete="email"
+              placeholder="your.email@example.com"
+              required
+            />
+          </span>
         </label>
-        <label>
-          <span>Password</span>
-          <input
-            name="password"
-            type="password"
-            value={values.password}
-            onChange={(event) => updateValue("password", event.target.value)}
-            autoComplete={isRegister ? "new-password" : "current-password"}
-            placeholder="At least 8 characters"
-            minLength={8}
-            required
-          />
-        </label>
+        {showCredentials ? (
+          <label htmlFor="auth-password">
+            <span>Password</span>
+            <Input
+              id="auth-password"
+              name="password"
+              type="password"
+              value={values.password}
+              onChange={(event) => updateValue("password", event.target.value)}
+              autoComplete={isRegister ? "new-password" : "current-password"}
+              placeholder="At least 8 characters"
+              minLength={8}
+              required
+            />
+          </label>
+        ) : null}
         {isRegister ? (
-          <label>
+          <label htmlFor="confirm-password">
             <span>Confirm password</span>
-            <input
+            <Input
+              id="confirm-password"
               name="confirmPassword"
               type="password"
               value={values.confirmPassword}
@@ -188,21 +210,31 @@ export function AuthForm({
             />
           </label>
         ) : null}
-        <button className="auth-submit" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Please wait…" : isRegister ? "Create account" : "Log in"}
-        </button>
+        <Button className="auth-submit" type="submit" disabled={isSubmitting} aria-label={isRegister ? "Create account" : "Log in"}>
+          {isSubmitting ? "Please wait…" : "Continue With Email"}
+        </Button>
       </form>
-      {!isRegister ? (
+      {!isRegister && showCredentials ? (
         <p className="auth-forgot">
           <a href="/forgot-password">Forgot password?</a>
         </p>
       ) : null}
       <p className="auth-switch">
-        {isRegister ? "Already have an account?" : "New to LearnSpace?"}{" "}
+        {isRegister ? "Already have an account?" : "No account?"}{" "}
         <a href={`${isRegister ? "/login" : "/register"}?next=${encodeURIComponent(next)}`}>
-          {isRegister ? "Log in" : "Create an account"}
+          {isRegister ? "Login here" : "Sign up here"}
         </a>
       </p>
-    </>
+    </div>
+  );
+}
+
+function GithubMark(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <title>GitHub</title>
+      <path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-1.5 6-5.5a4.6 4.6 0 0 0-1-3c.1-.3.5-1.5-.1-3 0 0-1.6-.5-4.9 1.2a16.8 16.8 0 0 0-6 0C4.7 2.5 3.1 3 3.1 3c-.6 1.5-.2 2.7-.1 3a4.6 4.6 0 0 0-1 3c0 4 3 5.5 6 5.5a4.8 4.8 0 0 0-1 3v4" />
+      <path d="M9 18c-4.51 2-5-2-7-2" />
+    </svg>
   );
 }

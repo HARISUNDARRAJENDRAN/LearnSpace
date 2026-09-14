@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: LearnSpace bounded discovery agent backed by a Lambda container image.
+
+Parameters:
+  FunctionName:
+    Type: String
+    Default: learnspace-discovery-agent-staging
+    AllowedPattern: '^[a-zA-Z0-9-_]+$'
+  ImageUri:
+    Type: String
+    Description: Image URI already pushed to Amazon ECR.
+  EnvironmentName:
+    Type: String
+    Default: staging
+    AllowedPattern: '^[a-z0-9-]+$'
+  ExaApiKeySecretArn:
+    Type: String
+    NoEcho: true
+    Description: Secrets Manager ARN containing JSON key EXA_API_KEY.
+  InternalServiceTokenSecretArn:
+    Type: String
+    NoEcho: true
+    Description: Secrets Manager ARN containing JSON key INTERNAL_SERVICE_TOKEN.
+  MemorySize:
+    Type: Number
+    Default: 2048
+    MinValue: 1024
+    MaxValue: 10240
+  Timeout:
+    Type: Number
+    Default: 180
+    MinValue: 1
+    MaxValue: 900
+
+Resources:
+  DiscoveryAgent:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      PackageType: Image
+      ImageUri: !Ref ImageUri
+      Architectures:
+        - x86_64
+      MemorySize: !Ref MemorySize
+      Timeout: !Ref Timeout
+      EphemeralStorage:
+        Size: 1024
+      ReservedConcurrentExecutions: 2
+      AutoPublishAlias: live
+      FunctionUrlConfig:
+        AuthType: NONE
+        InvokeMode: BUFFERED
+      Environment:
+        Variables:
+          DISCOVERY_AGENTS_ENABLED: 'true'
+          DISCOVERY_MAX_CONCURRENCY: '2'
+          DISCOVERY_MAX_TOOL_CALLS: '4'
+          DISCOVERY_REQUEST_TIMEOUT_SECONDS: '8'
+          DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED: 'false'
+          CREWAI_DISABLE_TELEMETRY: 'true'
+          EXA_API_KEY_SECRET_ARN: !Ref ExaApiKeySecretArn
+          INTERNAL_SERVICE_TOKEN_SECRET_ARN: !Ref InternalServiceTokenSecretArn
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource:
+                - !Ref ExaApiKeySecretArn
+                - !Ref InternalServiceTokenSecretArn
+      Tags:
+        Service: learnspace-discovery-agent
+        Environment: !Ref EnvironmentName
+
+Outputs:
+  FunctionUrl:
+    Description: Function URL used by the durable discovery worker.
+    Value: !GetAtt DiscoveryAgentUrl.FunctionUrl
+  FunctionArn:
+    Description: Discovery agent Lambda ARN.
+    Value: !GetAtt DiscoveryAgent.Arn
+  FunctionName:
+    Description: Discovery agent Lambda name.
+    Value: !Ref DiscoveryAgent
