@@ -1,29 +1,31 @@
 "use client";
 
 import {
-  BookOpen,
-  Brain,
+  Bookmark,
+  BrainCircuit,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
   CircleHelp,
   FileText,
+  FileSearch,
   House,
-  Library,
+  Compass,
+  LibraryBig,
   LogOut,
   MoreHorizontal,
-  PanelLeft,
   Plus,
   Search,
   Settings,
-  Sparkles,
   UserRound,
   Video,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { SearchPalette } from "./SearchPalette";
 
 type NavigationMode = "learn" | "research";
 type IconComponent = typeof House;
@@ -54,19 +56,19 @@ type AppSidebarProps = {
 
 const learnNavigation = [
   { label: "Home", href: "/app", icon: House, tone: "home" },
-  { label: "Discover", href: "/app/discover", icon: Sparkles, tone: "discover" },
+  { label: "Discover", href: "/app/discover", icon: Compass, tone: "discover" },
 ] as const;
 
 const researchNavigation = [
   { label: "Research Home", href: "/app/research", icon: House, tone: "research" },
-  { label: "Find Papers", href: "/app/research", icon: Search, tone: "papers" },
-  { label: "Saved Papers", href: "/app/library", icon: BookOpen, tone: "saved" },
+  { label: "Find Papers", href: "/app/research", icon: FileSearch, tone: "papers" },
+  { label: "Saved Papers", href: "/app/library", icon: Bookmark, tone: "saved" },
 ] as const;
 
 const sharedNavigation = [
-  { label: "Sessions", href: "/app/sessions", icon: PanelLeft, tone: "sessions" },
-  { label: "Library", href: "/app/library", icon: Library, tone: "library" },
-  { label: "Second Brain", href: "/app/second-brain", icon: Brain, tone: "brain" },
+  { label: "Sessions", href: "/app/sessions", icon: CalendarDays, tone: "sessions" },
+  { label: "Library", href: "/app/library", icon: LibraryBig, tone: "library" },
+  { label: "Second Brain", href: "/app/second-brain", icon: BrainCircuit, tone: "brain" },
 ] as const;
 
 function isActivePath(pathname: string, href: string): boolean {
@@ -97,6 +99,7 @@ export function AppSidebar({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
   const visibleRecentSessions = useMemo(
@@ -128,6 +131,28 @@ export function AppSidebar({
       document.removeEventListener("keydown", closeOnEscape);
     };
   }, [accountMenuOpen, modeMenuOpen]);
+
+  useEffect(() => {
+    function isTypingTarget(target: EventTarget | null): boolean {
+      return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
+    }
+
+    function handleShortcut(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (event.key === "/" && !isTypingTarget(event.target)) {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === "Escape") setSearchOpen(false);
+    }
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, []);
 
   function selectMode(nextMode: NavigationMode) {
     setMode(nextMode);
@@ -174,11 +199,13 @@ export function AppSidebar({
               </div>
             ) : null}
           </div>
-          <Link className="application-new-session" href={mode === "research" ? "/app/research" : "/app/sessions"} onClick={onClose}>
-            <Plus aria-hidden="true" />
-            <span>{mode === "research" ? "New research" : "New session"}</span>
+          <Link className="application-new-session" href={mode === "research" ? "/app/research" : "/app/discover"} onClick={onClose}>
+            <span className="application-new-session-content">
+              <Plus aria-hidden="true" />
+              <span>{mode === "research" ? "New research" : "New session"}</span>
+            </span>
           </Link>
-          <button className="application-search-button" type="button" aria-label={`Search ${mode === "research" ? "papers" : "LearnSpace"}`} onClick={() => router.push(mode === "research" ? "/app/research" : "/app/discover")}>
+          <button className="application-search-button" type="button" aria-label="Search LearnSpace" title="Search (⌘K)" onClick={() => setSearchOpen(true)}>
             <Search aria-hidden="true" />
           </button>
         </div>
@@ -207,7 +234,7 @@ export function AppSidebar({
               <div className="application-recent-list">
                 {visibleRecentSessions.length > 0 ? visibleRecentSessions.map((session) => {
                   const Icon = sessionIcon(session);
-                  return <Link className="application-recent-link" data-nav-tone={session.activeResource?.type ?? "session"} href={session.route ?? "/app/sessions"} key={session.id} onClick={onClose}><Icon aria-hidden="true" /><span>{session.title}</span></Link>;
+                  return <Link className="application-recent-link" data-nav-tone={session.activeResource?.type ?? "session"} href={session.route ?? "/app/sessions"} key={session.id} onClick={onClose}><span className="application-nav-icon" aria-hidden="true"><Icon /></span><span>{session.title}</span></Link>;
                 }) : <p className="application-recent-empty">No recent {mode === "research" ? "research" : "sessions"} yet.</p>}
               </div>
             ) : null}
@@ -229,10 +256,11 @@ export function AppSidebar({
           </div>
         </div>
       </aside>
+      <SearchPalette isOpen={searchOpen} mode={mode} onClose={() => setSearchOpen(false)} />
     </>
   );
 }
 
 function NavLink({ href, label, Icon, tone, active, onClose }: { href: string; label: string; Icon: IconComponent; tone: string; active: boolean; onClose: () => void }) {
-  return <Link className={`application-nav-link ${active ? "is-active" : ""}`} data-nav-tone={tone} href={href} aria-current={active ? "page" : undefined} onClick={onClose}><Icon aria-hidden="true" /><span>{label}</span></Link>;
+  return <Link className={`application-nav-link ${active ? "is-active" : ""}`} data-nav-tone={tone} href={href} aria-current={active ? "page" : undefined} onClick={onClose}><span className="application-nav-icon" aria-hidden="true"><Icon /></span><span>{label}</span></Link>;
 }

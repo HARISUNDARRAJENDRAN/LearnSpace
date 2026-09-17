@@ -11,7 +11,7 @@ function routeFrom(value: unknown): string {
   return (value as StartResponse).route as string;
 }
 
-export function StartStudyButton({ resourceId, origin, recommendationRunId, label = "Start learning", className = "" }: { resourceId: string; origin: StudyOrigin; recommendationRunId?: string; label?: string; className?: string }) {
+export function StartStudyButton({ resourceId, origin, recommendationRunId, label = "Start learning", className = "", onClick }: { resourceId: string; origin: StudyOrigin; recommendationRunId?: string; label?: string; className?: string; onClick?: () => void }) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   async function start() {
@@ -24,7 +24,7 @@ export function StartStudyButton({ resourceId, origin, recommendationRunId, labe
       setState("error");
     }
   }
-  return <button className={className} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
+  return <button className={className} type="button" onClick={() => { onClick?.(); void start(); }} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }
 
 export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {
