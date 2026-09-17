@@ -415,8 +415,12 @@ function responseFromRanked(
 ): DiscoveryHomeResponse {
   const dismissed = new Set(profileLoad.dismissedResourceIds);
   const activeIds = new Set(profileLoad.activeSessionResourceIds);
-  const selectedVideos = ranked.videos.filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id));
-  const selectedPapers = ranked.papers.filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id));
+  const selectedVideos = ranked.videos
+    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id))
+    .toSorted((left, right) => (left.finalRank ?? 999) - (right.finalRank ?? 999));
+  const selectedPapers = ranked.papers
+    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id))
+    .toSorted((left, right) => (left.finalRank ?? 999) - (right.finalRank ?? 999));
   const recommendedVideos = selectedVideos.slice(0, 6);
   const recommendedPapers = selectedPapers.slice(0, 6);
   const usedInRecommendations = new Set([...recommendedVideos, ...recommendedPapers].map((candidate) => candidate.resource.id));

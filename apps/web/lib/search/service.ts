@@ -35,7 +35,7 @@ export async function searchWorkspace(userId: string, rawQuery: string): Promise
     const [resourceRows, sessionRows, libraryRows, collectionRows, conceptRows] = await Promise.all([
       tx.select({ id: resources.id, title: resources.title, description: resources.description, type: resources.type, provider: resources.provider })
         .from(resources)
-        .where(and(or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])), inArray(resources.status, ["pending", "processing", "ready"]), isNull(resources.deletedAt), textMatch))
+        .where(and(or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])), inArray(resources.type, ["video", "paper", "pdf"]), eq(resources.status, "ready"), isNull(resources.deletedAt), textMatch))
         .orderBy(desc(resources.qualityScore), desc(resources.updatedAt))
         .limit(6),
       tx.select({ id: studySessions.id, title: studySessions.title, activeResourceId: studySessions.activeResourceId, resourceTitle: resources.title, resourceType: resources.type })
@@ -63,7 +63,7 @@ export async function searchWorkspace(userId: string, rawQuery: string): Promise
     ]);
 
     return [
-      ...resourceRows.map((row) => ({ id: row.id, kind: "resource" as const, title: row.title, subtitle: row.description ?? `${resourceLabel(row.type)} · ${row.provider}`, href: "/app/discover", resourceId: row.id, resourceType: row.type })),
+      ...resourceRows.map((row) => ({ id: row.id, kind: "resource" as const, title: row.title, subtitle: row.description ?? `${resourceLabel(row.type)} · ${row.provider}`, href: null, resourceId: row.id, resourceType: row.type })),
       ...sessionRows.map((row) => ({ id: row.id, kind: "session" as const, title: row.title ?? row.resourceTitle ?? "Untitled session", subtitle: row.resourceTitle ? `Session · ${row.resourceTitle}` : "Session", href: sessionHref(row.resourceType, row.id), resourceId: row.activeResourceId, resourceType: row.resourceType })),
       ...libraryRows.map((row) => ({ id: row.id, kind: "library" as const, title: row.title, subtitle: row.description ?? `${resourceLabel(row.type)} · Saved`, href: "/app/library", resourceId: row.id, resourceType: row.type })),
       ...collectionRows.map((row) => ({ id: row.id, kind: "library" as const, title: row.title, subtitle: row.description ?? "Collection", href: `/app/library/collections/${row.id}`, resourceId: null, resourceType: null })),
