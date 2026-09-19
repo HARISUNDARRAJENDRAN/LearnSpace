@@ -94,3 +94,39 @@ jobs:
       - run: uv run ruff check app tests
       - run: uv run pyright
       - run: uv run pytest
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
+    needs: [foundation, database, python]
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      DB_POOL_MAX: "1"
+      DB_CONNECT_TIMEOUT_SECONDS: "10"
+      DB_IDLE_TIMEOUT_SECONDS: "20"
+      DB_MAX_LIFETIME_SECONDS: "300"
+      DB_PREPARED_STATEMENTS: "false"
+      DB_STATEMENT_TIMEOUT_MS: "3000"
+      DB_LOCK_TIMEOUT_MS: "500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run db:check
+      - run: pnpm run db:migrate
+      - run: pnpm run db:verify
+      - name: Pull Vercel production configuration
+        run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --cwd apps/web --token "$VERCEL_TOKEN"
+      - name: Build the tested commit for Vercel
+        run: pnpm dlx vercel@51.7.0 build --prod --cwd apps/web --token "$VERCEL_TOKEN"
+      - name: Deploy the tested artifact to production
+        run: pnpm dlx vercel@51.7.0 deploy --prebuilt --prod --yes --cwd apps/web --token "$VERCEL_TOKEN"
