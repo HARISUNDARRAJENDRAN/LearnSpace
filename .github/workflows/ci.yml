@@ -60,7 +60,7 @@ jobs:
       - run: pnpm --filter @learnspace/web run test:e2e:production
       - name: Verify auth layouts against production server
         run: |
-          pnpm --filter @learnspace/web exec next start --hostname localhost --port 3200 > /tmp/learnspace-next.log 2>&1 &
+          PORT=3200 pnpm --filter @learnspace/web run start:standalone > /tmp/learnspace-next.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           for attempt in {1..30}; do

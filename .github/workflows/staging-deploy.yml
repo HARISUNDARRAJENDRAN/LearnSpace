@@ -1,4 +1,4 @@
-name: Staging deploy
+name: Deploy tested main to Vercel production
 
 on:
   workflow_run:
@@ -7,17 +7,18 @@ on:
     branches: [main]
 
 concurrency:
-  group: learnspace-staging
+  group: learnspace-production
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   migrate-and-deploy:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
     env:
       DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
-      DATABASE_URL: postgres://build:build@localhost:5432/build
-      DATABASE_AUTH_URL: postgres://build:build@localhost:5432/build
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
@@ -40,11 +41,16 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run typecheck
-      - run: pnpm run lint
-      - run: pnpm run build
+      - name: Verify this is still the current main commit
+        run: |
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
       - run: pnpm run db:check
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
-      - run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --token "$VERCEL_TOKEN"
-      - run: pnpm dlx vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
+      - name: Pull Vercel production configuration
+        run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --cwd apps/web --token "$VERCEL_TOKEN"
+      - name: Build the tested commit for Vercel
+        run: pnpm dlx vercel@51.7.0 build --prod --cwd apps/web --token "$VERCEL_TOKEN"
+      - name: Deploy the prebuilt artifact to production
+        run: pnpm dlx vercel@51.7.0 deploy --prebuilt --prod --yes --cwd apps/web --token "$VERCEL_TOKEN"

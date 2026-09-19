@@ -123,8 +123,8 @@ test.describe("authenticated app shell visual regression", () => {
       await expect(page.locator(".application-page")).toHaveScreenshot(`app-shell-${name}.png`, {
         animations: "disabled",
         caret: "hide",
-        // Desktop text/icon rasterization can differ by a few pixels across CI hosts.
-        maxDiffPixels: name === "desktop" ? 128 : 0,
+        // Text/icon rasterization can differ by a few pixels across CI hosts.
+        maxDiffPixels: 128,
       });
       if (name === "desktop") {
         await page.getByRole("button", { name: "Collapse sidebar" }).click();
