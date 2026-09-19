@@ -131,6 +131,8 @@ test.describe("authenticated app shell visual regression", () => {
         await expect(page.locator(".application-page")).toHaveScreenshot("app-shell-collapsed-desktop.png", {
           animations: "disabled",
           caret: "hide",
+          // Keep the collapsed shell resilient to the same small CI rasterization drift.
+          maxDiffPixels: 128,
         });
       }
     }
