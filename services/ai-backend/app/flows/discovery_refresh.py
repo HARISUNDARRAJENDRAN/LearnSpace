@@ -80,46 +80,48 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         )
         format_key = "any"
         budget = ToolBudget(self.max_tool_calls)
-        if len(request.concept_ids) != 1 or len(request.concept_names) != 1:
-            raise ValueError("discovery refresh requires one canonical concept pool")
+        if not request.concept_ids and not request.query_text:
+            raise ValueError("discovery refresh requires a canonical concept or query text")
         budget.reserve_primary(3)
         skipped: list[ResourceKind] = []
         youtube_candidates: list[YoutubeCandidate] = []
         arxiv_candidates: list[ArxivCandidate] = []
         youtube_pools: list[tuple[DiscoveryRefreshRequest, list[YoutubeCandidate], bool]] = []
         failures: list[str] = []
-        videos_ready = True
-        papers_ready = True
+        videos_ready = request.source_kind == "paper"
+        papers_ready = request.source_kind == "video"
         cache_hit = False
-        for concept_id, concept_name in zip(
-            request.concept_ids, request.concept_names, strict=False
-        ):
-            concept_key = str(concept_id)
+        search_pools = list(zip(request.concept_ids, request.concept_names, strict=False)) or [(None, request.query_text or "")]
+        for concept_id, concept_name in search_pools:
+            concept_key = str(concept_id or f"query:{concept_name}")
             pool_request = neutral_request.model_copy(
-                update={"concept_ids": [concept_id], "concept_names": [concept_name]}
+                update={"concept_ids": [concept_id] if concept_id else [], "concept_names": [concept_name]}
             )
             youtube_key = youtube_cache_key(
                 concept_key, neutral_request.level, format_key, request.window_days
             )
             if not request.force_refresh and await self.cache.has_enough([youtube_key], 6):
                 cache_hit = True
+                if request.source_kind != "paper":
+                    videos_ready = True
                 cached = await self._cached_youtube(youtube_key, concept_id)
                 youtube_candidates.extend(cached)
                 budget.release_primary()
                 youtube_pools.append((pool_request, cached, False))
             else:
-                videos_ready = False
+                if request.source_kind != "paper":
+                    videos_ready = False
                 try:
-                    candidates = await self._retry(
+                    candidates = [] if request.source_kind == "paper" else await self._retry(
                         partial(self.youtube.discover, pool_request, budget), budget
                     )
                     candidates = [
                         candidate
                         for candidate in candidates
-                        if concept_id in candidate.matched_concept_ids
+                        if concept_id is None or concept_id in candidate.matched_concept_ids
                     ]
                     youtube_candidates.extend(candidates)
-                    youtube_pools.append((pool_request, candidates, True))
+                    youtube_pools.append((pool_request, candidates, request.source_kind != "paper"))
                     await self._cache_youtube(youtube_key, candidates)
                 except Exception as error:
                     if len(failures) < 10:
@@ -130,10 +132,12 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                     youtube_candidates.extend(stale_candidates)
                     youtube_pools.append((pool_request, stale_candidates, False))
 
+            if request.source_kind == "video":
+                continue
             for paper_strategy in ("current", "foundational"):
                 paper_request = neutral_request.model_copy(
                     update={
-                        "concept_ids": [concept_id],
+                        "concept_ids": [concept_id] if concept_id else [],
                         "concept_names": [concept_name],
                         "paper_strategy": paper_strategy,
                         "window_days": request.window_days if paper_strategy == "current" else 365,
@@ -144,6 +148,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                 )
                 if not request.force_refresh and await self.cache.has_enough([arxiv_key], 2):
                     cache_hit = True
+                    papers_ready = True
                     arxiv_candidates.extend(await self._cached_arxiv(arxiv_key, concept_id))
                     budget.release_primary()
                 else:
@@ -155,7 +160,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                         candidates = [
                             candidate
                             for candidate in candidates
-                            if concept_id in candidate.matched_concept_ids
+                            if concept_id is None or concept_id in candidate.matched_concept_ids
                         ]
                         arxiv_candidates.extend(candidates)
                         await self._cache_arxiv(arxiv_key, candidates)
@@ -183,7 +188,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                 except Exception as error:
                     if len(failures) < 10:
                         failures.append(
-                            f"youtube-enrichment:{pool_request.concept_ids[0]}:{type(error).__name__}"
+                            f"youtube-enrichment:{pool_request.concept_names[0]}:{type(error).__name__}"
                         )
                     continue
                 youtube_pools[index] = (pool_request, enriched, True)
@@ -191,6 +196,10 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             youtube_candidates = [
                 candidate for _, candidates, _ in youtube_pools for candidate in candidates
             ]
+        if request.source_kind == "video":
+            arxiv_candidates = []
+        if request.source_kind == "paper":
+            youtube_candidates = []
         if videos_ready:
             skipped.append("video")
         if papers_ready:
@@ -263,7 +272,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             except Exception:
                 continue
             valid = validate_youtube_candidate(candidate)
-            if valid is not None and concept_id in valid.matched_concept_ids:
+            if valid is not None and (concept_id is None or concept_id in valid.matched_concept_ids):
                 result.append(valid)
         return result
 
@@ -278,7 +287,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             except Exception:
                 continue
             valid = validate_arxiv_candidate(candidate)
-            if valid is not None and concept_id in valid.matched_concept_ids:
+            if valid is not None and (concept_id is None or concept_id in valid.matched_concept_ids):
                 result.append(valid)
         return result
 

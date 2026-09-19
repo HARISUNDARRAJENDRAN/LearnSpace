@@ -39,7 +39,7 @@ const durableFeedTtlMs = 6 * 60 * 60 * 1000;
 const staleFeedTtlMs = 24 * 60 * 60 * 1000;
 const catalogResourceLimit = 800;
 
-type ProfileLoad = {
+export type ProfileLoad = {
   profile: LearnerProfile;
   interests: Array<{ id: string; slug: string; name: string; kind: string }>;
   emergingConceptIds: string[];
@@ -67,7 +67,7 @@ function asDate(value: unknown): Date | null {
   return null;
 }
 
-async function loadProfile(tx: Transaction, userId: string): Promise<ProfileLoad> {
+export async function loadDiscoveryProfile(tx: Transaction, userId: string): Promise<ProfileLoad> {
   const [settingsRows, affinityRows, interestRows, sessions, dismissedRows] = await Promise.all([
     tx.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1),
     tx.select().from(userConceptAffinity).where(eq(userConceptAffinity.userId, userId)),
@@ -272,7 +272,7 @@ function profileFingerprint(profileLoad: ProfileLoad): string {
   });
 }
 
-async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserId?: string): Promise<DiscoveryResource[]> {
+export async function loadDiscoveryResources(tx: Transaction, resourceIds?: string[], ownerUserId?: string): Promise<DiscoveryResource[]> {
   if (resourceIds && resourceIds.length === 0) return [];
   const publicResource = and(
     isNull(resources.ownerUserId),
@@ -341,6 +341,9 @@ async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserI
         ? recordValue(metadata, "thumbnailUrl") as string
         : youtubeId ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : null,
       channelTitle: video?.channelTitle ?? null,
+      authors: resource.type === "paper"
+        ? stringArray(recordValue(paper?.metadata, "authors") ?? recordValue(metadata, "authors"))
+        : [],
       durationMs: video?.durationMs ?? null,
       publishedAt: video?.publishedAt ?? asDate(paper?.submittedAt),
       paperAbstract: paper?.abstract ?? null,
@@ -360,9 +363,9 @@ async function loadResources(tx: Transaction, resourceIds?: string[], ownerUserI
 
 export async function rankPaperResourcesForUser(tx: Transaction, userId: string, resourceIds: string[]): Promise<string[]> {
   if (resourceIds.length === 0) return [];
-  const profileLoad = await loadProfile(tx, userId);
+  const profileLoad = await loadDiscoveryProfile(tx, userId);
   const dismissed = new Set(profileLoad.dismissedResourceIds);
-  return rankDiscoveryResources(await loadResources(tx, resourceIds, userId), profileLoad.profile, new Date()).papers
+  return rankDiscoveryResources(await loadDiscoveryResources(tx, resourceIds, userId), profileLoad.profile, new Date()).papers
     .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id))
     .map((candidate) => candidate.resource.id);
 }
@@ -493,7 +496,7 @@ async function loadRankedRun(tx: Transaction, run: typeof recommendationRuns.$in
     .from(recommendationCandidates)
     .innerJoin(resources, eq(resources.id, recommendationCandidates.resourceId))
     .where(eq(recommendationCandidates.recommendationRunId, run.id));
-  const resourcesForRun = await loadResources(tx, rows.map((row) => row.resource.id));
+  const resourcesForRun = await loadDiscoveryResources(tx, rows.map((row) => row.resource.id));
   const byId = new Map(resourcesForRun.map((resource) => [resource.id, resource]));
   const ranked = rows.flatMap(({ candidate }) => {
     const resource = byId.get(candidate.resourceId);
@@ -586,7 +589,7 @@ async function generateRun(
 
 export async function getHomeFeed(userId: string, surface: "home" | "discover" = "home"): Promise<DiscoveryHomeResponse> {
   const fingerprints = await withUserTransaction(userId, async (tx) => {
-    const profileLoad = await loadProfile(tx, userId);
+    const profileLoad = await loadDiscoveryProfile(tx, userId);
     return {
       profileFingerprint: profileFingerprint(profileLoad),
       catalogFingerprint: await catalogFingerprint(tx),
@@ -596,13 +599,13 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
   if (cached) return cached;
   const result = await withUserTransaction(userId, async (tx) => {
     const now = new Date();
-    const profileLoad = await loadProfile(tx, userId);
+    const profileLoad = await loadDiscoveryProfile(tx, userId);
     const currentFingerprints = {
       profileFingerprint: profileFingerprint(profileLoad),
       catalogFingerprint: await catalogFingerprint(tx),
     };
     const reusableRun = await findReusableRun(tx, userId, now, surface, currentFingerprints);
-    const activeSessionResources = await loadResources(tx, profileLoad.activeSessionResourceIds, userId);
+    const activeSessionResources = await loadDiscoveryResources(tx, profileLoad.activeSessionResourceIds, userId);
     if (reusableRun) {
       const ranked = await loadRankedRun(tx, reusableRun);
       return {
@@ -610,7 +613,7 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
         fingerprints: currentFingerprints,
       };
     }
-    const resourcesForRanker = (await loadResources(tx)).filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id));
+    const resourcesForRanker = (await loadDiscoveryResources(tx)).filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id));
     const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface, currentFingerprints);
     return {
       response: responseFromRanked(run.id, now, profileLoad, ranked, activeSessionResources, false),

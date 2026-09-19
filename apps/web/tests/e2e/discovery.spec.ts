@@ -162,7 +162,7 @@ async function completeDiscoveryOnboarding(page: import("@playwright/test").Page
   await expect(page).toHaveURL(/\/app/);
 }
 
-test("completed learner reaches personalized Home and can use the app navigation", async ({ page }) => {
+test("completed learner reaches Home and can use the app navigation", async ({ page }) => {
   const email = `discovery-${Date.now()}@example.test`;
   const password = "discovery-password-123";
 
@@ -200,7 +200,8 @@ test("completed learner reaches personalized Home and can use the app navigation
 
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
-  await expect(page.getByRole("heading", { name: "Good to see you, Discovery." })).toBeVisible();
+  await expect(page.locator("main.home-canvas")).toBeVisible();
+  await page.goto("/app/discover");
   await expect(page.getByRole("heading", { name: "Recommended videos" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Research worth reading" })).toBeVisible();
   await expect(page.getByText("Personalized from your interests")).toBeVisible();
@@ -241,6 +242,7 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   await expect(page).toHaveURL(/\/verify-email/);
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeDiscoveryOnboarding(page);
+  await page.goto("/app/discover");
 
   const coreCard = page.locator("article.discovery-card").filter({ hasText: "A behavior seed lesson" });
   const recommendedSection = page.locator("section[aria-labelledby='section-recommended-videos']");

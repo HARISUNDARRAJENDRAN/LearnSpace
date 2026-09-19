@@ -39,11 +39,10 @@ class ArxivDiscoveryAgent:
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
     ) -> list[ArxivCandidate]:
-        if len(request.concept_ids) != 1 or len(request.concept_names) != 1:
-            raise ValueError("arXiv discovery requires one canonical concept pool")
+        search_terms = request.concept_names or [request.query_text or ""]
         try:
             raw_results = await self.exa.search(
-                request.concept_names,
+                search_terms,
                 "paper",
                 request.window_days,
                 self.max_results,
@@ -58,7 +57,7 @@ class ArxivDiscoveryAgent:
             try:
                 raw_results.extend(
                     await self.arxiv.search(
-                        request.concept_names,
+                        search_terms,
                         self.max_results - len(raw_results),
                         budget,
                         paper_strategy=request.paper_strategy,
@@ -106,7 +105,7 @@ class ArxivDiscoveryAgent:
                     [str(item["category"])] if isinstance(item.get("category"), str) else []
                 ),
                 authors=self._strings(item.get("authors")),
-                matched_concept_ids=[request.concept_ids[0]],
+                matched_concept_ids=request.concept_ids,
                 paper_class=request.paper_strategy,
                 evidence=(
                     [evidence_text[:800]]

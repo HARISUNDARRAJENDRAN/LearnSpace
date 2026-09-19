@@ -21,8 +21,10 @@ LearningFormat = Literal[
 class DiscoveryRefreshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    concept_ids: list[UUID] = Field(min_length=1, max_length=1)
-    concept_names: list[str] = Field(min_length=1, max_length=1)
+    concept_ids: list[UUID] = Field(default_factory=list, max_length=1)
+    concept_names: list[str] = Field(default_factory=list, max_length=1)
+    query_text: str | None = Field(default=None, min_length=2, max_length=240)
+    source_kind: ResourceKind | None = None
     level: LearningLevel = "mixed"
     preferred_formats: list[str] = Field(default_factory=list, max_length=6)
     video_coverage: int = Field(default=0, ge=0, le=100)
@@ -44,6 +46,8 @@ class DiscoveryRefreshRequest(BaseModel):
     def concept_lists_match(self) -> "DiscoveryRefreshRequest":
         if len(self.concept_ids) != len(self.concept_names):
             raise ValueError("concept ids and names must have the same length")
+        if not self.concept_ids and not self.query_text:
+            raise ValueError("discovery refresh requires a canonical concept or query text")
         return self
 
 

@@ -84,6 +84,7 @@ export type DiscoveryResource = {
   qualityScore: number | null;
   thumbnailUrl: string | null;
   channelTitle: string | null;
+  authors?: string[];
   durationMs: number | null;
   publishedAt: Date | null;
   paperAbstract: string | null;
@@ -414,4 +415,58 @@ export function rankDiscoveryResources(resources: DiscoveryResource[], profile: 
     videos: rankVideos(resources.filter((resource) => resource.type === "video"), profile, now),
     papers: rankPapers(resources.filter((resource) => resource.type === "paper"), profile, now),
   };
+}
+
+function queryTokens(query: string): string[] {
+  return [...new Set(query.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 1))];
+}
+
+function queryRelevance(resource: DiscoveryResource, query: string): number {
+  const tokens = queryTokens(query);
+  if (tokens.length === 0) return 0;
+  const text = [resource.title, resource.description, resource.paperAbstract, resource.channelTitle, resource.venue, ...(resource.authors ?? [])]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const title = resource.title.toLowerCase();
+  const matched = tokens.filter((token) => text.includes(token)).length / tokens.length;
+  const titleMatched = tokens.filter((token) => title.includes(token)).length / tokens.length;
+  return clamp(matched * 0.65 + titleMatched * 0.35);
+}
+
+export function rankSourceResources(
+  resources: DiscoveryResource[],
+  profile: LearnerProfile,
+  query: string,
+  mode: "learn" | "research",
+  rankingIntent: string,
+  now: Date,
+): RankedResource[] {
+  const base = mode === "learn"
+    ? rankDiscoveryResources(resources, profile, now).videos
+    : rankDiscoveryResources(resources, profile, now).papers;
+  const ranked = base.map((candidate) => {
+    const relevance = queryRelevance(candidate.resource, query);
+    const metadataLevel = metadataText(candidate.resource.metadata, "estimatedLevel");
+    const durationMinutes = candidate.resource.durationMs ? candidate.resource.durationMs / 60_000 : 0;
+    const intentBoost = rankingIntent === "beginner_friendly" && metadataLevel === "beginner"
+      ? 0.2
+      : rankingIntent === "in_depth" && durationMinutes >= 20
+        ? 0.15
+        : rankingIntent === "practical" && metadataText(candidate.resource.metadata, "learningFormat") === "hands_on"
+          ? 0.2
+          : rankingIntent === "foundational" && metadataText(candidate.resource.metadata, "paperClass") === "foundational"
+            ? 0.2
+            : rankingIntent === "recent" && candidate.resource.publicationDate && now.getTime() - candidate.resource.publicationDate.getTime() < 365 * 86_400_000
+              ? 0.2
+              : 0;
+    const reasonCodes = [...candidate.reasonCodes];
+    if (relevance >= 0.55) reasonCodes.unshift("strong_topic_match");
+    else if (relevance >= 0.25) reasonCodes.unshift("highly_relevant");
+    if (candidate.resource.concepts.length > 0) reasonCodes.push("good_concept_coverage");
+    if (intentBoost > 0) reasonCodes.push(rankingIntent === "foundational" ? "foundational_paper" : rankingIntent === "recent" ? "recent_work" : rankingIntent === "practical" ? "practical_examples" : rankingIntent === "beginner_friendly" ? "fits_your_level" : "matches_how_you_learn");
+    return { ...candidate, score: candidate.score * 0.35 + relevance * 0.5 + intentBoost * 0.15, semanticRelevance: relevance, reasonCodes: [...new Set(reasonCodes)] };
+  }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
+    .map((candidate, index) => ({ ...candidate, candidateRank: index + 1, finalRank: null }));
+  return diversify(ranked, Math.min(5, ranked.length));
 }

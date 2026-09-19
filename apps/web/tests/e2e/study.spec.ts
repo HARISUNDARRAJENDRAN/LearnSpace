@@ -163,6 +163,7 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(page).toHaveURL(/\/verify-email/);
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeOnboarding(page);
+  await page.goto("/app/discover");
 
   const card = page.locator("article.discovery-card").filter({ hasText: "A deterministic Study video" });
   await expect(card).toBeVisible();

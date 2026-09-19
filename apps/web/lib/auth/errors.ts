@@ -4,13 +4,15 @@ export class AuthError extends Error {
   readonly code: string;
   readonly status: number;
   readonly retryAfterSeconds: number | undefined;
+  readonly details: Record<string, unknown>;
 
-  constructor(code: string, message: string, status = 400, retryAfterSeconds?: number) {
+  constructor(code: string, message: string, status = 400, retryAfterSeconds?: number, details: Record<string, unknown> = {}) {
     super(message);
     this.name = "AuthError";
     this.code = code;
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.details = details;
   }
 }
 
@@ -26,7 +28,7 @@ function responseInit(error: AuthError): ResponseInit {
 export function authErrorResponse(error: unknown): Response {
   if (error instanceof AuthError) {
     return Response.json(
-      { error: { code: error.code, message: error.message } },
+      { error: { code: error.code, message: error.message, ...error.details } },
       responseInit(error),
     );
   }

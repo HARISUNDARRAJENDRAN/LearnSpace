@@ -34,7 +34,7 @@
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx src/contracts.test.ts"
+    "test": "tsx --test src/contracts.test.ts src/source-discovery.test.ts"
   },
   "dependencies": {
     "zod": "4.5.2"

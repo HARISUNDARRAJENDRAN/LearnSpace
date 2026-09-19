@@ -19,7 +19,7 @@ const youtubeIdPattern = /^[A-Za-z0-9_-]{11}$/;
 
 export function isAllowedYoutubeHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
-  return host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be";
+  return host === "youtube.com" || host === "www.youtube.com" || host === "m.youtube.com" || host === "youtu.be";
 }
 
 export function youtubeIdFromUrl(value: string): string | null {

@@ -565,8 +565,15 @@
 
 .application-recent-list {
   display: grid;
-  gap: 1px;
+  gap: 2px;
 }
+
+.application-recent-link {
+  height: 29px;
+  line-height: 1.2;
+}
+
+.application-recent-link > span:last-child { line-height: 1.2; }
 
 .application-recent-empty {
   margin: 0;
@@ -664,6 +671,14 @@
   height: 14px;
 }
 
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/InterVariable.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 .application-main {
   min-width: 0;
   min-height: 100dvh;
@@ -677,35 +692,145 @@
   z-index: 10;
   top: 0;
   display: flex;
-  min-height: 46px;
+  min-height: 64px;
   align-items: center;
-  padding: 0 18px;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 0 16px;
   border-bottom: 1px solid #e7e7e4;
   background: #fff;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+.application-header-start,
+.application-header-actions,
 .application-header-context {
   display: flex;
   align-items: center;
 }
 
+.application-header-start {
+  min-width: 0;
+  gap: 18px;
+}
+
+.application-header-context {
+  min-width: 0;
+}
+
 .application-header-title {
+  overflow: hidden;
   color: #454543;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .application-menu-button {
   display: none;
 }
 
+.application-header-create,
+.application-header-more,
+.application-header-view-switcher,
+.application-header-view-switcher button {
+  box-sizing: border-box;
+  border: 1px solid #e1e2e5;
+  background: #fff;
+  color: #252729;
+}
+
+.application-header-create,
+.application-header-more {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 12px;
+  box-shadow: 0 2px 4px #2021240d;
+}
+
+.application-header-create > span {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  background: #242629;
+  color: #fff;
+}
+
+.application-header-create svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.7;
+}
+
+.application-header-more svg,
+.application-header-view-switcher svg,
 .application-menu-button svg {
   width: 18px;
   height: 18px;
 }
 
+.application-header-actions {
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.application-header-view-switcher {
+  display: flex;
+  height: 38px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+}
+
+.application-header-view-switcher button {
+  display: grid;
+  width: 33px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 8px;
+  color: #303235;
+  cursor: pointer;
+}
+
+.application-header-view-switcher button.is-active,
+.application-header-view-switcher button:hover {
+  border-color: #e0e1e4;
+  background: #f4f5f6;
+}
+
+.application-header-view-switcher svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.8;
+}
+
+.application-header-more {
+  padding: 0;
+  cursor: pointer;
+}
+
+.application-header-create:hover,
+.application-header-more:hover {
+  background: #f7f7f8;
+}
+
 .application-body {
-  min-height: calc(100dvh - 46px);
+  min-height: calc(100dvh - 64px);
+}
+
+.home-canvas {
+  min-height: calc(100dvh - 64px);
+  background: #fff;
 }
 
 .application-page.is-sidebar-collapsed {
@@ -750,7 +875,7 @@
 }
 
 .application-page.is-sidebar-collapsed .application-search-button {
-  grid-column: auto;
+  display: none;
 }
 
 .application-page.is-sidebar-collapsed .application-nav {
@@ -1148,8 +1273,13 @@
   .application-search-backdrop { padding: 12px; }
   .application-search-dialog { max-height: calc(100dvh - 24px); }
   .application-search-results { max-height: calc(100dvh - 86px); }
-  .application-menu-button { display: grid; margin-right: 6px; }
-  .application-header { min-height: 46px; }
+  .application-menu-button { display: grid; margin-right: 0; }
+  .application-header { min-height: 64px; padding: 0 12px; }
+  .application-header-start { gap: 10px; }
+  .application-header-actions { gap: 5px; }
+  .application-header-create,
+  .application-header-more { width: 34px; height: 34px; }
+  .application-header-view-switcher button { width: 28px; }
   .discovery-page { width: min(100% - 30px, 600px); padding-top: 43px; }
   .discovery-page-intro, .discovery-section-heading { display: grid; align-items: start; gap: 17px; }
   .discovery-feed-status { padding: 0; }
@@ -1160,6 +1290,7 @@
   .discovery-card-grid { grid-template-columns: 1fr; }
   .discovery-skeleton-grid { grid-template-columns: 1fr; }
 }
+
 
 @media (prefers-reduced-motion: reduce) {
   .application-sidebar,

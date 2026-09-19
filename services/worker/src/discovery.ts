@@ -352,12 +352,38 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const traceId = outbox.trace_id ?? `outbox-${outbox.id}`;
     const conceptIds = stringArray(outboxPayload.conceptIds);
     const conceptNames = stringArray(outboxPayload.conceptNames);
+    const sourcePickerRunId = stringValue(outboxPayload.sourcePickerRunId);
+    const queryText = stringValue(outboxPayload.queryText);
+    const sourceKind = stringValue(outboxPayload.sourceKind);
     const jobs: Array<{ id: string }> = [];
+    if (sourcePickerRunId && queryText && conceptIds.length === 0) {
+      const payload = {
+        concept_ids: [],
+        concept_names: [],
+        query_text: queryText,
+        source_kind: sourceKind,
+        level: "mixed",
+        preferred_formats: [],
+        audit_user_id: outbox.user_id,
+        force_refresh: true,
+        source_picker_run_id: sourcePickerRunId,
+        trace_id: traceId,
+      };
+      const dedupKey = `discovery:source-picker:${sourcePickerRunId}`;
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, ${dedupKey}, ${`${outbox.id}:source-picker`}, ${outbox.correlation_id}, ${traceId})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) jobs.push(inserted[0]);
+    }
     for (const [index, conceptId] of conceptIds.entries()) {
       const conceptName = conceptNames[index] ?? conceptId;
       const payload = {
         ...discoveryPayload(traceId, conceptId, conceptName),
         audit_user_id: outbox.user_id,
+        ...(sourcePickerRunId ? { source_picker_run_id: sourcePickerRunId, query_text: queryText, source_kind: sourceKind } : {}),
       };
       const dedupKey = `discovery:${conceptId}:refresh`;
       const recentJobs = await tx<{ id: string }[]>`
@@ -473,6 +499,8 @@ const discoveryAgentPayloadKeys = [
   "audit_user_id",
   "force_refresh",
   "trace_id",
+  "query_text",
+  "source_kind",
 ] as const;
 
 export function discoveryAgentPayload(payload: JsonObject): JsonObject {
@@ -481,8 +509,8 @@ export function discoveryAgentPayload(payload: JsonObject): JsonObject {
   );
   const conceptIds = stringArray(payload.concept_ids);
   const conceptNames = stringArray(payload.concept_names);
-  if (conceptIds.length !== 1 || conceptNames.length !== 1) {
-    throw new Error("discovery agent requests require one canonical concept");
+  if ((conceptIds.length !== 1 || conceptNames.length !== 1) && !stringValue(payload.query_text)) {
+    throw new Error("discovery agent requests require one canonical concept or query text");
   }
   return {
     ...request,
@@ -509,12 +537,13 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
     const targetConceptId = (await validConceptIds(tx, [
       stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0] ?? "",
     ]))[0];
-    if (!targetConceptId) return { videos: 0, papers: 0, resourceIds: [] };
+    const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
+    if (!targetConceptId && !sourcePickerRunId) return { videos: 0, papers: 0, resourceIds: [] };
     let videos = 0;
     let papers = 0;
     const resourceIds = new Set<string>();
     for (const candidate of batch.youtube) {
-      if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
+      if (targetConceptId && !candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
         VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, hasImplementation: candidate.has_implementation, sourceConfidence: candidate.confidence })})
@@ -529,7 +558,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         VALUES (${resource.id}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
         ON CONFLICT (resource_id) DO UPDATE SET channel_title = EXCLUDED.channel_title, duration_ms = EXCLUDED.duration_ms, published_at = EXCLUDED.published_at, default_audio_language = EXCLUDED.default_audio_language, fetched_at = now()
       `;
-      await tx`
+      if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
         VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
         ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
@@ -537,7 +566,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       videos += 1;
     }
     for (const candidate of batch.arxiv) {
-      if (!candidate.matched_concept_ids.includes(targetConceptId)) continue;
+      if (targetConceptId && !candidate.matched_concept_ids.includes(targetConceptId)) continue;
       const [resource] = await tx<{ id: string }[]>`
         INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, visibility, status, metadata)
         VALUES ('paper', 'arxiv', ${candidate.arxiv_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.abstract}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories })})
@@ -552,7 +581,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
         VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: "discovery-agent" })})
         ON CONFLICT (resource_id) DO UPDATE SET abstract = EXCLUDED.abstract, publication_date = EXCLUDED.publication_date, submitted_at = EXCLUDED.submitted_at, primary_category = EXCLUDED.primary_category, metadata = EXCLUDED.metadata
       `;
-      await tx`
+      if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
         VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
         ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
@@ -606,6 +635,16 @@ async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promi
   `;
 }
 
+async function markSourcePickerRefresh(sql: SqlClient, job: JobRow, resourceIds: string[]): Promise<void> {
+  const runId = stringValue(job.payload.source_picker_run_id);
+  if (!runId) return;
+  await sql`
+    UPDATE discovery.recommendation_runs
+    SET context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
+    WHERE id = ${runId}
+  `;
+}
+
 async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<void> {
   const detail = error instanceof Error ? error.message.slice(0, 500) : "discovery worker failed";
   const retryDelaySeconds = Math.min(3600, 30 * 2 ** Math.max(0, job.attempts - 1));
@@ -621,6 +660,14 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
       updated_at = now()
     WHERE id = ${job.id}
   `;
+  const runId = stringValue(job.payload.source_picker_run_id);
+  if (runId && job.attempts >= job.max_attempts) {
+    await sql`
+      UPDATE discovery.recommendation_runs
+      SET status = 'failed', completed_at = now(), context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "failed" })}
+      WHERE id = ${runId}
+    `;
+  }
 }
 
 export async function runDiscoveryWorker(): Promise<JsonObject> {
@@ -649,6 +696,7 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
         cacheHit: batch.cache_hit,
         ...persisted,
       };
+      await markSourcePickerRefresh(sql, job, persisted.resourceIds);
       await finishJob(sql, job, result);
       return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
     } catch (error) {

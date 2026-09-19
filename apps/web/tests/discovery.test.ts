@@ -6,7 +6,7 @@ import test from "node:test";
 import { homeFeedCacheKey } from "../lib/discovery/cache";
 import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
 import { scoreYoutubeQuality } from "../lib/discovery/quality";
-import { rankDiscoveryResources, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
+import { rankDiscoveryResources, rankSourceResources, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
 
 const conceptId = "00000000-0000-0000-0000-000000000001";
 const behavioralConceptId = "00000000-0000-0000-0000-000000000002";
@@ -216,4 +216,14 @@ test("home feed cache keys change with learner and catalogue versions", () => {
   const changedCatalog = homeFeedCacheKey("user-1", { profileFingerprint: "profile-a", catalogFingerprint: "catalog-b" });
   assert.notEqual(first, changedProfile);
   assert.notEqual(first, changedCatalog);
+});
+
+test("source ranking lets explicit query relevance dominate general affinity", () => {
+  const candidates = [
+    { ...resource("affinity", "video", [conceptId]), title: "A broad introduction", description: "General programming concepts" },
+    { ...resource("query", "video", ["other-concept"]), title: "Python generators explained", description: "Practical yield examples" },
+  ];
+  const ranked = rankSourceResources(candidates, profile(), "Python generators", "learn", "best_match", now);
+  assert.equal(ranked[0]?.resource.id, "query");
+  assert.ok(ranked[0]?.reasonCodes.includes("strong_topic_match"));
 });

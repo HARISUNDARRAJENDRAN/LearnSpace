@@ -22,10 +22,9 @@ class YoutubeDiscoveryAgent:
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
     ) -> list[YoutubeCandidate]:
-        if len(request.concept_ids) != 1 or len(request.concept_names) != 1:
-            raise ValueError("YouTube discovery requires one canonical concept pool")
+        search_terms = request.concept_names or [request.query_text or ""]
         raw_results = await self.exa.search(
-            request.concept_names, "video", request.window_days, self.max_results, budget=budget
+            search_terms, "video", request.window_days, self.max_results, budget=budget
         )
         output: list[YoutubeCandidate] = []
         for item in raw_results:
@@ -43,7 +42,7 @@ class YoutubeDiscoveryAgent:
                 channel=item.get("author") if isinstance(item.get("author"), str) else None,
                 published_at=self._date(item.get("publishedDate")),
                 language=item.get("language") if isinstance(item.get("language"), str) else None,
-                matched_concept_ids=[request.concept_ids[0]],
+                matched_concept_ids=request.concept_ids,
                 learning_format=None,
                 estimated_level=None,
                 has_implementation=None,
@@ -65,7 +64,7 @@ class YoutubeDiscoveryAgent:
             return []
         signals = await self.content_search.analyze(
             [candidate.canonical_url for candidate in candidates[:5]],
-            request.concept_names[0],
+            request.concept_names[0] if request.concept_names else request.query_text or "",
             budget,
         )
         output: list[YoutubeCandidate] = []

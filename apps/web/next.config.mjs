@@ -9,6 +9,15 @@ const nextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(appDirectory, "../.."),
   transpilePackages: ["@learnspace/db", "@learnspace/shared"],
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "i.ytimg.com",
+        pathname: "/vi/**",
+      },
+    ],
+  },
   webpack(config) {
     config.resolve.extensions = [
       ".ts",
