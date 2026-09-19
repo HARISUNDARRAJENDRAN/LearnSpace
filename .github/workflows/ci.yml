@@ -127,4 +127,4 @@ jobs:
       - name: Deploy the tested source to Vercel production
         # Vercel's local builder is incompatible with pnpm monorepos outside Vercel infrastructure.
         # Remote deployment builds this exact checked-out commit on Vercel instead.
-        run: pnpm dlx vercel@51.7.0 deploy --prod --yes --cwd apps/web --token "$VERCEL_TOKEN"
+        run: pnpm dlx vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
