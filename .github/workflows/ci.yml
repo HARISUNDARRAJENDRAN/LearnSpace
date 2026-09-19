@@ -124,9 +124,7 @@ jobs:
       - run: pnpm run db:check
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
-      - name: Pull Vercel production configuration
-        run: pnpm dlx vercel@51.7.0 pull --yes --environment=production --cwd apps/web --token "$VERCEL_TOKEN"
-      - name: Build the tested commit for Vercel
-        run: pnpm dlx vercel@51.7.0 build --prod --cwd apps/web --token "$VERCEL_TOKEN"
-      - name: Deploy the tested artifact to production
-        run: pnpm dlx vercel@51.7.0 deploy --prebuilt --prod --yes --cwd apps/web --token "$VERCEL_TOKEN"
+      - name: Deploy the tested source to Vercel production
+        # Vercel's local builder is incompatible with pnpm monorepos outside Vercel infrastructure.
+        # Remote deployment builds this exact checked-out commit on Vercel instead.
+        run: pnpm dlx vercel@51.7.0 deploy --prod --yes --cwd apps/web --token "$VERCEL_TOKEN"
