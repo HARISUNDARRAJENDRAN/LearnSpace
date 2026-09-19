@@ -15,6 +15,7 @@ from app.cache.discovery_cache import (
     YOUTUBE_TTL,
     DiscoveryCache,
     arxiv_cache_key,
+    query_cache_identity,
     youtube_cache_key,
 )
 from app.contracts.discovery import (
@@ -91,11 +92,20 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         videos_ready = request.source_kind == "paper"
         papers_ready = request.source_kind == "video"
         cache_hit = False
-        search_pools = list(zip(request.concept_ids, request.concept_names, strict=False)) or [(None, request.query_text or "")]
+        search_pools = list(zip(request.concept_ids, request.concept_names, strict=False)) or [
+            (None, request.query_text or "")
+        ]
         for concept_id, concept_name in search_pools:
-            concept_key = str(concept_id or f"query:{concept_name}")
+            concept_key = (
+                query_cache_identity(request.query_text)
+                if request.query_text
+                else str(concept_id or concept_name)
+            )
             pool_request = neutral_request.model_copy(
-                update={"concept_ids": [concept_id] if concept_id else [], "concept_names": [concept_name]}
+                update={
+                    "concept_ids": [concept_id] if concept_id else [],
+                    "concept_names": [concept_name] if concept_id else [],
+                }
             )
             youtube_key = youtube_cache_key(
                 concept_key, neutral_request.level, format_key, request.window_days
@@ -138,7 +148,7 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                 paper_request = neutral_request.model_copy(
                     update={
                         "concept_ids": [concept_id] if concept_id else [],
-                        "concept_names": [concept_name],
+                        "concept_names": [concept_name] if concept_id else [],
                         "paper_strategy": paper_strategy,
                         "window_days": request.window_days if paper_strategy == "current" else 365,
                     }
@@ -187,8 +197,15 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
                     break
                 except Exception as error:
                     if len(failures) < 10:
+                        failure_identity = (
+                            query_cache_identity(pool_request.query_text)
+                            if pool_request.query_text
+                            else pool_request.concept_names[0]
+                            if pool_request.concept_names
+                            else "unknown"
+                        )
                         failures.append(
-                            f"youtube-enrichment:{pool_request.concept_names[0]}:{type(error).__name__}"
+                            f"youtube-enrichment:{failure_identity}:{type(error).__name__}"
                         )
                     continue
                 youtube_pools[index] = (pool_request, enriched, True)
@@ -272,7 +289,9 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             except Exception:
                 continue
             valid = validate_youtube_candidate(candidate)
-            if valid is not None and (concept_id is None or concept_id in valid.matched_concept_ids):
+            if valid is not None and (
+                concept_id is None or concept_id in valid.matched_concept_ids
+            ):
                 result.append(valid)
         return result
 
@@ -287,7 +306,9 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
             except Exception:
                 continue
             valid = validate_arxiv_candidate(candidate)
-            if valid is not None and (concept_id is None or concept_id in valid.matched_concept_ids):
+            if valid is not None and (
+                concept_id is None or concept_id in valid.matched_concept_ids
+            ):
                 result.append(valid)
         return result
 

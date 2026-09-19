@@ -1,6 +1,6 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { conceptAliases, concepts, outboxEvents, paperDetails, recommendationCandidates, recommendationRuns, resources, videoDetails } from "@learnspace/db/schema";
-import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchRequest, SourceDiscoverySearchResponse, SourcePreview } from "@learnspace/shared";
+import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchRequest, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
 import { classifySourceUrl, normalizeQuery, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
 import { and, desc, eq, gte, ilike, isNull, ne, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
@@ -29,8 +29,12 @@ function arrayValue(value: unknown): unknown[] {
 
 function reasonLabel(code: string, mode: SourceDiscoveryMode): string {
   const labels: Record<string, string> = {
-    strong_topic_match: "Strong topic match",
-    highly_relevant: "Highly relevant",
+    query_phrase_match: "Strong topic match",
+    query_high_relevance: "Strong topic match",
+    query_concept_match: "Highly relevant",
+    beginner_intent_match: "Fits your level",
+    practical_intent_match: "Practical examples",
+    depth_intent_match: "In-depth explanation",
     good_concept_coverage: "Good concept coverage",
     level_fit: "Fits your level",
     fits_your_level: "Fits your level",
@@ -40,12 +44,16 @@ function reasonLabel(code: string, mode: SourceDiscoveryMode): string {
     foundational_paper: "Foundational paper",
     recent_work: "Recent work",
     fresh: "Recent work",
-    concept_match: "Strong topic match",
+    learner_affinity: "Matches how you learn",
+    concept_match: "Good concept coverage",
   };
   return labels[code] ?? (mode === "research" ? "Highly relevant" : "Good concept coverage");
 }
 
-function sourceCandidate(candidate: RankedResource, runId: string, mode: SourceDiscoveryMode): SourceDiscoveryCandidate {
+type SourceOrigin = "catalog" | "external_refresh" | "direct_url";
+type CandidateDiagnostics = { sourceOrigin: SourceOrigin; queryRelevance?: number; qualificationReason?: string };
+
+function sourceCandidate(candidate: RankedResource, runId: string, mode: SourceDiscoveryMode, diagnostics?: CandidateDiagnostics): SourceDiscoveryCandidate {
   const resource = candidate.resource;
   const reasonCodes = [...new Set(candidate.reasonCodes)].slice(0, 4);
   return {
@@ -64,7 +72,25 @@ function sourceCandidate(candidate: RankedResource, runId: string, mode: SourceD
     candidateRank: candidate.candidateRank,
     finalRank: candidate.finalRank,
     recommendationRunId: runId,
+    sourceOrigin: diagnostics?.sourceOrigin,
+    queryRelevance: diagnostics?.queryRelevance ?? candidate.queryRelevance,
+    qualificationReason: diagnostics?.qualificationReason ?? candidate.qualificationReason,
   };
+}
+
+function candidateDiagnostics(run: typeof recommendationRuns.$inferSelect, resourceId: string, queryRelevance?: number | null): CandidateDiagnostics {
+  const stored = arrayValue(run.contextSnapshot.candidateDiagnostics).find((value) => recordValue(value, "resourceId") === resourceId);
+  const storedOrigin = recordValue(stored, "sourceOrigin");
+  const refreshedResourceIds = new Set(arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string"));
+  const diagnostics: CandidateDiagnostics = {
+    sourceOrigin: storedOrigin === "external_refresh" || refreshedResourceIds.has(resourceId) ? "external_refresh" : "catalog",
+  };
+  const storedQueryRelevance = recordValue(stored, "queryRelevance");
+  const storedQualificationReason = recordValue(stored, "qualificationReason");
+  if (typeof storedQueryRelevance === "number") diagnostics.queryRelevance = storedQueryRelevance;
+  else if (typeof queryRelevance === "number") diagnostics.queryRelevance = queryRelevance;
+  if (typeof storedQualificationReason === "string") diagnostics.qualificationReason = storedQualificationReason;
+  return diagnostics;
 }
 
 function runMode(run: typeof recommendationRuns.$inferSelect): SourceDiscoveryMode {
@@ -90,7 +116,7 @@ async function resolveConcept(tx: Transaction, query: string): Promise<{ id: str
   return null;
 }
 
-async function findReusableRun(tx: Transaction, userId: string, mode: SourceDiscoveryMode, query: string): Promise<typeof recommendationRuns.$inferSelect | null> {
+async function findReusableRun(tx: Transaction, userId: string, mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent): Promise<typeof recommendationRuns.$inferSelect | null> {
   const rows = await tx.select().from(recommendationRuns).where(and(
     eq(recommendationRuns.userId, userId),
     eq(recommendationRuns.surface, "source_picker"),
@@ -98,11 +124,70 @@ async function findReusableRun(tx: Transaction, userId: string, mode: SourceDisc
     ne(recommendationRuns.status, "failed"),
     gte(recommendationRuns.createdAt, new Date(Date.now() - sourceRunReuseMs)),
     sql`${recommendationRuns.contextSnapshot}->>'mode' = ${mode}`,
+    sql`${recommendationRuns.contextSnapshot}->>'rankingIntent' = ${rankingIntent}`,
   )).orderBy(desc(recommendationRuns.createdAt)).limit(1);
   return rows[0] ?? null;
 }
 
+async function finalizeRefreshRun(tx: Transaction, userId: string, run: typeof recommendationRuns.$inferSelect): Promise<typeof recommendationRuns.$inferSelect> {
+  const profileLoad = await loadDiscoveryProfile(tx, userId);
+  const candidateRows = await tx.select({ resourceId: recommendationCandidates.resourceId }).from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
+  const refreshedResourceIds = arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string");
+  const refreshedResourceSet = new Set(refreshedResourceIds);
+  const initialResourceIds = candidateRows.map((row) => row.resourceId);
+  const poolResourceIds = [...new Set([...refreshedResourceIds, ...initialResourceIds])];
+  const ranked = rankSourceResources(
+    await loadDiscoveryResources(tx, poolResourceIds, userId),
+    profileLoad.profile,
+    run.queryText ?? "",
+    runMode(run),
+    typeof run.contextSnapshot.rankingIntent === "string" ? run.contextSnapshot.rankingIntent : "best_match",
+    new Date(),
+    typeof run.contextSnapshot.canonicalConceptId === "string" ? run.contextSnapshot.canonicalConceptId : null,
+  ).filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
+  for (const [index, row] of candidateRows.entries()) {
+    await tx.update(recommendationCandidates).set({
+      candidateRank: -(index + 1),
+      finalRank: null,
+      selected: false,
+    }).where(and(
+      eq(recommendationCandidates.recommendationRunId, run.id),
+      eq(recommendationCandidates.resourceId, row.resourceId),
+    ));
+  }
+  if (ranked.length > 0) {
+    await tx.insert(recommendationCandidates).values(ranked.map((candidate) => ({
+      recommendationRunId: run.id,
+      resourceId: candidate.resource.id,
+      candidateRank: candidate.candidateRank,
+      finalRank: candidate.finalRank,
+      score: candidate.score,
+      semanticRelevance: candidate.semanticRelevance,
+      qualityScore: candidate.qualityScore,
+      learnerAffinity: candidate.learnerAffinity,
+      masteryFit: candidate.masteryFit,
+      coverageScore: candidate.coverageScore,
+      freshnessScore: candidate.freshnessScore,
+      diversityPenalty: candidate.diversityPenalty,
+      reasonCodes: candidate.reasonCodes,
+      selected: true,
+    })));
+  }
+  const candidateDiagnostics = ranked.map((candidate) => ({
+    resourceId: candidate.resource.id,
+    sourceOrigin: refreshedResourceSet.has(candidate.resource.id) ? "external_refresh" : "catalog",
+    queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
+    qualificationReason: candidate.qualificationReason ?? null,
+  }));
+  const [completed] = await tx.update(recommendationRuns).set({ status: "completed", completedAt: run.completedAt ?? new Date(), contextSnapshot: { ...run.contextSnapshot, refreshStatus: "complete", refreshFinalized: true, candidateDiagnostics } }).where(eq(recommendationRuns.id, run.id)).returning();
+  if (!completed) throw new Error("Source discovery refresh could not be finalized");
+  return completed;
+}
+
 async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect, userId: string): Promise<SourceDiscoverySearchResponse> {
+  if (run.contextSnapshot?.refreshStatus === "done" && run.status !== "failed") {
+    return responseForRun(tx, await finalizeRefreshRun(tx, userId, run), userId);
+  }
   const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(24);
   const resourcesForRun = await loadDiscoveryResources(tx, candidateRows.map((row) => row.resourceId), userId);
   const byId = new Map(resourcesForRun.map((resource) => [resource.id, resource]));
@@ -116,6 +201,7 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
     candidates: candidateRows.flatMap((row) => {
       const resource = byId.get(row.resourceId);
       if (!resource || row.finalRank === null) return [];
+      const diagnostics = candidateDiagnostics(run, row.resourceId, row.semanticRelevance);
       return [sourceCandidate({
         resource,
         candidateRank: row.candidateRank,
@@ -129,7 +215,9 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
         freshnessScore: row.freshnessScore ?? 0.5,
         diversityPenalty: row.diversityPenalty ?? 0,
         reasonCodes: Array.isArray(row.reasonCodes) ? row.reasonCodes.filter((code): code is string => typeof code === "string") : [],
-      }, run.id, mode)];
+        ...(typeof diagnostics.queryRelevance === "number" ? { queryRelevance: diagnostics.queryRelevance } : {}),
+        ...(diagnostics.qualificationReason ? { qualificationReason: diagnostics.qualificationReason } : {}),
+      }, run.id, mode, diagnostics)];
     }).slice(0, sourceResultLimit),
   };
 }
@@ -160,9 +248,10 @@ async function createSearchRun(tx: Transaction, userId: string, input: SourceDis
   const profileLoad = await loadDiscoveryProfile(tx, userId);
   const concept = await resolveConcept(tx, query);
   const resourcesForRanker = await loadDiscoveryResources(tx, undefined, userId);
-  const ranked = rankSourceResources(resourcesForRanker, profileLoad.profile, query, input.mode, input.rankingIntent, new Date());
+  const ranked = rankSourceResources(resourcesForRanker, profileLoad.profile, query, input.mode, input.rankingIntent, new Date(), concept?.id);
   const candidates = ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
-  const shouldRefresh = candidates.length < 3;
+  const qualifiedRelevantCandidates = ranked.filter((candidate) => candidate.finalRank !== null);
+  const shouldRefresh = qualifiedRelevantCandidates.length < 3;
   const now = new Date();
   const [run] = await tx.insert(recommendationRuns).values({
     userId,
@@ -177,6 +266,13 @@ async function createSearchRun(tx: Transaction, userId: string, input: SourceDis
       rankingIntent: input.rankingIntent,
       strategyVersion: DISCOVERY_STRATEGY_VERSION,
       refreshStatus: shouldRefresh ? "requested" : "not_needed",
+      qualifiedCatalogCandidateCount: qualifiedRelevantCandidates.length,
+      candidateDiagnostics: candidates.map((candidate) => ({
+        resourceId: candidate.resource.id,
+        sourceOrigin: "catalog",
+        queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
+        qualificationReason: candidate.qualificationReason ?? null,
+      })),
     },
     status: shouldRefresh ? "running" : "completed",
     completedAt: shouldRefresh ? null : now,
@@ -206,48 +302,20 @@ async function createSearchRun(tx: Transaction, userId: string, input: SourceDis
 
 export async function searchSources(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
   const query = normalizeQuery(input.query);
-  const existing = await withUserTransaction(userId, (tx) => findReusableRun(tx, userId, input.mode, query));
-  if (existing) return withUserTransaction(userId, (tx) => responseForRun(tx, existing, userId));
-  return withUserTransaction(userId, (tx) => createSearchRun(tx, userId, { ...input, query }));
+  return withUserTransaction(userId, async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-discovery:${userId}:${input.mode}:${input.rankingIntent}:${query}`}, 0))`);
+    const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
+    if (existing) return responseForRun(tx, existing, userId);
+    return createSearchRun(tx, userId, { ...input, query });
+  });
 }
 
 export async function getSourceDiscoveryRun(userId: string, runId: string): Promise<SourceDiscoverySearchResponse> {
   return withUserTransaction(userId, async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-discovery-run:${userId}:${runId}`}, 0))`);
     const rows = await tx.select().from(recommendationRuns).where(and(eq(recommendationRuns.id, runId), eq(recommendationRuns.userId, userId), eq(recommendationRuns.surface, "source_picker"))).limit(1);
     const run = rows[0];
     if (!run) throw sourceError("RUN_NOT_FOUND", "That discovery search is no longer available.", 404);
-    if (run.contextSnapshot?.refreshStatus === "done" && run.status === "running") {
-      const profileLoad = await loadDiscoveryProfile(tx, userId);
-      const ranked = rankSourceResources(
-        await loadDiscoveryResources(tx, undefined, userId),
-        profileLoad.profile,
-        run.queryText ?? "",
-        runMode(run),
-        typeof run.contextSnapshot.rankingIntent === "string" ? run.contextSnapshot.rankingIntent : "best_match",
-        new Date(),
-      ).filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
-      await tx.delete(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
-      if (ranked.length > 0) {
-        await tx.insert(recommendationCandidates).values(ranked.map((candidate) => ({
-          recommendationRunId: run.id,
-          resourceId: candidate.resource.id,
-          candidateRank: candidate.candidateRank,
-          finalRank: candidate.finalRank,
-          score: candidate.score,
-          semanticRelevance: candidate.semanticRelevance,
-          qualityScore: candidate.qualityScore,
-          learnerAffinity: candidate.learnerAffinity,
-          masteryFit: candidate.masteryFit,
-          coverageScore: candidate.coverageScore,
-          freshnessScore: candidate.freshnessScore,
-          diversityPenalty: candidate.diversityPenalty,
-          reasonCodes: candidate.reasonCodes,
-          selected: true,
-        })));
-      }
-      const [completed] = await tx.update(recommendationRuns).set({ status: "completed", completedAt: new Date(), contextSnapshot: { ...run.contextSnapshot, refreshStatus: "complete" } }).where(eq(recommendationRuns.id, run.id)).returning();
-      return responseForRun(tx, completed ?? run, userId);
-    }
     return responseForRun(tx, run, userId);
   });
 }
@@ -301,7 +369,7 @@ function paperMetadataFromCrossref(body: Record<string, unknown>, doi: string): 
 }
 
 function previewFrom(resourceId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData): SourcePreview {
-  return { resourceId, mode: parsed.mode, provider: parsed.provider, title: data.title, description: data.description, canonicalUrl: parsed.canonicalUrl, thumbnailUrl: data.thumbnailUrl, author: data.author, durationMs: data.durationMs, authors: data.authors, venue: data.venue, year: data.year, arxivId: parsed.provider === "arxiv" ? parsed.id : null, doi: parsed.provider === "doi" ? parsed.id : null };
+  return { resourceId, mode: parsed.mode, provider: parsed.provider, title: data.title, description: data.description, canonicalUrl: parsed.canonicalUrl, thumbnailUrl: data.thumbnailUrl, author: data.author, durationMs: data.durationMs, authors: data.authors, venue: data.venue, year: data.year, arxivId: parsed.provider === "arxiv" ? parsed.id : null, doi: parsed.provider === "doi" ? parsed.id : null, sourceOrigin: "direct_url" };
 }
 
 async function findExistingResource(tx: Transaction, userId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>) {
@@ -309,14 +377,50 @@ async function findExistingResource(tx: Transaction, userId: string, parsed: Non
   return rows[0] ?? null;
 }
 
-async function persistResolvedResource(tx: Transaction, userId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData): Promise<string> {
+async function ensureIngestionRequest(
+  tx: Transaction,
+  userId: string,
+  resourceId: string,
+  parsed: NonNullable<ReturnType<typeof classifySourceUrl>>,
+  correlationId: string,
+): Promise<void> {
+  const existing = await tx.select({ id: outboxEvents.id }).from(outboxEvents).where(and(
+    eq(outboxEvents.aggregateType, "resource"),
+    eq(outboxEvents.aggregateId, resourceId),
+    eq(outboxEvents.eventType, "resource.ingestion_requested"),
+    eq(outboxEvents.userId, userId),
+  )).limit(1);
+  if (existing[0]) return;
+  await tx.insert(outboxEvents).values({
+    aggregateType: "resource",
+    aggregateId: resourceId,
+    eventType: "resource.ingestion_requested",
+    schemaVersion: 1,
+    userId,
+    correlationId,
+    payload: {
+      resourceId,
+      provider: parsed.provider,
+      externalId: parsed.id,
+      sourceUrl: parsed.canonicalUrl,
+      sourceKind: parsed.mode === "learn" ? "video" : "paper",
+      requestedBy: "source-picker",
+    },
+  });
+}
+
+async function persistResolvedResource(tx: Transaction, userId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData, correlationId: string): Promise<string> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-resolve:${userId}:${parsed.provider}:${parsed.id}`}, 0))`);
   const existing = await findExistingResource(tx, userId, parsed);
-  if (existing) return existing.resource.id;
-  const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "ready", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker" } }).returning({ id: resources.id });
-  if (!resource) throw new Error("Resolved resource could not be created");
-  if (parsed.mode === "learn") await tx.insert(videoDetails).values({ resourceId: resource.id, youtubeId: parsed.id, channelTitle: data.author, durationMs: data.durationMs, fetchedAt: new Date() });
-  else await tx.insert(paperDetails).values({ resourceId: resource.id, arxivId: parsed.provider === "arxiv" ? parsed.id : null, doi: parsed.provider === "doi" ? parsed.id : null, abstract: data.description, venue: data.venue, publicationDate: data.year ? `${data.year}-01-01` : null, pdfSourceUrl: parsed.provider === "arxiv" ? `https://arxiv.org/pdf/${parsed.id}.pdf` : null, metadata: { authors: data.authors } });
-  return resource.id;
+  if (existing) {
+    if (!existing.resource.currentVersionId) await ensureIngestionRequest(tx, userId, existing.resource.id, parsed, correlationId);
+    return existing.resource.id;
+  }
+  const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
+  const resourceId = resource?.id ?? (await findExistingResource(tx, userId, parsed))?.resource.id;
+  if (!resourceId) throw new Error("Resolved resource could not be created");
+  await ensureIngestionRequest(tx, userId, resourceId, parsed, correlationId);
+  return resourceId;
 }
 
 export async function resolveSource(userId: string, input: SourceDiscoveryResolveRequest): Promise<SourcePreview> {
@@ -348,6 +452,6 @@ export async function resolveSource(userId: string, input: SourceDiscoveryResolv
       throw sourceError("SOURCE_UNAVAILABLE", "The source provider could not be reached.", 502);
     }
   }
-  const resourceId = await withUserTransaction(userId, (tx) => persistResolvedResource(tx, userId, parsed, data));
+  const resourceId = await withUserTransaction(userId, (tx) => persistResolvedResource(tx, userId, parsed, data, input.correlationId));
   return previewFrom(resourceId, parsed, data);
 }

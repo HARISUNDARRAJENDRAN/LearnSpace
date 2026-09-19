@@ -703,7 +703,6 @@
 }
 
 .application-header-start,
-.application-header-actions,
 .application-header-context {
   display: flex;
   align-items: center;
@@ -733,24 +732,17 @@
   display: none;
 }
 
-.application-header-create,
-.application-header-more,
-.application-header-view-switcher,
-.application-header-view-switcher button {
+.application-header-create {
   box-sizing: border-box;
-  border: 1px solid #e1e2e5;
-  background: #fff;
-  color: #252729;
-}
-
-.application-header-create,
-.application-header-more {
   display: grid;
   width: 38px;
   height: 38px;
   flex: 0 0 auto;
   place-items: center;
+  border: 1px solid #e1e2e5;
   border-radius: 12px;
+  background: #fff;
+  color: #252729;
   box-shadow: 0 2px 4px #2021240d;
 }
 
@@ -770,57 +762,12 @@
   stroke-width: 2.7;
 }
 
-.application-header-more svg,
-.application-header-view-switcher svg,
 .application-menu-button svg {
   width: 18px;
   height: 18px;
 }
 
-.application-header-actions {
-  flex: 0 0 auto;
-  gap: 8px;
-}
-
-.application-header-view-switcher {
-  display: flex;
-  height: 38px;
-  gap: 2px;
-  padding: 3px;
-  border-radius: 12px;
-}
-
-.application-header-view-switcher button {
-  display: grid;
-  width: 33px;
-  height: 30px;
-  place-items: center;
-  padding: 0;
-  border-color: transparent;
-  border-radius: 8px;
-  color: #303235;
-  cursor: pointer;
-}
-
-.application-header-view-switcher button.is-active,
-.application-header-view-switcher button:hover {
-  border-color: #e0e1e4;
-  background: #f4f5f6;
-}
-
-.application-header-view-switcher svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 1.8;
-}
-
-.application-header-more {
-  padding: 0;
-  cursor: pointer;
-}
-
-.application-header-create:hover,
-.application-header-more:hover {
+.application-header-create:hover {
   background: #f7f7f8;
 }
 
@@ -1276,10 +1223,7 @@
   .application-menu-button { display: grid; margin-right: 0; }
   .application-header { min-height: 64px; padding: 0 12px; }
   .application-header-start { gap: 10px; }
-  .application-header-actions { gap: 5px; }
-  .application-header-create,
-  .application-header-more { width: 34px; height: 34px; }
-  .application-header-view-switcher button { width: 28px; }
+  .application-header-create { width: 34px; height: 34px; }
   .discovery-page { width: min(100% - 30px, 600px); padding-top: 43px; }
   .discovery-page-intro, .discovery-section-heading { display: grid; align-items: start; gap: 17px; }
   .discovery-feed-status { padding: 0; }

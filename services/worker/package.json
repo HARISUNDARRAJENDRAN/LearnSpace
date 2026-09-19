@@ -7,7 +7,7 @@
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/discovery.test.ts",
+    "test": "tsx --test src/discovery.test.ts src/discovery.integration.test.ts",
     "start": "node dist/index.js",
     "discovery:once": "tsx src/index.ts",
     "discovery:worker": "tsx src/index.ts --loop",

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult } from "./discovery.js";
+import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult, sourcePickerJobPayload } from "./discovery.js";
 import { DISCOVERY_SMOKE_SYSTEM_ACCOUNT, hasSmokeAccountMarker } from "./discovery-smoke-provision.js";
 
 test("discovery jobs are scoped to one canonical concept", () => {
@@ -67,6 +67,27 @@ test("agent payload construction rejects multi-concept refreshes", () => {
     concept_ids: ["concept-a", "concept-b"],
     concept_names: ["A", "B"],
   }), /one canonical concept/);
+});
+
+test("source-picker refreshes always use a run-specific job, even with a canonical concept", () => {
+  const payload = sourcePickerJobPayload(
+    "trace",
+    "00000000-0000-0000-0000-000000000001",
+    "00000000-0000-0000-0000-000000000002",
+    "Python generators",
+    "video",
+    ["00000000-0000-0000-0000-000000000003"],
+    ["Python"],
+  );
+  assert.deepEqual(payload.concept_ids, ["00000000-0000-0000-0000-000000000003"]);
+  assert.deepEqual(payload.concept_names, ["Python"]);
+  assert.equal(payload.query_text, "Python generators");
+  assert.equal(payload.source_picker_run_id, "00000000-0000-0000-0000-000000000002");
+  assert.equal(payload.refresh_reason, "source_picker");
+  const queryOnly = sourcePickerJobPayload("trace", "user", "run", "Python generators", "video", [], ["ignored"]);
+  assert.deepEqual(queryOnly.concept_ids, []);
+  assert.deepEqual(queryOnly.concept_names, []);
+  assert.throws(() => sourcePickerJobPayload("trace", "user", "run", "Python generators", "video", ["concept"], []), /same length/);
 });
 
 test("refresh policy is tiered, configurable, and jittered deterministically", () => {

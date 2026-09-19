@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -39,7 +40,7 @@ class ArxivDiscoveryAgent:
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
     ) -> list[ArxivCandidate]:
-        search_terms = request.concept_names or [request.query_text or ""]
+        search_terms = [request.query_text] if request.query_text else request.concept_names
         try:
             raw_results = await self.exa.search(
                 search_terms,
@@ -87,7 +88,12 @@ class ArxivDiscoveryAgent:
                 age_days = (now - published_at).total_seconds() / 86_400
                 if age_days > request.window_days:
                     continue
-            arxiv_id = urlparse(url).path.removeprefix("/abs/")
+            arxiv_id = re.sub(
+                r"v\d+$",
+                "",
+                urlparse(url).path.removeprefix("/abs/"),
+                flags=re.IGNORECASE,
+            )
             if not arxiv_id or arxiv_id in seen:
                 continue
             seen.add(arxiv_id)

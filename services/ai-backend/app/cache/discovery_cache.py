@@ -29,6 +29,11 @@ def exa_cache_key(query: str, filters: str) -> str:
     return f"ls:v1:exa:{_hash(query)}:{_hash(filters)}:{TOOL_VERSION}"
 
 
+def query_cache_identity(query: str) -> str:
+    normalized = " ".join(query.split()).lower()
+    return f"query:{_hash(normalized)}"
+
+
 @dataclass
 class CacheEntry:
     value: list[dict[str, Any]]

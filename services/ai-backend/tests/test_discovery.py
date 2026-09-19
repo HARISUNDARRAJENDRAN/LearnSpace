@@ -8,7 +8,12 @@ from pydantic import ValidationError
 
 from app.agents.arxiv_discovery import ArxivDiscoveryAgent, has_foundational_evidence
 from app.agents.youtube_discovery import YoutubeDiscoveryAgent
-from app.cache.discovery_cache import DiscoveryCache, arxiv_cache_key, youtube_cache_key
+from app.cache.discovery_cache import (
+    DiscoveryCache,
+    arxiv_cache_key,
+    query_cache_identity,
+    youtube_cache_key,
+)
 from app.config import Settings
 from app.contracts.discovery import (
     ArxivCandidate,
@@ -117,6 +122,16 @@ def test_cache_keys_are_versioned_and_do_not_contain_pii() -> None:
     )
     assert arxiv_cache_key(str(CONCEPT_ID), "beginner", 30) != arxiv_cache_key(
         str(CONCEPT_ID), "beginner", 365, "foundational"
+    )
+
+
+def test_query_cache_identity_is_opaque() -> None:
+    query = "How does FlashAttention reduce memory usage?"
+    key = query_cache_identity(query)
+    assert key.startswith("query:")
+    assert query.lower() not in key.lower()
+    assert query_cache_identity(query) == query_cache_identity(
+        "  how   does flashattention reduce memory usage? "
     )
 
 
@@ -407,6 +422,66 @@ def test_youtube_enrichment_uses_canonical_concept_and_preserves_base_on_failure
         assert preserved[0].estimated_level is None
 
     asyncio.run(run())
+
+
+def test_explicit_query_is_primary_for_youtube_and_paper_search() -> None:
+    class FakeExa:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[str], str]] = []
+
+        async def search(
+            self,
+            terms: list[str],
+            kind: str,
+            *args: object,
+            **kwargs: object,
+        ) -> list[dict[str, object]]:
+            del args, kwargs
+            self.calls.append((terms, kind))
+            if kind == "video":
+                return [
+                    {
+                        "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                        "title": "A practical lesson",
+                    }
+                ]
+            return [
+                {
+                    "url": "https://arxiv.org/abs/1706.03762",
+                    "title": "Attention Is All You Need",
+                }
+            ]
+
+    class FakeArxiv:
+        async def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
+            del args, kwargs
+            return []
+
+    async def run() -> None:
+        exa = FakeExa()
+        source_request = request().model_copy(update={"query_text": "python for beginners"})
+        await YoutubeDiscoveryAgent(
+            cast(ExaDiscoveryTool, exa),
+            cast(YoutubeContentSearchTool, object()),
+            1,
+        ).discover(source_request, ToolBudget(3))
+        await ArxivDiscoveryAgent(
+            cast(ExaDiscoveryTool, exa),
+            cast(ArxivPaperTool, FakeArxiv()),
+            1,
+        ).discover(
+            source_request.model_copy(update={"paper_strategy": "current"}), ToolBudget(3)
+        )
+        assert exa.calls[0] == (["python for beginners"], "video")
+        assert exa.calls[1] == (["python for beginners"], "paper")
+
+    asyncio.run(run())
+
+
+def test_query_only_refresh_request_has_empty_concept_arrays() -> None:
+    parsed = DiscoveryRefreshRequest.model_validate({"query_text": "Python generators"})
+    assert parsed.concept_ids == []
+    assert parsed.concept_names == []
 
 
 def test_foundational_classification_requires_retrieval_evidence() -> None:

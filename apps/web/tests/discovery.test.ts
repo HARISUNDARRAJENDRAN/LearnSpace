@@ -225,5 +225,69 @@ test("source ranking lets explicit query relevance dominate general affinity", (
   ];
   const ranked = rankSourceResources(candidates, profile(), "Python generators", "learn", "best_match", now);
   assert.equal(ranked[0]?.resource.id, "query");
-  assert.ok(ranked[0]?.reasonCodes.includes("strong_topic_match"));
+  assert.ok(ranked[0]?.reasonCodes.includes("query_phrase_match"));
+});
+
+test("source coverage requires strong explicit relevance, not just catalog volume", () => {
+  const candidates = [
+    { ...resource("strong", "video", []), title: "Variational autoencoders and latent representations" },
+    { ...resource("canonical", "video", [conceptId]), title: "Latent variable generative modeling", concepts: [{ id: conceptId, name: "Variational autoencoders", relevance: 1 }] },
+    { ...resource("weak", "video", []), title: "A practical programming guide", description: "A short variational overview" },
+    { ...resource("unrelated", "video", []), title: "React component patterns", description: "Building interfaces with hooks" },
+  ];
+  const ranked = rankSourceResources(candidates, profile(), "Variational autoencoders latent representations", "learn", "best_match", now, conceptId);
+  assert.deepEqual(ranked.filter((candidate) => candidate.finalRank !== null).map((candidate) => candidate.resource.id), ["strong", "canonical"]);
+  assert.equal(ranked.some((candidate) => candidate.resource.id === "weak"), false);
+  assert.equal(ranked.some((candidate) => candidate.resource.id === "unrelated"), false);
+});
+
+test("a broad canonical concept does not qualify a weak explicit query match", () => {
+  const ranked = rankSourceResources([
+    { ...resource("broad", "video", [conceptId]), title: "Python tutorial", concepts: [{ id: conceptId, name: "Python", relevance: 1 }] },
+  ], profile(), "Python generators", "learn", "best_match", now, conceptId);
+  assert.equal(ranked.some((candidate) => candidate.finalRank !== null), false);
+});
+
+test("explicit query ranking stays ahead of historical affinity", () => {
+  const affinityConcept = "00000000-0000-0000-0000-000000000099";
+  const queryConcept = "00000000-0000-0000-0000-000000000098";
+  const ranked = rankSourceResources([
+    { ...resource("react", "video", [affinityConcept]), title: "React hooks deep dive" },
+    { ...resource("bayesian", "video", [queryConcept]), title: "Bayesian optimization acquisition functions" },
+  ], profile({ conceptIds: [affinityConcept], affinities: new Map([[affinityConcept, { conceptId: affinityConcept, score: 1, confidence: 1, featureVersion: "behavior-v1" }]]) }), "Bayesian optimization acquisition functions", "learn", "best_match", now, queryConcept);
+  assert.equal(ranked[0]?.resource.id, "bayesian");
+});
+
+test("python beginner search qualifies only topical beginner resources", () => {
+  const candidates = [
+    { ...resource("python-course", "video", []), title: "Python for Beginners - Full Course", metadata: { estimatedLevel: "beginner", learningFormat: "clear_explanations" } },
+    { ...resource("python-basics", "video", []), title: "Python Variables and Functions for Beginners", metadata: { estimatedLevel: "beginner", learningFormat: "clear_explanations" } },
+    { ...resource("python-metaclasses", "video", []), title: "Advanced Python Metaclasses", metadata: { estimatedLevel: "advanced", learningFormat: "deep_dive" } },
+    { ...resource("python-autoupdater", "video", []), title: "How to Add an Auto-Updater to ANY Python App", description: "A production app tutorial for experienced developers.", metadata: {} },
+    { ...resource("pi-agent", "video", [conceptId]), title: "Meet Pi: The Minimalist, Self-Modifying Coding Agent", description: "An AI coding agent walkthrough." },
+    { ...resource("openai-images", "video", [conceptId]), title: "OpenAI Image Generation Tutorial", description: "Generate images with modern AI tools." },
+  ];
+  const ranked = rankSourceResources(candidates, profile({
+    affinities: new Map([[conceptId, { conceptId, score: 1, confidence: 1, featureVersion: "behavior-v1" }]]),
+  }), "python for beginners", "learn", "best_match", now);
+  const visible = ranked.filter((candidate) => candidate.finalRank !== null);
+  assert.deepEqual(visible.map((candidate) => candidate.resource.id), ["python-course", "python-basics"]);
+  assert.equal(ranked.find((candidate) => candidate.resource.id === "python-autoupdater"), undefined);
+  assert.equal(ranked.find((candidate) => candidate.resource.id === "pi-agent"), undefined);
+  assert.equal(ranked.find((candidate) => candidate.resource.id === "openai-images"), undefined);
+  assert.ok(visible.every((candidate) => candidate.reasonCodes.some((code) => code.startsWith("query_"))));
+  assert.ok(visible.every((candidate) => !candidate.reasonCodes.includes("concept_match")));
+});
+
+test("source ranking intent reorders qualified results without widening eligibility", () => {
+  const candidates = [
+    { ...resource("beginner-python", "video", []), title: "Python Fundamentals", durationMs: 10 * 60_000, metadata: { estimatedLevel: "beginner", learningFormat: "clear_explanations" } },
+    { ...resource("deep-python", "video", []), title: "Python Internals Deep Dive", durationMs: 45 * 60_000, metadata: { estimatedLevel: "advanced", learningFormat: "deep_dive" } },
+    { ...resource("python-agent", "video", [conceptId]), title: "Self-Modifying Coding Agent", description: "Python is mentioned only in a long related-topic description." },
+  ];
+  const beginner = rankSourceResources(candidates, profile(), "python", "learn", "beginner_friendly", now);
+  const inDepth = rankSourceResources(candidates, profile(), "python", "learn", "in_depth", now);
+  assert.equal(beginner.filter((candidate) => candidate.finalRank !== null)[0]?.resource.id, "beginner-python");
+  assert.equal(inDepth.filter((candidate) => candidate.finalRank !== null)[0]?.resource.id, "deep-python");
+  assert.equal(beginner.some((candidate) => candidate.resource.id === "python-agent"), false);
 });

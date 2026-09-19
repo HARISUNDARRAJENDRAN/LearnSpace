@@ -26,6 +26,9 @@ export const DISCOVERY_REFRESH_CONFIG = {
   catalogCoverageFloor: 12,
 } as const;
 
+export const SOURCE_QUERY_RELEVANCE_THRESHOLD = 0.5;
+const sourceCandidatePoolLimit = 100;
+
 export const VIDEO_RANKING_WEIGHTS = {
   conceptMatch: 0.3,
   learnerAffinity: 0.2,
@@ -113,6 +116,8 @@ export type RankedResource = {
   freshnessScore: number;
   diversityPenalty: number;
   reasonCodes: string[];
+  queryRelevance?: number;
+  qualificationReason?: string;
 };
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
@@ -327,7 +332,7 @@ function diversify(scored: RankedResource[], limit: number): RankedResource[] {
   }).map((candidate) => selectedIds.has(candidate.resource.id) ? candidate : { ...candidate, finalRank: null });
 }
 
-function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now: Date): RankedResource[] {
+function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, diversityLimit = 24): RankedResource[] {
   const scored = resources.map((resource, index) => {
     const components = {
       conceptMatch: conceptMatch(resource, profile),
@@ -364,10 +369,10 @@ function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now
     } satisfies RankedResource;
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }));
-  return diversify(scored, Math.min(24, scored.length));
+  return diversify(scored, Math.min(diversityLimit, scored.length));
 }
 
-function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now: Date): RankedResource[] {
+function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, diversityLimit = 12): RankedResource[] {
   const scored = resources.map((resource, index) => {
     const components = {
       conceptMatch: conceptMatch(resource, profile),
@@ -404,7 +409,7 @@ function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now
     } satisfies RankedResource;
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }));
-  return diversify(scored, Math.min(12, scored.length));
+  return diversify(scored, Math.min(diversityLimit, scored.length));
 }
 
 export function rankDiscoveryResources(resources: DiscoveryResource[], profile: LearnerProfile, now: Date): {
@@ -417,21 +422,177 @@ export function rankDiscoveryResources(resources: DiscoveryResource[], profile: 
   };
 }
 
-function queryTokens(query: string): string[] {
-  return [...new Set(query.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 1))];
+const SOURCE_QUERY_STOP_WORDS = new Set([
+  "a", "about", "an", "and", "are", "can", "does", "for", "from", "how", "in", "is", "of", "on", "or", "the", "to", "what", "with",
+  "best", "course", "explain", "explained", "explanation", "guide", "learn", "learning", "lesson", "paper", "research", "study", "tutorial", "video",
+]);
+
+const SOURCE_QUERY_INTENT_WORDS = new Set([
+  "advanced", "basic", "beginner", "deep", "detailed", "dive", "expert", "foundational", "fundamental", "intro", "introduction", "novice", "practical", "project", "recent", "starter",
+]);
+
+type SourceQueryIntent = "beginner" | "practical" | "depth" | "foundational" | "recent" | null;
+
+export type SourceQuerySignals = {
+  relevance: number;
+  qualified: boolean;
+  qualificationReason: string | null;
+  phraseMatch: boolean;
+  topicTitleCoverage: number;
+  topicDescriptionCoverage: number;
+  canonicalCoverage: number;
+  canonicalRelevance: number;
+  nonCanonicalTopicCoverage: number;
+  intent: SourceQueryIntent;
+  intentFit: number;
+};
+
+function normalizedToken(token: string): string {
+  const normalized = token.toLowerCase();
+  if (normalized.length > 4 && normalized.endsWith("ies")) return `${normalized.slice(0, -3)}y`;
+  if (normalized.length > 4 && normalized.endsWith("s") && !normalized.endsWith("ss")) return normalized.slice(0, -1);
+  return normalized;
 }
 
-function queryRelevance(resource: DiscoveryResource, query: string): number {
+function lexicalTokens(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .map(normalizedToken)
+    .filter((token) => token.length > 1);
+}
+
+function queryTokens(query: string): string[] {
+  return [...new Set(lexicalTokens(query).filter((token) => !SOURCE_QUERY_STOP_WORDS.has(token)))];
+}
+
+function textTokens(value: string): Set<string> {
+  return new Set(lexicalTokens(value));
+}
+
+function coverage(tokens: string[], values: Set<string>): number {
+  return tokens.length === 0 ? 0 : tokens.filter((token) => values.has(token)).length / tokens.length;
+}
+
+function containsTokenSequence(haystack: string[], needle: string[]): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) return false;
+  return haystack.some((_, index) => needle.every((token, offset) => haystack[index + offset] === token));
+}
+
+function queryIntent(tokens: string[]): SourceQueryIntent {
+  if (tokens.some((token) => ["beginner", "basic", "fundamental", "intro", "introduction", "novice", "starter"].includes(token))) return "beginner";
+  if (tokens.some((token) => ["practical", "project", "implementation"].includes(token))) return "practical";
+  if (tokens.some((token) => ["advanced", "deep", "depth", "detailed", "dive", "expert"].includes(token))) return "depth";
+  if (tokens.includes("foundational")) return "foundational";
+  if (tokens.includes("recent")) return "recent";
+  return null;
+}
+
+function intentFit(resource: DiscoveryResource, intent: SourceQueryIntent, referenceDate = new Date()): number {
+  if (!intent) return 0.5;
+  const level = metadataText(resource.metadata, "estimatedLevel");
+  const format = metadataText(resource.metadata, "learningFormat");
+  const paperClass = metadataText(resource.metadata, "paperClass");
+  const hasImplementation = resource.metadata.hasImplementation === true;
+  const evidence = textTokens([
+    resource.title,
+    resource.description,
+    resource.paperAbstract,
+    level,
+    format,
+    paperClass,
+  ].filter(Boolean).join(" "));
+  if (intent === "beginner") {
+    if (level === "beginner" || ["basic", "beginner", "fundamental", "intro", "introduction", "novice", "starter"].some((token) => evidence.has(token))) return 1;
+    return level === "advanced" || evidence.has("advanced") || evidence.has("expert") ? 0 : 0;
+  }
+  if (intent === "practical") {
+    if (hasImplementation || format === "hands_on" || ["implementation", "practical", "project"].some((token) => evidence.has(token))) return 1;
+    return 0;
+  }
+  if (intent === "depth") {
+    if (format === "deep_dive" || resource.durationMs !== null && resource.durationMs >= 20 * 60_000 || ["advanced", "deep", "depth", "detailed", "expert"].some((token) => evidence.has(token))) return 1;
+    return 0;
+  }
+  if (intent === "foundational") return paperClass === "foundational" || evidence.has("foundational") ? 1 : 0;
+  return resource.publicationDate !== null && referenceDate.getTime() - resource.publicationDate.getTime() <= 365 * 86_400_000 ? 1 : 0;
+}
+
+function requestedIntent(rankingIntent: string): SourceQueryIntent {
+  if (rankingIntent === "beginner_friendly") return "beginner";
+  if (rankingIntent === "practical") return "practical";
+  if (rankingIntent === "in_depth") return "depth";
+  if (rankingIntent === "foundational") return "foundational";
+  if (rankingIntent === "recent") return "recent";
+  return null;
+}
+
+export function sourceQuerySignals(resource: DiscoveryResource, query: string, resolvedConceptId?: string | null): SourceQuerySignals {
   const tokens = queryTokens(query);
-  if (tokens.length === 0) return 0;
-  const text = [resource.title, resource.description, resource.paperAbstract, resource.channelTitle, resource.venue, ...(resource.authors ?? [])]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  const title = resource.title.toLowerCase();
-  const matched = tokens.filter((token) => text.includes(token)).length / tokens.length;
-  const titleMatched = tokens.filter((token) => title.includes(token)).length / tokens.length;
-  return clamp(matched * 0.65 + titleMatched * 0.35);
+  if (tokens.length === 0) {
+    return { relevance: 0, qualified: false, qualificationReason: null, phraseMatch: false, topicTitleCoverage: 0, topicDescriptionCoverage: 0, canonicalCoverage: 0, canonicalRelevance: 0, nonCanonicalTopicCoverage: 0, intent: null, intentFit: 0 };
+  }
+  const intent = queryIntent(tokens);
+  const topicTokens = tokens.filter((token) => !SOURCE_QUERY_INTENT_WORDS.has(token));
+  const titleTokens = lexicalTokens(resource.title);
+  const descriptionSet = textTokens([resource.description, resource.paperAbstract].filter(Boolean).join(" "));
+  const titleSet = new Set(titleTokens);
+  const topicTitleCoverage = coverage(topicTokens, titleSet);
+  const topicDescriptionCoverage = coverage(topicTokens, descriptionSet);
+  const phraseMatch = containsTokenSequence(titleTokens.filter((token) => !SOURCE_QUERY_STOP_WORDS.has(token)), tokens);
+  const canonical = resource.concepts.find((item) => item.id === resolvedConceptId);
+  const canonicalRelevance = canonical ? clamp(canonical.relevance) : 0;
+  const canonicalTerms = canonical ? textTokens(canonical.name) : new Set<string>();
+  const canonicalCoverage = coverage(tokens, canonicalTerms);
+  const nonCanonicalTopicTokens = topicTokens.filter((token) => !canonicalTerms.has(token));
+  const nonCanonicalTopicCoverage = coverage(nonCanonicalTopicTokens, new Set([...titleSet, ...descriptionSet]));
+  const lexical = phraseMatch ? 1 : clamp(topicTitleCoverage * 0.65 + topicDescriptionCoverage * 0.25);
+  const canonicalQueryOnly = topicTokens.length > 0 && nonCanonicalTopicTokens.length === 0;
+  const canonicalContextMatch = canonicalRelevance >= 0.5 && canonicalCoverage >= 0.5 && (nonCanonicalTopicCoverage >= 0.25 || canonicalQueryOnly);
+  const relevance = clamp(Math.max(lexical, canonicalContextMatch ? Math.max(0.55, canonicalRelevance * (0.55 + canonicalCoverage * 0.45)) : 0));
+  const matchedIntent = intentFit(resource, intent);
+  const intentAdjustedRelevance = intent && matchedIntent < 0.5 ? Math.min(relevance, 0.49) : relevance;
+  const strongLexicalMatch = phraseMatch || topicTitleCoverage >= 0.75 || (topicTokens.length > 1 && topicTitleCoverage >= 0.5 && topicDescriptionCoverage >= 0.5);
+  const qualified = intentAdjustedRelevance > SOURCE_QUERY_RELEVANCE_THRESHOLD
+    && (strongLexicalMatch || canonicalContextMatch)
+    && (!intent || matchedIntent >= 0.5);
+  return {
+    relevance: intentAdjustedRelevance,
+    qualified,
+    qualificationReason: qualified
+      ? phraseMatch ? "query_phrase_match" : canonicalContextMatch && !strongLexicalMatch ? "query_concept_match" : "query_high_relevance"
+      : null,
+    phraseMatch,
+    topicTitleCoverage,
+    topicDescriptionCoverage,
+    canonicalCoverage,
+    canonicalRelevance,
+    nonCanonicalTopicCoverage,
+    intent,
+    intentFit: matchedIntent,
+  };
+}
+
+export function sourceQueryRelevance(resource: DiscoveryResource, query: string, resolvedConceptId?: string | null): number {
+  return sourceQuerySignals(resource, query, resolvedConceptId).relevance;
+}
+
+function sourceReasonCodes(candidate: RankedResource, signals: SourceQuerySignals, rankingIntent: string, requestedFit: number): string[] {
+  const reasons: string[] = [];
+  if (signals.phraseMatch) reasons.push("query_phrase_match");
+  else if (signals.qualificationReason === "query_concept_match") reasons.push("query_concept_match");
+  else reasons.push("query_high_relevance");
+  if (signals.intent === "beginner" && signals.intentFit >= 0.75) reasons.push("beginner_intent_match");
+  if (signals.intent === "practical" && signals.intentFit >= 0.75) reasons.push("practical_intent_match");
+  if (signals.intent === "depth" && signals.intentFit >= 0.75) reasons.push("depth_intent_match");
+  if (requestedFit >= 0.75) {
+    reasons.push(rankingIntent === "foundational" ? "foundational_paper" : rankingIntent === "recent" ? "recent_work" : rankingIntent === "practical" ? "practical_examples" : rankingIntent === "beginner_friendly" ? "fits_your_level" : rankingIntent === "in_depth" ? "in_depth" : "matches_how_you_learn");
+  }
+  if (candidate.reasonCodes.includes("learner_affinity")) reasons.push("learner_affinity");
+  if (candidate.reasonCodes.includes("level_fit")) reasons.push("level_fit");
+  if (candidate.reasonCodes.includes("format_fit")) reasons.push("format_fit");
+  if (candidate.resource.concepts.length > 0) reasons.push("good_concept_coverage");
+  return [...new Set(reasons)];
 }
 
 export function rankSourceResources(
@@ -441,31 +602,34 @@ export function rankSourceResources(
   mode: "learn" | "research",
   rankingIntent: string,
   now: Date,
+  resolvedConceptId?: string | null,
 ): RankedResource[] {
+  // ponytail: keep source-picker retrieval bounded at 100 until indexed query retrieval is wired into this path.
+  const signalsById = new Map(resources.map((resource) => [resource.id, sourceQuerySignals(resource, query, resolvedConceptId)]));
+  const relevantResources = resources
+    .filter((resource) => (
+      resource.type === (mode === "learn" ? "video" : "paper")
+        && signalsById.get(resource.id)?.qualified === true
+    ))
+    .sort((left, right) => (signalsById.get(right.id)?.relevance ?? 0) - (signalsById.get(left.id)?.relevance ?? 0) || left.id.localeCompare(right.id))
+    .slice(0, sourceCandidatePoolLimit);
   const base = mode === "learn"
-    ? rankDiscoveryResources(resources, profile, now).videos
-    : rankDiscoveryResources(resources, profile, now).papers;
+    ? rankVideos(relevantResources, profile, now, relevantResources.length)
+    : rankPapers(relevantResources, profile, now, relevantResources.length);
   const ranked = base.map((candidate) => {
-    const relevance = queryRelevance(candidate.resource, query);
-    const metadataLevel = metadataText(candidate.resource.metadata, "estimatedLevel");
-    const durationMinutes = candidate.resource.durationMs ? candidate.resource.durationMs / 60_000 : 0;
-    const intentBoost = rankingIntent === "beginner_friendly" && metadataLevel === "beginner"
-      ? 0.2
-      : rankingIntent === "in_depth" && durationMinutes >= 20
-        ? 0.15
-        : rankingIntent === "practical" && metadataText(candidate.resource.metadata, "learningFormat") === "hands_on"
-          ? 0.2
-          : rankingIntent === "foundational" && metadataText(candidate.resource.metadata, "paperClass") === "foundational"
-            ? 0.2
-            : rankingIntent === "recent" && candidate.resource.publicationDate && now.getTime() - candidate.resource.publicationDate.getTime() < 365 * 86_400_000
-              ? 0.2
-              : 0;
-    const reasonCodes = [...candidate.reasonCodes];
-    if (relevance >= 0.55) reasonCodes.unshift("strong_topic_match");
-    else if (relevance >= 0.25) reasonCodes.unshift("highly_relevant");
-    if (candidate.resource.concepts.length > 0) reasonCodes.push("good_concept_coverage");
-    if (intentBoost > 0) reasonCodes.push(rankingIntent === "foundational" ? "foundational_paper" : rankingIntent === "recent" ? "recent_work" : rankingIntent === "practical" ? "practical_examples" : rankingIntent === "beginner_friendly" ? "fits_your_level" : "matches_how_you_learn");
-    return { ...candidate, score: candidate.score * 0.35 + relevance * 0.5 + intentBoost * 0.15, semanticRelevance: relevance, reasonCodes: [...new Set(reasonCodes)] };
+    const signals = signalsById.get(candidate.resource.id);
+    if (!signals) return candidate;
+    const relevance = signals.relevance;
+    const requestedFit = intentFit(candidate.resource, requestedIntent(rankingIntent), now);
+    const reasonCodes = sourceReasonCodes(candidate, signals, rankingIntent, requestedFit);
+    return {
+      ...candidate,
+      score: relevance * 0.65 + requestedFit * 0.15 + candidate.qualityScore * 0.1 + candidate.score * 0.05 + candidate.learnerAffinity * 0.05,
+      semanticRelevance: relevance,
+      queryRelevance: relevance,
+      ...(signals.qualificationReason ? { qualificationReason: signals.qualificationReason } : {}),
+      reasonCodes,
+    };
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1, finalRank: null }));
   return diversify(ranked, Math.min(5, ranked.length));

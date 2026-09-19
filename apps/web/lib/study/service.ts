@@ -112,7 +112,7 @@ function safeSourceUrl(value: string | null, type: StudyType): string | null {
   try {
     const url = new URL(value);
     const hosts = type === "video" ? ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"] : ["arxiv.org", "export.arxiv.org", "doi.org", "www.doi.org"];
-    return url.protocol === "https:" && hosts.includes(url.hostname.toLowerCase()) ? url.toString() : null;
+    return url.protocol === "https:" && !url.username && !url.password && !url.port && hosts.includes(url.hostname.toLowerCase()) ? url.toString() : null;
   } catch {
     return null;
   }
@@ -154,7 +154,7 @@ function parsedProgressStatus(value: string | null | undefined): StudyResourcePr
 function resourceReadiness(resource: ResourceRecord, bindingVersionId: string | null): StudyResourceReadiness {
   const type = studyType(resource.type);
   if (!type || resource.deletedAt || resource.status === "failed" || resource.status === "archived") return "unavailable";
-  if (type === "video" && !resource.video?.youtubeId) return "unavailable";
+  if (type === "video" && !resource.video?.youtubeId && resource.status !== "pending") return "unavailable";
   if (bindingVersionId && resource.versionId === bindingVersionId && resource.versionStatus === "ready") return "ready";
   if (!bindingVersionId && resource.versionId && resource.versionStatus === "ready") return "ready";
   return parsedReadiness("preparing");

@@ -16,11 +16,23 @@ export const SOURCE_RANKING_INTENTS = [
 export const sourceRankingIntentSchema = z.enum(SOURCE_RANKING_INTENTS);
 export type SourceRankingIntent = z.infer<typeof sourceRankingIntentSchema>;
 
+const LEARN_RANKING_INTENTS = ["best_match", "beginner_friendly", "in_depth", "practical"] as const;
+const RESEARCH_RANKING_INTENTS = ["best_match", "foundational", "recent"] as const;
+
 export const sourceDiscoverySearchRequestSchema = z.object({
   mode: sourceDiscoveryModeSchema,
   query: z.string().trim().min(1).max(240),
   rankingIntent: sourceRankingIntentSchema.default("best_match"),
   correlationId: z.string().uuid(),
+}).superRefine((value, context) => {
+  const allowed = value.mode === "learn" ? LEARN_RANKING_INTENTS : RESEARCH_RANKING_INTENTS;
+  if (!allowed.includes(value.rankingIntent as never)) {
+    context.addIssue({
+      code: "custom",
+      path: ["rankingIntent"],
+      message: `${value.rankingIntent} is not valid for ${value.mode} mode`,
+    });
+  }
 });
 
 export const sourceDiscoveryResolveRequestSchema = z.object({
@@ -62,7 +74,7 @@ export function arxivIdFromUrl(value: string): string | null {
   if (!url || url.search || !["arxiv.org", "export.arxiv.org"].includes(url.hostname.toLowerCase())) return null;
   const match = url.pathname.match(/^\/(?:abs|pdf)\/([^?#]+?)(?:\.pdf)?$/i);
   const id = match?.[1] ?? null;
-  return id && arxivIdPattern.test(id) ? id.toLowerCase() : null;
+  return id && arxivIdPattern.test(id) ? id.toLowerCase().replace(/v\d+$/i, "") : null;
 }
 
 export function doiFromUrl(value: string): string | null {
@@ -106,14 +118,22 @@ export function sourceModeForUrl(value: string): SourceDiscoveryMode | null {
 }
 
 export const sourceDiscoveryReasonSchema = z.enum([
-  "strong_topic_match",
-  "highly_relevant",
+  "query_phrase_match",
+  "query_concept_match",
+  "query_high_relevance",
+  "beginner_intent_match",
+  "practical_intent_match",
+  "depth_intent_match",
   "good_concept_coverage",
   "fits_your_level",
   "practical_examples",
+  "in_depth",
   "matches_how_you_learn",
   "foundational_paper",
   "recent_work",
+  "learner_affinity",
+  "level_fit",
+  "format_fit",
 ]);
 
 export type SourceDiscoveryReason = z.infer<typeof sourceDiscoveryReasonSchema>;
@@ -134,6 +154,9 @@ export const sourceDiscoveryCandidateSchema = z.object({
   candidateRank: z.number().int().positive(),
   finalRank: z.number().int().positive().nullable(),
   recommendationRunId: z.string().uuid(),
+  sourceOrigin: z.enum(["catalog", "external_refresh", "direct_url"]).optional(),
+  queryRelevance: z.number().min(0).max(1).optional(),
+  qualificationReason: z.string().optional(),
 });
 
 export type SourceDiscoveryCandidate = z.infer<typeof sourceDiscoveryCandidateSchema>;
@@ -153,6 +176,7 @@ export const sourcePreviewSchema = z.object({
   year: z.number().int().nullable(),
   arxivId: z.string().nullable(),
   doi: z.string().nullable(),
+  sourceOrigin: z.literal("direct_url").optional(),
 });
 
 export type SourcePreview = z.infer<typeof sourcePreviewSchema>;

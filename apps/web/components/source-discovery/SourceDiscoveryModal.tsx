@@ -1,8 +1,9 @@
 "use client";
 
-import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchResponse, SourcePreview } from "@learnspace/shared";
+import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
 import { ArrowRight, FileText, Link2, LoaderCircle, Search, Video, X } from "lucide-react";
 import Image from "next/image";
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { StartStudyButton } from "../study/StudyActions";
 
@@ -36,6 +37,9 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+// Worker pickup (30s) + agent timeout (120s) + a small response margin.
+const sourceDiscoveryPollBudgetMs = 165_000;
+
 function formatDuration(durationMs: number | null): string | null {
   if (!durationMs) return null;
   const minutes = Math.floor(durationMs / 60_000);
@@ -52,6 +56,7 @@ function formatDate(value: string | null): string | null {
 export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, triggerRef }: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   const directRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const requestVersion = useRef(0);
   const [query, setQuery] = useState("");
@@ -63,12 +68,11 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
   const [error, setError] = useState<string | null>(null);
   const [detectedMode, setDetectedMode] = useState<SourceDiscoveryMode | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [rankingIntent, setRankingIntent] = useState<SourceRankingIntent>("best_match");
   const research = mode === "research";
 
   useEffect(() => {
     if (!isOpen) {
-      requestRef.current?.abort();
-      requestRef.current = null;
       setQuery("");
       setDirectUrl("");
       setDirectOpen(false);
@@ -78,37 +82,63 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       setError(null);
       setDetectedMode(null);
       setRunId(null);
+      setRankingIntent("best_match");
+      triggerRef.current?.focus();
       return;
     }
-    window.requestAnimationFrame(() => searchRef.current?.focus());
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen) return;
     setState("idle");
     setCandidates([]);
     setPreview(null);
     setError(null);
     setDetectedMode(null);
     setRunId(null);
-    window.requestAnimationFrame(() => searchRef.current?.focus());
-  }, [isOpen]);
+    setRankingIntent("best_match");
+    requestRef.current?.abort();
+    requestRef.current = null;
+    requestVersion.current += 1;
+    const background = document.querySelector<HTMLElement>(".application-page");
+    const previousAriaHidden = background ? background.getAttribute("aria-hidden") : null;
+    const previousInert = background?.hasAttribute("inert") ?? false;
+    const previousOverflow = document.body.style.overflow;
+    background?.setAttribute("aria-hidden", "true");
+    background?.setAttribute("inert", "");
+    document.body.style.overflow = "hidden";
+    const focusFrame = window.requestAnimationFrame(() => searchRef.current?.focus());
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      requestRef.current?.abort();
+      requestRef.current = null;
+      requestVersion.current += 1;
+      document.body.style.overflow = previousOverflow;
+      if (background) {
+        if (previousAriaHidden === null) background.removeAttribute("aria-hidden");
+        else background.setAttribute("aria-hidden", previousAriaHidden);
+        if (!previousInert) background.removeAttribute("inert");
+      }
+    };
+  }, [isOpen, triggerRef]);
 
   useEffect(() => {
     if (!isOpen) return;
-    const dialog = document.querySelector<HTMLElement>("[data-source-discovery-dialog]");
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
         return;
       }
-      if (event.key !== "Tab" || !dialog?.contains(document.activeElement)) return;
-      const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex='0']")];
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex='-1'])")];
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (!first || !last) return;
+      if (!dialog.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
       if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
@@ -120,11 +150,6 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [isOpen, onClose]);
-
-  useEffect(() => {
-    if (isOpen) return;
-    triggerRef.current?.focus();
-  }, [isOpen, triggerRef]);
 
   useEffect(() => {
     if (!runId || candidates.length === 0) return;
@@ -187,12 +212,16 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
         setError("We couldn't resolve that source. Check the URL and try again.");
         setState("error");
       }
+    } finally {
+      if (requestRef.current === controller) requestRef.current = null;
     }
   }
 
   async function pollRun(run: string, controller: AbortController, version: number) {
-    for (let attempt = 0; attempt < 24; attempt += 1) {
-      await delay(900, controller.signal);
+    const deadline = Date.now() + sourceDiscoveryPollBudgetMs;
+    let waitMs = 1_000;
+    while (Date.now() < deadline) {
+      await delay(Math.min(waitMs, Math.max(0, deadline - Date.now())), controller.signal);
       const response = await fetch(`/api/v1/source-discovery/runs/${run}`, { signal: controller.signal });
       if (!response.ok) throw new Error(messageFrom(await readError(response)));
       const result = await response.json() as SourceDiscoverySearchResponse;
@@ -202,11 +231,9 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
         setState("results");
         return;
       }
+      waitMs = Math.min(2_000, waitMs * 2);
     }
-    if (version === requestVersion.current) {
-      setError(research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again.");
-      setState("error");
-    }
+    throw new Error(research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again.");
   }
 
   async function submitSearch(event?: FormEvent) {
@@ -230,7 +257,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       const response = await fetch("/api/v1/source-discovery/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, query: value, rankingIntent: (document.getElementById("source-discovery-ranking") as HTMLSelectElement | null)?.value ?? "best_match", correlationId: crypto.randomUUID() }),
+        body: JSON.stringify({ mode, query: value, rankingIntent, correlationId: crypto.randomUUID() }),
         signal: controller.signal,
       });
       const body = await (response.ok ? response.json() as Promise<SourceDiscoverySearchResponse> : readError(response));
@@ -266,6 +293,8 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
         setError(caught instanceof Error ? caught.message : "We couldn't search right now. Try again.");
         setState("error");
       }
+    } finally {
+      if (requestRef.current === controller) requestRef.current = null;
     }
   }
 
@@ -282,10 +311,10 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
   const emptyTitle = research ? "or add a paper directly" : "or add a video directly";
   const emptySubtitle = research ? "Already have a paper in mind?" : "Already know what you want to study?";
 
-  return (
+  const content = (
     <div className="source-discovery-overlay" role="presentation">
       <button className="source-discovery-backdrop" type="button" onClick={onClose} aria-label="Close source discovery" />
-      <section className="source-discovery-dialog" data-source-discovery-dialog role="dialog" aria-modal="true" aria-labelledby="source-discovery-title">
+      <section ref={dialogRef} className="source-discovery-dialog" data-source-discovery-dialog role="dialog" aria-modal="true" aria-labelledby="source-discovery-title">
         <button className="source-discovery-close" type="button" onClick={onClose} aria-label="Close source discovery"><X aria-hidden="true" /></button>
         <header className="source-discovery-header">
           <h2 id="source-discovery-title">{research ? "Research any topic from" : "Learn any topic from"}<br /><span>{headingEnd}</span></h2>
@@ -296,7 +325,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
             <div className="source-discovery-search-footer">
               <fieldset className="source-discovery-pills" aria-label="Search source and ranking">
                 <span className="source-discovery-pill">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />} {research ? "Papers" : "YouTube"}</span>
-                <label className="source-discovery-pill source-discovery-select"><span className="sr-only">Ranking</span><select id="source-discovery-ranking" defaultValue="best_match"><option value="best_match">Best match</option>{research ? <><option value="foundational">Foundational</option><option value="recent">Recent</option></> : <><option value="beginner_friendly">Beginner friendly</option><option value="in_depth">In-depth</option><option value="practical">Practical</option></>}</select></label>
+                <label className="source-discovery-pill source-discovery-select"><span className="sr-only">Ranking</span><select value={rankingIntent} onChange={(event) => setRankingIntent(event.target.value as SourceRankingIntent)}><option value="best_match">Best match</option>{research ? <><option value="foundational">Foundational</option><option value="recent">Recent</option></> : <><option value="beginner_friendly">Beginner friendly</option><option value="in_depth">In-depth</option><option value="practical">Practical</option></>}</select></label>
               </fieldset>
               <button className="source-discovery-submit" type="submit" aria-label={research ? "Search papers" : "Search videos"} disabled={state === "searching" || state === "resolving_url"}><Search aria-hidden="true" /></button>
             </div>
@@ -304,8 +333,8 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
           <div className={`source-discovery-lower ${state === "results" || state === "searching" ? "is-results" : ""}`}>
             {state === "searching" ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Finding the strongest videos…"}</p><span>{research ? "Comparing candidate papers…" : "Checking topic relevance and ranking learning resources…"}</span></div> : null}
-            {state === "results" ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? candidates.map((candidate) => <ResultRow key={candidate.resourceId} candidate={candidate} mode={mode} startLabel={startLabel} />) : <div className="source-discovery-empty-results"><p>{research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic."}</p><span>Try making the topic more specific.</span></div>}</div> : null}
-            {state === "preview" && preview ? <Preview preview={preview} label={startLabel} /> : null}
+            {state === "results" ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? candidates.map((candidate) => <ResultRow key={candidate.resourceId} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />) : <div className="source-discovery-empty-results"><p>{research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic."}</p><span>Try making the topic more specific.</span></div>}</div> : null}
+            {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} /> : null}
             {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? "Research" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
             {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}
             {state === "idle" && !directOpen ? <div className="source-discovery-empty"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><button className="source-discovery-direct-trigger" type="button" onClick={() => { setDirectOpen(true); window.requestAnimationFrame(() => directRef.current?.focus()); }}>{directLabel}</button></div> : null}
@@ -316,14 +345,15 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       </section>
     </div>
   );
+  return typeof document === "undefined" ? null : createPortal(content, document.body);
 }
 
-function ResultRow({ candidate, mode, startLabel }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string }) {
+function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string; onStart: () => void }) {
   const duration = formatDuration(candidate.durationMs);
-  return <article className="source-discovery-result"><div className="source-discovery-thumbnail">{candidate.thumbnailUrl ? <Image src={candidate.thumbnailUrl} alt="" width={128} height={72} unoptimized /> : mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-result-copy"><h3>{candidate.title}</h3><p>{[candidate.author, duration, formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p><span>{candidate.reason}</span></div><StartStudyButton resourceId={candidate.resourceId} origin={mode === "research" ? "research" : "discover"} recommendationRunId={candidate.recommendationRunId} label={startLabel} className="source-discovery-start" /></article>;
+  return <article className="source-discovery-result"><div className="source-discovery-thumbnail">{candidate.thumbnailUrl ? <Image src={candidate.thumbnailUrl} alt="" width={128} height={72} unoptimized /> : mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-result-copy"><h3>{candidate.title}</h3><p>{[candidate.author, duration, formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p><span>{candidate.reason}</span></div><StartStudyButton resourceId={candidate.resourceId} origin={mode === "research" ? "research" : "discover"} recommendationRunId={candidate.recommendationRunId} label={startLabel} className="source-discovery-start" onClick={onStart} /></article>;
 }
 
-function Preview({ preview, label }: { preview: SourcePreview; label: string }) {
+function Preview({ preview, label, onStart }: { preview: SourcePreview; label: string; onStart: () => void }) {
   const metadata = preview.mode === "research" ? [preview.authors.length > 0 ? preview.authors.slice(0, 2).join(", ") : null, preview.year?.toString(), preview.venue ?? (preview.arxivId ? "arXiv" : null)].filter(Boolean).join(" · ") : [preview.author, formatDuration(preview.durationMs)].filter(Boolean).join(" · ");
-  return <div className="source-discovery-preview"><div className="source-discovery-preview-media">{preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt="" width={180} height={101} unoptimized /> : preview.mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-preview-copy"><span className="source-discovery-kicker">Review source</span><h3>{preview.title}</h3><p>{metadata}</p>{preview.description ? <span>{preview.description}</span> : null}</div><StartStudyButton resourceId={preview.resourceId} origin={preview.mode === "research" ? "research" : "discover"} label={label} className="source-discovery-start" /></div>;
+  return <div className="source-discovery-preview"><div className="source-discovery-preview-media">{preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt="" width={180} height={101} unoptimized /> : preview.mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-preview-copy"><span className="source-discovery-kicker">Review source</span><h3>{preview.title}</h3><p>{metadata}</p>{preview.description ? <span>{preview.description}</span> : null}</div><StartStudyButton resourceId={preview.resourceId} origin={preview.mode === "research" ? "research" : "discover"} label={label} className="source-discovery-start" onClick={onStart} /></div>;
 }

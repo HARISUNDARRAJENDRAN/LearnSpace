@@ -152,8 +152,8 @@ function youtubeId(value: unknown): string | null {
 
 function arxivId(value: unknown): string | null {
   const id = stringValue(value);
-  return id && /^(?:[A-Za-z][A-Za-z0-9.-]{1,31}\/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)$/.test(id)
-    ? id
+  return id && /^(?:[A-Za-z][A-Za-z0-9.-]{1,31}\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?$/.test(id)
+    ? id.replace(/v\d+$/i, "")
     : null;
 }
 
@@ -171,7 +171,7 @@ function isArxivUrl(value: string, id: string): boolean {
       && !url.port
       && !url.search
       && !url.hash
-      && url.pathname === `/abs/${id}`;
+      && arxivId(url.pathname.replace(/^\/abs\//, "")) === id;
   } catch {
     return false;
   }
@@ -278,6 +278,36 @@ export function discoveryPayload(traceId: string, conceptId: string, conceptName
   };
 }
 
+export function sourcePickerJobPayload(
+  traceId: string,
+  userId: string,
+  runId: string,
+  queryText: string | null,
+  sourceKind: string | null,
+  conceptIds: string[],
+  conceptNames: string[],
+): JsonObject {
+  if (conceptIds.length > 0 && conceptIds.length !== conceptNames.length) {
+    throw new Error("source-picker concept ids and names must have the same length");
+  }
+  return {
+    concept_ids: conceptIds,
+    concept_names: conceptIds.length > 0 ? conceptNames.slice(0, conceptIds.length) : [],
+    query_text: queryText,
+    source_kind: sourceKind,
+    level: "mixed",
+    preferred_formats: [],
+    video_coverage: 0,
+    paper_coverage: 0,
+    window_days: 30,
+    audit_user_id: userId,
+    force_refresh: true,
+    source_picker_run_id: runId,
+    refresh_reason: "source_picker",
+    trace_id: traceId,
+  };
+}
+
 async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
   const rows = await sql<{ concept_id: string; concept_name: string; payload: JsonObject; finished_at: Date }[]>`
     SELECT DISTINCT ON (payload->>'concept_id')
@@ -356,29 +386,25 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const queryText = stringValue(outboxPayload.queryText);
     const sourceKind = stringValue(outboxPayload.sourceKind);
     const jobs: Array<{ id: string }> = [];
-    if (sourcePickerRunId && queryText && conceptIds.length === 0) {
-      const payload = {
-        concept_ids: [],
-        concept_names: [],
-        query_text: queryText,
-        source_kind: sourceKind,
-        level: "mixed",
-        preferred_formats: [],
-        audit_user_id: outbox.user_id,
-        force_refresh: true,
-        source_picker_run_id: sourcePickerRunId,
-        trace_id: traceId,
-      };
+    if (sourcePickerRunId) {
+      const payload = sourcePickerJobPayload(
+        traceId,
+        outbox.user_id,
+        sourcePickerRunId,
+        queryText,
+        sourceKind,
+        conceptIds,
+        conceptNames,
+      );
       const dedupKey = `discovery:source-picker:${sourcePickerRunId}`;
       const inserted = await tx<{ id: string }[]>`
-        INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
-        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, ${dedupKey}, ${`${outbox.id}:source-picker`}, ${outbox.correlation_id}, ${traceId})
+        INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, 'pending', 10, ${dedupKey}, ${`${outbox.id}:source-picker`}, ${outbox.correlation_id}, ${traceId})
         ON CONFLICT DO NOTHING
         RETURNING id
       `;
       if (inserted[0]) jobs.push(inserted[0]);
-    }
-    for (const [index, conceptId] of conceptIds.entries()) {
+    } else for (const [index, conceptId] of conceptIds.entries()) {
       const conceptName = conceptNames[index] ?? conceptId;
       const payload = {
         ...discoveryPayload(traceId, conceptId, conceptName),
@@ -428,7 +454,7 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
         AND status = 'pending'
         AND available_at <= now()
         AND attempts < max_attempts
-      ORDER BY priority DESC, created_at
+      ORDER BY CASE WHEN created_at < now() - interval '5 minutes' THEN 10 ELSE priority END DESC, created_at
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     `;
@@ -640,7 +666,7 @@ async function markSourcePickerRefresh(sql: SqlClient, job: JobRow, resourceIds:
   if (!runId) return;
   await sql`
     UPDATE discovery.recommendation_runs
-    SET context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
+    SET status = 'completed', completed_at = COALESCE(completed_at, now()), context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
     WHERE id = ${runId}
   `;
 }

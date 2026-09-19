@@ -21,8 +21,8 @@ LearningFormat = Literal[
 class DiscoveryRefreshRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    concept_ids: list[UUID] = Field(default_factory=list, max_length=1)
-    concept_names: list[str] = Field(default_factory=list, max_length=1)
+    concept_ids: list[UUID] = Field(default_factory=lambda: list[UUID](), max_length=1)
+    concept_names: list[str] = Field(default_factory=lambda: list[str](), max_length=1)
     query_text: str | None = Field(default=None, min_length=2, max_length=240)
     source_kind: ResourceKind | None = None
     level: LearningLevel = "mixed"
