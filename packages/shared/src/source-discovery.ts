@@ -39,6 +39,7 @@ export const sourceDiscoveryResolveRequestSchema = z.object({
   mode: sourceDiscoveryModeSchema,
   url: z.string().trim().min(1).max(2_048),
   correlationId: z.string().uuid(),
+  recommendationRunId: z.string().uuid().optional(),
 });
 
 export type SourceDiscoverySearchRequest = z.infer<typeof sourceDiscoverySearchRequestSchema>;
@@ -139,8 +140,10 @@ export const sourceDiscoveryReasonSchema = z.enum([
 export type SourceDiscoveryReason = z.infer<typeof sourceDiscoveryReasonSchema>;
 
 export const sourceDiscoveryCandidateSchema = z.object({
-  resourceId: z.string().uuid(),
+  resourceId: z.string().uuid().optional(),
   type: z.enum(["video", "paper"]),
+  provider: z.enum(["youtube", "arxiv", "doi"]).optional(),
+  externalId: z.string().optional(),
   title: z.string(),
   description: z.string().nullable(),
   canonicalUrl: z.string().nullable(),
@@ -153,13 +156,52 @@ export const sourceDiscoveryCandidateSchema = z.object({
   score: z.number(),
   candidateRank: z.number().int().positive(),
   finalRank: z.number().int().positive().nullable(),
-  recommendationRunId: z.string().uuid(),
+  recommendationRunId: z.string().uuid().nullable().optional(),
   sourceOrigin: z.enum(["catalog", "external_refresh", "direct_url"]).optional(),
   queryRelevance: z.number().min(0).max(1).optional(),
   qualificationReason: z.string().optional(),
 });
 
 export type SourceDiscoveryCandidate = z.infer<typeof sourceDiscoveryCandidateSchema>;
+
+export const sourceDiscoveryAgentYoutubeCandidateSchema = z.object({
+  youtube_id: z.string().regex(/^[A-Za-z0-9_-]{11}$/),
+  canonical_url: z.string().url(),
+  title: z.string().min(3).max(500),
+  channel: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  duration_ms: z.number().int().nonnegative().nullable().optional(),
+  language: z.string().nullable().optional(),
+  learning_format: z.string().nullable().optional(),
+  estimated_level: z.string().nullable().optional(),
+  has_implementation: z.boolean().nullable().optional(),
+  evidence: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1),
+});
+
+export const sourceDiscoveryAgentArxivCandidateSchema = z.object({
+  arxiv_id: z.string().min(3).max(100),
+  canonical_url: z.string().url(),
+  title: z.string().min(3).max(500),
+  authors: z.array(z.string()).optional(),
+  abstract: z.string().nullable().optional(),
+  published_at: z.string().nullable().optional(),
+  estimated_level: z.string().nullable().optional(),
+  paper_class: z.enum(["current", "foundational"]).optional(),
+  evidence: z.array(z.string()).optional(),
+  confidence: z.number().min(0).max(1),
+});
+
+export const sourceDiscoveryInstantBatchSchema = z.object({
+  trace_id: z.string(),
+  youtube: z.array(sourceDiscoveryAgentYoutubeCandidateSchema).default([]),
+  arxiv: z.array(sourceDiscoveryAgentArxivCandidateSchema).default([]),
+  cache_hit: z.boolean().default(false),
+  failures: z.array(z.string()).default([]),
+  provider_calls: z.number().int().nonnegative().default(0),
+});
+
+export type SourceDiscoveryInstantBatch = z.infer<typeof sourceDiscoveryInstantBatchSchema>;
 
 export const sourcePreviewSchema = z.object({
   resourceId: z.string().uuid(),
@@ -188,6 +230,15 @@ export const sourceDiscoverySearchResponseSchema = z.object({
   query: z.string(),
   candidates: z.array(sourceDiscoveryCandidateSchema),
   preview: sourcePreviewSchema.optional(),
+  retrieval: z.enum(["memory", "redis", "catalog", "live_web", "blended"]).optional(),
+  cacheState: z.enum(["fresh", "stale", "miss"]).optional(),
+  timings: z.object({
+    cacheMs: z.number().nonnegative().optional(),
+    catalogMs: z.number().nonnegative().optional(),
+    exaMs: z.number().nonnegative().optional(),
+    rankMs: z.number().nonnegative().optional(),
+    totalMs: z.number().nonnegative().optional(),
+  }).optional(),
 });
 
 export type SourceDiscoverySearchResponse = z.infer<typeof sourceDiscoverySearchResponseSchema>;

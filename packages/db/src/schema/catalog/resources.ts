@@ -41,6 +41,7 @@ export const resources = catalogSchema.table(
     index("resources_type_status_quality_idx").on(table.type, table.status, table.qualityScore.desc()),
     index("resources_visibility_status_idx").on(table.visibility, table.status),
     index("resources_title_trgm_idx").using("gin", sql`${table.title} gin_trgm_ops`),
+    index("resources_search_tsv_idx").using("gin", table.searchTsv),
     check(
       "resources_quality_score_chk",
       sql`${table.qualityScore} IS NULL OR (${table.qualityScore} >= 0 AND ${table.qualityScore} <= 1)`,

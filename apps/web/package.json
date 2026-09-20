@@ -13,6 +13,7 @@
     "test": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/hero.test.tsx tests/auth.test.ts tests/auth.integration.test.ts tests/onboarding.integration.test.ts tests/discovery.test.ts tests/discovery.integration.test.ts tests/source-discovery.integration.test.ts tests/home.integration.test.ts tests/study.integration.test.ts",
     "test:e2e": "node tests/e2e/run.mjs",
     "test:e2e:production": "node tests/e2e/run.mjs --production",
+    "benchmark:source-discovery": "node scripts/benchmark-source-discovery.mjs",
     "verify:auth-layout": "node scripts/verify-auth-layout.mjs",
     "discovery:import:youtube-dataset": "tsx scripts/import-youtube-dataset.ts"
   },

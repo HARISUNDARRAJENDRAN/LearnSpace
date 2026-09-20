@@ -1,0 +1,1 @@
+CREATE INDEX "resources_search_tsv_idx" ON "catalog"."resources" USING gin ("search_tsv");

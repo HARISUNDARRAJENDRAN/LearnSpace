@@ -1,11 +1,14 @@
+import { createHash } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { conceptAliases, concepts, outboxEvents, paperDetails, recommendationCandidates, recommendationRuns, resources, videoDetails } from "@learnspace/db/schema";
 import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchRequest, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
-import { classifySourceUrl, normalizeQuery, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
-import { and, desc, eq, gte, ilike, isNull, ne, or, sql } from "drizzle-orm";
+import { classifySourceUrl, normalizeQuery, sourceDiscoveryInstantBatchSchema, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
+import { and, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
+import { z } from "zod";
 import { AuthError } from "../auth/errors";
 import { loadDiscoveryProfile, loadDiscoveryResources } from "../discovery/service";
-import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, rankSourceResources, type RankedResource } from "../discovery/ranker";
+import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type RankedResource } from "../discovery/ranker";
+import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
 
 const sourceResultLimit = 5;
 const sourceRunReuseMs = 10 * 60 * 1000;
@@ -53,12 +56,16 @@ function reasonLabel(code: string, mode: SourceDiscoveryMode): string {
 type SourceOrigin = "catalog" | "external_refresh" | "direct_url";
 type CandidateDiagnostics = { sourceOrigin: SourceOrigin; queryRelevance?: number; qualificationReason?: string };
 
-function sourceCandidate(candidate: RankedResource, runId: string, mode: SourceDiscoveryMode, diagnostics?: CandidateDiagnostics): SourceDiscoveryCandidate {
+function sourceCandidate(candidate: RankedResource, runId: string | null, mode: SourceDiscoveryMode, diagnostics?: CandidateDiagnostics): SourceDiscoveryCandidate {
   const resource = candidate.resource;
   const reasonCodes = [...new Set(candidate.reasonCodes)].slice(0, 4);
+  const resourceId = /^[0-9a-f-]{36}$/i.test(resource.id) ? resource.id : undefined;
+  const provider = resource.provider === "youtube" || resource.provider === "arxiv" || resource.provider === "doi" ? resource.provider : undefined;
   return {
-    resourceId: resource.id,
+    ...(resourceId ? { resourceId } : {}),
     type: resource.type,
+    ...(provider ? { provider } : {}),
+    ...(resource.externalId ? { externalId: resource.externalId } : {}),
     title: resource.title,
     description: resource.type === "paper" ? resource.paperAbstract : resource.description,
     canonicalUrl: resource.canonicalUrl,
@@ -121,10 +128,11 @@ async function findReusableRun(tx: Transaction, userId: string, mode: SourceDisc
     eq(recommendationRuns.userId, userId),
     eq(recommendationRuns.surface, "source_picker"),
     eq(recommendationRuns.queryText, query),
-    ne(recommendationRuns.status, "failed"),
+    eq(recommendationRuns.status, "completed"),
     gte(recommendationRuns.createdAt, new Date(Date.now() - sourceRunReuseMs)),
     sql`${recommendationRuns.contextSnapshot}->>'mode' = ${mode}`,
     sql`${recommendationRuns.contextSnapshot}->>'rankingIntent' = ${rankingIntent}`,
+    sql`${recommendationRuns.contextSnapshot}->>'refreshStatus' IN ('not_needed', 'done', 'complete')`,
   )).orderBy(desc(recommendationRuns.createdAt)).limit(1);
   return rows[0] ?? null;
 }
@@ -145,16 +153,7 @@ async function finalizeRefreshRun(tx: Transaction, userId: string, run: typeof r
     new Date(),
     typeof run.contextSnapshot.canonicalConceptId === "string" ? run.contextSnapshot.canonicalConceptId : null,
   ).filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
-  for (const [index, row] of candidateRows.entries()) {
-    await tx.update(recommendationCandidates).set({
-      candidateRank: -(index + 1),
-      finalRank: null,
-      selected: false,
-    }).where(and(
-      eq(recommendationCandidates.recommendationRunId, run.id),
-      eq(recommendationCandidates.resourceId, row.resourceId),
-    ));
-  }
+  await tx.delete(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
   if (ranked.length > 0) {
     await tx.insert(recommendationCandidates).values(ranked.map((candidate) => ({
       recommendationRunId: run.id,
@@ -243,71 +242,378 @@ async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mo
   });
 }
 
-async function createSearchRun(tx: Transaction, userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
-  const query = normalizeQuery(input.query);
-  const profileLoad = await loadDiscoveryProfile(tx, userId);
-  const concept = await resolveConcept(tx, query);
-  const resourcesForRanker = await loadDiscoveryResources(tx, undefined, userId);
-  const ranked = rankSourceResources(resourcesForRanker, profileLoad.profile, query, input.mode, input.rankingIntent, new Date(), concept?.id);
-  const candidates = ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
-  const qualifiedRelevantCandidates = ranked.filter((candidate) => candidate.finalRank !== null);
-  const shouldRefresh = qualifiedRelevantCandidates.length < 3;
-  const now = new Date();
-  const [run] = await tx.insert(recommendationRuns).values({
-    userId,
-    surface: "source_picker",
-    queryText: query,
-    strategyVersion: DISCOVERY_STRATEGY_VERSION,
-    featureVersion: DISCOVERY_FEATURE_VERSION,
-    contextSnapshot: {
-      mode: input.mode,
-      canonicalConceptId: concept?.id ?? null,
-      canonicalConceptName: concept?.name ?? null,
-      rankingIntent: input.rankingIntent,
-      strategyVersion: DISCOVERY_STRATEGY_VERSION,
-      refreshStatus: shouldRefresh ? "requested" : "not_needed",
-      qualifiedCatalogCandidateCount: qualifiedRelevantCandidates.length,
-      candidateDiagnostics: candidates.map((candidate) => ({
-        resourceId: candidate.resource.id,
-        sourceOrigin: "catalog",
-        queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
-        qualificationReason: candidate.qualificationReason ?? null,
-      })),
-    },
-    status: shouldRefresh ? "running" : "completed",
-    completedAt: shouldRefresh ? null : now,
-  }).returning();
-  if (!run) throw new Error("Source discovery run could not be created");
-  if (candidates.length > 0) {
-    await tx.insert(recommendationCandidates).values(candidates.map((candidate) => ({
-      recommendationRunId: run.id,
-      resourceId: candidate.resource.id,
-      candidateRank: candidate.candidateRank,
-      finalRank: candidate.finalRank,
-      score: candidate.score,
-      semanticRelevance: candidate.semanticRelevance,
-      qualityScore: candidate.qualityScore,
-      learnerAffinity: candidate.learnerAffinity,
-      masteryFit: candidate.masteryFit,
-      coverageScore: candidate.coverageScore,
-      freshnessScore: candidate.freshnessScore,
-      diversityPenalty: candidate.diversityPenalty,
-      reasonCodes: candidate.reasonCodes,
-      selected: true,
-    })));
-  }
-  if (shouldRefresh) await enqueueRefresh(tx, userId, run.id, input.mode, query, concept, input.correlationId);
-  return responseForRun(tx, run, userId);
+type InstantAgentBatch = z.infer<typeof sourceDiscoveryInstantBatchSchema>;
+type ExternalPool = { resources: DiscoveryResource[]; cacheHit: boolean; cacheState: "fresh" | "stale" | "miss"; cacheTier: "memory" | "redis" | null; cacheMs: number; exaMs: number };
+
+const instantRefreshes = new Map<string, Promise<DiscoveryResource[]>>();
+
+function emptyExternalPool(): ExternalPool {
+  return { resources: [], cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs: 0, exaMs: 0 };
 }
+
+function deadline(ms: number): Promise<null> {
+  return new Promise((resolve) => setTimeout(() => resolve(null), ms));
+}
+
+function parseDateValue(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | null {
+  return typeof metadata[key] === "string" && metadata[key] ? metadata[key] as string : null;
+}
+
+function dedupeExternalResources(resources: DiscoveryResource[]): DiscoveryResource[] {
+  return [...new Map(resources.map((resource) => [`${resource.provider}:${resource.externalId}`, resource])).values()];
+}
+
+function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode): DiscoveryResource[] {
+  if (mode === "learn") {
+    return dedupeExternalResources(batch.youtube.flatMap((candidate) => {
+      const parsed = classifySourceUrl(candidate.canonical_url);
+      if (!parsed || parsed.provider !== "youtube") return [];
+      const description = candidate.evidence?.join(" ") || null;
+      return [{
+        id: `external:youtube:${parsed.id}`,
+        type: "video",
+        provider: "youtube",
+        externalId: parsed.id,
+        canonicalUrl: parsed.canonicalUrl,
+        title: candidate.title,
+        description,
+        language: candidate.language ?? null,
+        qualityScore: candidate.confidence,
+        thumbnailUrl: `https://i.ytimg.com/vi/${parsed.id}/hqdefault.jpg`,
+        channelTitle: candidate.channel ?? null,
+        durationMs: candidate.duration_ms ?? null,
+        publishedAt: parseDateValue(candidate.published_at),
+        paperAbstract: null,
+        venue: null,
+        publicationDate: null,
+        citationCount: null,
+        metadata: {
+          sourceConfidence: candidate.confidence,
+          estimatedLevel: candidate.estimated_level ?? null,
+          learningFormat: candidate.learning_format ?? null,
+          hasImplementation: candidate.has_implementation ?? null,
+          evidence: candidate.evidence ?? [],
+        },
+        concepts: [],
+        quality: { finalQualityScore: candidate.confidence, freshnessPrior: null, sourceAuthority: candidate.confidence },
+      } satisfies DiscoveryResource];
+    }));
+  }
+  return dedupeExternalResources(batch.arxiv.flatMap((candidate) => {
+    const parsed = classifySourceUrl(candidate.canonical_url);
+    if (!parsed || parsed.provider !== "arxiv") return [];
+    const description = candidate.abstract || candidate.evidence?.join(" ") || null;
+    const publicationDate = parseDateValue(candidate.published_at);
+    return [{
+      id: `external:arxiv:${parsed.id}`,
+      type: "paper",
+      provider: "arxiv",
+      externalId: parsed.id,
+      canonicalUrl: parsed.canonicalUrl,
+      title: candidate.title,
+      description,
+      language: null,
+      qualityScore: candidate.confidence,
+      thumbnailUrl: null,
+      channelTitle: null,
+      authors: candidate.authors ?? [],
+      durationMs: null,
+      publishedAt: publicationDate,
+      paperAbstract: candidate.abstract ?? null,
+      venue: "arXiv",
+      publicationDate,
+      citationCount: null,
+      metadata: {
+        sourceConfidence: candidate.confidence,
+        estimatedLevel: candidate.estimated_level ?? null,
+        paperClass: candidate.paper_class ?? "current",
+        authors: candidate.authors ?? [],
+        evidence: candidate.evidence ?? [],
+      },
+      concepts: [],
+      quality: { finalQualityScore: candidate.confidence, freshnessPrior: null, sourceAuthority: candidate.confidence },
+    } satisfies DiscoveryResource];
+  }));
+}
+
+function instantBudgetMs(): number {
+  const value = Number(process.env.SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS ?? 480);
+  return Number.isFinite(value) ? Math.min(480, Math.max(150, value)) : 480;
+}
+
+function instantPoolKey(mode: SourceDiscoveryMode, rankingIntent: SourceRankingIntent, query: string): string {
+  return createHash("sha256").update(`${mode}\n${rankingIntent}\n${query}`).digest("hex");
+}
+
+async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number } | null> {
+  const agentUrl = process.env.SOURCE_DISCOVERY_AGENT_URL ?? process.env.DISCOVERY_AGENT_URL;
+  const token = process.env.INTERNAL_SERVICE_TOKEN;
+  if (!agentUrl || !token) return null;
+  const started = performance.now();
+  try {
+    const response = await fetch(`${agentUrl.replace(/\/$/, "")}/internal/v1/discovery/instant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-service-token": token },
+      body: JSON.stringify({
+        query_text: query,
+        source_kind: mode === "learn" ? "video" : "paper",
+        ranking_intent: rankingIntent,
+        limit: 10,
+        trace_id: correlationId,
+      }),
+      signal: AbortSignal.timeout(instantBudgetMs()),
+    });
+    if (!response.ok) return null;
+    const parsed = sourceDiscoveryInstantBatchSchema.safeParse(await response.json());
+    if (!parsed.success) return null;
+    return { resources: externalResources(parsed.data, mode), exaMs: performance.now() - started };
+  } catch {
+    return null;
+  }
+}
+
+async function refreshExternalPool(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number }> {
+  const key = instantPoolKey(mode, rankingIntent, query);
+  const existing = instantRefreshes.get(key);
+  if (existing) return { resources: await existing, exaMs: 0 };
+  const refresh = callInstantAgent(mode, query, rankingIntent, correlationId).then(async (result) => {
+    if (!result) return { resources: [], exaMs: 0 };
+    void setSourceCandidatePool(mode, rankingIntent, query, result.resources);
+    return result;
+  }).finally(() => instantRefreshes.delete(key));
+  instantRefreshes.set(key, refresh.then((result) => result.resources));
+  return refresh;
+}
+
+async function loadExternalPool(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<ExternalPool> {
+  const cacheStarted = performance.now();
+  const cached = await getSourceCandidatePool(mode, rankingIntent, query);
+  const cacheMs = performance.now() - cacheStarted;
+  if (cached) {
+    if (cached.stale) void refreshExternalPool(mode, query, rankingIntent, correlationId);
+    return { resources: cached.resources, cacheHit: true, cacheState: cached.stale ? "stale" : "fresh", cacheTier: cached.tier, cacheMs, exaMs: 0 };
+  }
+  const result = await refreshExternalPool(mode, query, rankingIntent, correlationId);
+  return { ...result, cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs };
+}
+
+function persistenceBatch(resourcesForPersistence: DiscoveryResource[], mode: SourceDiscoveryMode, conceptId: string | null): Record<string, unknown> {
+  const matchedConceptIds = conceptId ? [conceptId] : [];
+  const youtube = mode === "learn" ? resourcesForPersistence.map((resource) => ({
+    youtube_id: resource.externalId,
+    canonical_url: resource.canonicalUrl,
+    title: resource.title,
+    channel: resource.channelTitle,
+    published_at: resource.publishedAt?.toISOString() ?? null,
+    duration_ms: resource.durationMs,
+    language: resource.language,
+    matched_concept_ids: matchedConceptIds,
+    learning_format: metadataString(resource.metadata, "learningFormat"),
+    estimated_level: metadataString(resource.metadata, "estimatedLevel"),
+    has_implementation: typeof resource.metadata.hasImplementation === "boolean" ? resource.metadata.hasImplementation : null,
+    evidence: Array.isArray(resource.metadata.evidence) ? resource.metadata.evidence : [],
+    confidence: Number(resource.metadata.sourceConfidence ?? resource.qualityScore ?? 0.6),
+  })) : [];
+  const arxiv = mode === "research" ? resourcesForPersistence.map((resource) => ({
+    arxiv_id: resource.externalId,
+    canonical_url: resource.canonicalUrl,
+    title: resource.title,
+    authors: resource.authors ?? [],
+    abstract: resource.paperAbstract,
+    published_at: resource.publicationDate?.toISOString() ?? null,
+    categories: [],
+    matched_concept_ids: matchedConceptIds,
+    estimated_level: metadataString(resource.metadata, "estimatedLevel"),
+    paper_class: metadataString(resource.metadata, "paperClass") === "foundational" ? "foundational" : "current",
+    evidence: Array.isArray(resource.metadata.evidence) ? resource.metadata.evidence : [],
+    confidence: Number(resource.metadata.sourceConfidence ?? resource.qualityScore ?? 0.6),
+  })) : [];
+  return { trace_id: `source-picker-${Date.now()}`, youtube, arxiv };
+}
+
+async function persistInteractiveRun(
+  userId: string,
+  input: SourceDiscoverySearchRequest,
+  query: string,
+  concept: { id: string; name: string } | null,
+  ranked: RankedResource[],
+  catalogQualifiedCount: number,
+  externalResources: DiscoveryResource[],
+  correlationId: string,
+  timings: Record<string, number>,
+): Promise<typeof recommendationRuns.$inferSelect> {
+  const qualifiedExternal = externalResources.filter((resource) => sourceQuerySignals(resource, query, concept?.id).qualified).slice(0, sourceResultLimit);
+  const shouldRefresh = catalogQualifiedCount + qualifiedExternal.length < 3;
+  const refreshStatus = qualifiedExternal.length > 0 ? "pending_persistence" : shouldRefresh ? "requested" : "not_needed";
+  const status = ranked.length === 0 && shouldRefresh && qualifiedExternal.length === 0 ? "running" : "completed";
+  return withUserTransaction(userId, async (tx) => {
+    const [run] = await tx.insert(recommendationRuns).values({
+      userId,
+      surface: "source_picker",
+      queryText: query,
+      strategyVersion: DISCOVERY_STRATEGY_VERSION,
+      featureVersion: DISCOVERY_FEATURE_VERSION,
+      contextSnapshot: {
+        mode: input.mode,
+        canonicalConceptId: concept?.id ?? null,
+        canonicalConceptName: concept?.name ?? null,
+        rankingIntent: input.rankingIntent,
+        refreshStatus,
+        interactive: true,
+        qualifiedCatalogCandidateCount: catalogQualifiedCount,
+        candidateDiagnostics: ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit).map((candidate) => ({
+          resourceId: /^[0-9a-f-]{36}$/i.test(candidate.resource.id) ? candidate.resource.id : candidate.resource.id,
+          sourceOrigin: candidate.resource.id.startsWith("external:") ? "external_refresh" : "catalog",
+          queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
+          qualificationReason: candidate.qualificationReason ?? null,
+        })),
+        ...(Object.keys(timings).length > 0 ? { interactiveTimings: timings } : {}),
+      },
+      status,
+      completedAt: status === "completed" ? new Date() : null,
+    }).returning();
+    if (!run) throw new Error("Source discovery run could not be created");
+    const catalogCandidates = ranked.filter((candidate) => candidate.finalRank !== null && /^[0-9a-f-]{36}$/i.test(candidate.resource.id));
+    if (catalogCandidates.length > 0) {
+      await tx.insert(recommendationCandidates).values(catalogCandidates.map((candidate) => ({
+        recommendationRunId: run.id,
+        resourceId: candidate.resource.id,
+        candidateRank: candidate.candidateRank,
+        finalRank: candidate.finalRank,
+        score: candidate.score,
+        semanticRelevance: candidate.semanticRelevance,
+        qualityScore: candidate.qualityScore,
+        learnerAffinity: candidate.learnerAffinity,
+        masteryFit: candidate.masteryFit,
+        coverageScore: candidate.coverageScore,
+        freshnessScore: candidate.freshnessScore,
+        diversityPenalty: candidate.diversityPenalty,
+        reasonCodes: candidate.reasonCodes,
+        selected: true,
+      })));
+    }
+    if (qualifiedExternal.length > 0) {
+      await tx.insert(outboxEvents).values({
+        aggregateType: "recommendation_run",
+        aggregateId: run.id,
+        eventType: "discovery.candidates_discovered",
+        schemaVersion: 1,
+        userId,
+        correlationId,
+        payload: {
+          sourcePickerRunId: run.id,
+          queryText: query,
+          sourceKind: input.mode === "learn" ? "video" : "paper",
+          conceptIds: concept ? [concept.id] : [],
+          candidateBatch: persistenceBatch(qualifiedExternal, input.mode, concept?.id ?? null),
+        },
+      });
+    } else if (shouldRefresh) {
+      await enqueueRefresh(tx, userId, run.id, input.mode, query, concept, correlationId);
+    }
+    return run;
+  });
+}
+
+function responseFromFastRun(
+  run: typeof recommendationRuns.$inferSelect,
+  mode: SourceDiscoveryMode,
+  query: string,
+  ranked: RankedResource[],
+  externalIds: Set<string>,
+  retrieval: "memory" | "redis" | "catalog" | "live_web" | "blended",
+  cacheState: "fresh" | "stale" | "miss",
+  timings: { cacheMs: number; catalogMs: number; exaMs: number; rankMs: number; totalMs: number },
+): SourceDiscoverySearchResponse {
+  const diagnostics = new Map(ranked.map((candidate) => [candidate.resource.id, {
+    sourceOrigin: externalIds.has(candidate.resource.id) ? "external_refresh" as const : "catalog" as const,
+    ...(typeof candidate.queryRelevance === "number" ? { queryRelevance: candidate.queryRelevance } : {}),
+    ...(candidate.qualificationReason ? { qualificationReason: candidate.qualificationReason } : {}),
+  }]));
+  const selected = ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
+  return {
+    status: selected.length > 0 ? "completed" : run.status === "running" ? "searching" : "completed",
+    runId: run.id,
+    mode,
+    query,
+    candidates: selected.map((candidate) => sourceCandidate(candidate, run.id, mode, diagnostics.get(candidate.resource.id))),
+    retrieval,
+    cacheState,
+    timings,
+  };
+}
+
+async function searchSourcesFast(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
+  const query = normalizeQuery(input.query);
+  const reusable = await withUserTransaction(userId, async (tx) => {
+    const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
+    return existing && existing.status === "completed" ? responseForRun(tx, existing, userId) : null;
+  });
+  if (reusable) return reusable;
+  const started = performance.now();
+  const localStarted = performance.now();
+  const localPromise = withUserTransaction(userId, async (tx) => {
+    const [profileLoad, concept] = await Promise.all([loadDiscoveryProfile(tx, userId), resolveConcept(tx, query)]);
+    const resources = await loadDiscoveryResources(tx, undefined, userId, {
+      mode: input.mode,
+      query,
+      resolvedConceptId: concept?.id ?? null,
+      limit: 40,
+    });
+    return { profile: profileLoad.profile, concept, resources };
+  }).then((value) => ({ ...value, catalogMs: performance.now() - localStarted }));
+  const externalPromise = loadExternalPool(input.mode, query, input.rankingIntent, input.correlationId);
+  const local = await localPromise;
+  const catalogQualifiedCount = local.resources.filter((resource) => sourceQuerySignals(resource, query, local.concept?.id).qualified).length;
+  let external = emptyExternalPool();
+  if (catalogQualifiedCount < sourceResultLimit) {
+    const remainingBudget = Math.max(0, instantBudgetMs() - (performance.now() - started));
+    external = await Promise.race([externalPromise, deadline(remainingBudget)]) ?? emptyExternalPool();
+  } else {
+    void externalPromise.catch(() => undefined);
+  }
+  const allResources = [...local.resources, ...external.resources.filter((externalResource) => !local.resources.some((resource) => resource.provider === externalResource.provider && resource.externalId === externalResource.externalId))];
+  const rankStarted = performance.now();
+  const ranked = rankSourceResources(allResources, local.profile, query, input.mode, input.rankingIntent, new Date(), local.concept?.id)
+    .filter((candidate) => candidate.finalRank !== null)
+    .slice(0, sourceResultLimit);
+  const rankMs = performance.now() - rankStarted;
+  const externalIds = new Set(external.resources.map((resource) => resource.id));
+  const run = await persistInteractiveRun(userId, input, query, local.concept, ranked, catalogQualifiedCount, external.resources, input.correlationId, {
+    cacheMs: Number(external.cacheMs.toFixed(2)),
+    catalogMs: Number(local.catalogMs.toFixed(2)),
+    exaMs: Number(external.exaMs.toFixed(2)),
+    rankMs: Number(rankMs.toFixed(2)),
+    totalMs: Number((performance.now() - started).toFixed(2)),
+  });
+  const retrieval = external.resources.length > 0
+    ? local.resources.length > 0 ? "blended" : external.cacheHit ? external.cacheTier ?? "live_web" : "live_web"
+    : "catalog";
+  return responseFromFastRun(run, input.mode, query, ranked, externalIds, retrieval, external.cacheState, {
+    cacheMs: Number(external.cacheMs.toFixed(2)),
+    catalogMs: Number(local.catalogMs.toFixed(2)),
+    exaMs: Number(external.exaMs.toFixed(2)),
+    rankMs: Number(rankMs.toFixed(2)),
+    totalMs: Number((performance.now() - started).toFixed(2)),
+  });
+}
+
+const interactiveSearches = new Map<string, Promise<SourceDiscoverySearchResponse>>();
 
 export async function searchSources(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
   const query = normalizeQuery(input.query);
-  return withUserTransaction(userId, async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-discovery:${userId}:${input.mode}:${input.rankingIntent}:${query}`}, 0))`);
-    const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
-    if (existing) return responseForRun(tx, existing, userId);
-    return createSearchRun(tx, userId, { ...input, query });
-  });
+  const key = createHash("sha256").update(`${userId}\n${input.mode}\n${input.rankingIntent}\n${query}`).digest("hex");
+  const existing = interactiveSearches.get(key);
+  if (existing) return existing;
+  const search = searchSourcesFast(userId, { ...input, query }).finally(() => interactiveSearches.delete(key));
+  interactiveSearches.set(key, search);
+  return search;
 }
 
 export async function getSourceDiscoveryRun(userId: string, runId: string): Promise<SourceDiscoverySearchResponse> {
@@ -409,17 +715,74 @@ async function ensureIngestionRequest(
   });
 }
 
-async function persistResolvedResource(tx: Transaction, userId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData, correlationId: string): Promise<string> {
+async function linkSelectedRecommendation(
+  tx: Transaction,
+  userId: string,
+  runId: string | undefined,
+  parsed: NonNullable<ReturnType<typeof classifySourceUrl>>,
+  resourceId: string,
+): Promise<void> {
+  if (!runId) return;
+  const [run] = await tx.select({ id: recommendationRuns.id, contextSnapshot: recommendationRuns.contextSnapshot }).from(recommendationRuns).where(and(
+    eq(recommendationRuns.id, runId),
+    eq(recommendationRuns.userId, userId),
+    eq(recommendationRuns.surface, "source_picker"),
+  )).limit(1);
+  const [persistedCandidate] = await tx
+    .select({ resourceId: recommendationCandidates.resourceId })
+    .from(recommendationCandidates)
+    .innerJoin(resources, eq(resources.id, recommendationCandidates.resourceId))
+    .where(and(
+      eq(recommendationCandidates.recommendationRunId, runId),
+      eq(resources.provider, parsed.provider),
+      eq(resources.externalId, parsed.id),
+    ))
+    .limit(1);
+  if (persistedCandidate) return;
+  const syntheticId = `external:${parsed.provider}:${parsed.id}`;
+  const diagnostics = arrayValue(run?.contextSnapshot.candidateDiagnostics);
+  if (!run || !diagnostics.some((value) => recordValue(value, "resourceId") === syntheticId)) {
+    throw sourceError("INVALID_RECOMMENDATION_CONTEXT", "That recommendation is no longer available.", 422);
+  }
+  const [existing] = await tx.select({ resourceId: recommendationCandidates.resourceId }).from(recommendationCandidates).where(and(
+    eq(recommendationCandidates.recommendationRunId, runId),
+    eq(recommendationCandidates.resourceId, resourceId),
+  )).limit(1);
+  if (existing) return;
+  const [rankRow] = await tx.select({ maxRank: sql<number>`coalesce(max(${recommendationCandidates.candidateRank}), 0)` }).from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, runId));
+  const queryRelevance = diagnostics.find((value) => recordValue(value, "resourceId") === syntheticId);
+  const relevance = recordValue(queryRelevance, "queryRelevance");
+  await tx.insert(recommendationCandidates).values({
+    recommendationRunId: runId,
+    resourceId,
+    candidateRank: Number(rankRow?.maxRank ?? 0) + 1,
+    finalRank: null,
+    score: 0,
+    semanticRelevance: typeof relevance === "number" ? relevance : null,
+    qualityScore: 0.5,
+    learnerAffinity: 0,
+    masteryFit: null,
+    coverageScore: 0,
+    freshnessScore: 0.5,
+    diversityPenalty: 0,
+    reasonCodes: ["selected_before_persistence"],
+    selected: true,
+  }).onConflictDoNothing();
+}
+
+async function persistResolvedResource(tx: Transaction, userId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData, correlationId: string, recommendationRunId?: string): Promise<string> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-resolve:${userId}:${parsed.provider}:${parsed.id}`}, 0))`);
   const existing = await findExistingResource(tx, userId, parsed);
   if (existing) {
     if (!existing.resource.currentVersionId) await ensureIngestionRequest(tx, userId, existing.resource.id, parsed, correlationId);
+    await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, existing.resource.id);
     return existing.resource.id;
   }
   const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
   const resourceId = resource?.id ?? (await findExistingResource(tx, userId, parsed))?.resource.id;
   if (!resourceId) throw new Error("Resolved resource could not be created");
   await ensureIngestionRequest(tx, userId, resourceId, parsed, correlationId);
+  await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, resourceId);
   return resourceId;
 }
 
@@ -452,6 +815,6 @@ export async function resolveSource(userId: string, input: SourceDiscoveryResolv
       throw sourceError("SOURCE_UNAVAILABLE", "The source provider could not be reached.", 502);
     }
   }
-  const resourceId = await withUserTransaction(userId, (tx) => persistResolvedResource(tx, userId, parsed, data, input.correlationId));
+  const resourceId = await withUserTransaction(userId, (tx) => persistResolvedResource(tx, userId, parsed, data, input.correlationId, input.recommendationRunId));
   return previewFrom(resourceId, parsed, data);
 }

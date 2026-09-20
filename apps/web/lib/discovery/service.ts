@@ -38,6 +38,7 @@ import {
 const durableFeedTtlMs = 6 * 60 * 60 * 1000;
 const staleFeedTtlMs = 24 * 60 * 60 * 1000;
 const catalogResourceLimit = 800;
+const sourceCatalogResourceLimit = 40;
 
 export type ProfileLoad = {
   profile: LearnerProfile;
@@ -272,7 +273,12 @@ function profileFingerprint(profileLoad: ProfileLoad): string {
   });
 }
 
-export async function loadDiscoveryResources(tx: Transaction, resourceIds?: string[], ownerUserId?: string): Promise<DiscoveryResource[]> {
+export async function loadDiscoveryResources(
+  tx: Transaction,
+  resourceIds?: string[],
+  ownerUserId?: string,
+  options: { mode?: "learn" | "research"; query?: string; resolvedConceptId?: string | null; limit?: number } = {},
+): Promise<DiscoveryResource[]> {
   if (resourceIds && resourceIds.length === 0) return [];
   const publicResource = and(
     isNull(resources.ownerUserId),
@@ -287,6 +293,15 @@ export async function loadDiscoveryResources(tx: Transaction, resourceIds?: stri
     eq(resources.status, "ready"),
     isNull(resources.deletedAt),
     inArray(resources.type, ["video", "paper"]),
+    options.mode ? eq(resources.type, options.mode === "learn" ? "video" : "paper") : undefined,
+    options.query || options.resolvedConceptId ? sql`(
+      ${options.query ? sql`${resources.searchTsv} @@ plainto_tsquery('simple', ${options.query}) OR ${resources.title} ILIKE ${`%${options.query}%`}` : sql`FALSE`}
+      ${options.resolvedConceptId ? sql`OR EXISTS (
+        SELECT 1 FROM catalog.resource_concepts source_query_concept
+        WHERE source_query_concept.resource_id = ${resources.id}
+          AND source_query_concept.concept_id = ${options.resolvedConceptId}
+      )` : sql``}
+    )` : undefined,
   );
   const resourceTypes = ["video", "paper"] as const;
   const queryResources = (type?: (typeof resourceTypes)[number]) => tx
@@ -296,7 +311,7 @@ export async function loadDiscoveryResources(tx: Transaction, resourceIds?: stri
     .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
     .where(and(resourceWhere, type ? eq(resources.type, type) : undefined))
     .orderBy(desc(resources.qualityScore), desc(resources.updatedAt))
-    .limit(resourceIds ? resourceIds.length : catalogResourceLimit);
+    .limit(resourceIds ? resourceIds.length : options.limit ?? (options.query || options.resolvedConceptId ? sourceCatalogResourceLimit : catalogResourceLimit));
   const rows = resourceIds
     ? await queryResources()
     : (await Promise.all(resourceTypes.map((type) => queryResources(type)))).flat();

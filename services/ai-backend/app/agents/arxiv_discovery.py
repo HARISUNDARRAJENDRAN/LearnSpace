@@ -40,6 +40,16 @@ class ArxivDiscoveryAgent:
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
     ) -> list[ArxivCandidate]:
+        return await self._discover(request, budget, interactive=False)
+
+    async def discover_fast(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[ArxivCandidate]:
+        return await self._discover(request, budget, interactive=True)
+
+    async def _discover(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, *, interactive: bool
+    ) -> list[ArxivCandidate]:
         search_terms = [request.query_text] if request.query_text else request.concept_names
         try:
             raw_results = await self.exa.search(
@@ -49,12 +59,13 @@ class ArxivDiscoveryAgent:
                 self.max_results,
                 paper_strategy=request.paper_strategy,
                 budget=budget,
+                interactive=interactive,
             )
         except ToolBudgetExceeded:
             raise
         except Exception:
             raw_results = []
-        if len(raw_results) < 3:
+        if not interactive and len(raw_results) < 3:
             try:
                 raw_results.extend(
                     await self.arxiv.search(
@@ -84,7 +95,7 @@ class ArxivDiscoveryAgent:
             ):
                 continue
             published_at = self._date(item.get("publishedDate"))
-            if request.paper_strategy == "current" and published_at is not None:
+            if not interactive and request.paper_strategy == "current" and published_at is not None:
                 age_days = (now - published_at).total_seconds() / 86_400
                 if age_days > request.window_days:
                     continue
@@ -107,9 +118,8 @@ class ArxivDiscoveryAgent:
                     else evidence_text or None
                 ),
                 published_at=published_at,
-                categories=self._strings(item.get("categories")) or (
-                    [str(item["category"])] if isinstance(item.get("category"), str) else []
-                ),
+                categories=self._strings(item.get("categories"))
+                or ([str(item["category"])] if isinstance(item.get("category"), str) else []),
                 authors=self._strings(item.get("authors")),
                 matched_concept_ids=request.concept_ids,
                 paper_class=request.paper_strategy,

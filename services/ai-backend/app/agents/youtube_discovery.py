@@ -22,9 +22,24 @@ class YoutubeDiscoveryAgent:
     async def discover(
         self, request: DiscoveryRefreshRequest, budget: ToolBudget
     ) -> list[YoutubeCandidate]:
+        return await self._discover(request, budget, interactive=False)
+
+    async def discover_fast(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+    ) -> list[YoutubeCandidate]:
+        return await self._discover(request, budget, interactive=True)
+
+    async def _discover(
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, *, interactive: bool
+    ) -> list[YoutubeCandidate]:
         search_terms = [request.query_text] if request.query_text else request.concept_names
         raw_results = await self.exa.search(
-            search_terms, "video", request.window_days, self.max_results, budget=budget
+            search_terms,
+            "video",
+            request.window_days,
+            self.max_results,
+            budget=budget,
+            interactive=interactive,
         )
         output: list[YoutubeCandidate] = []
         for item in raw_results:

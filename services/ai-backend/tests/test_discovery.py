@@ -11,6 +11,7 @@ from app.agents.youtube_discovery import YoutubeDiscoveryAgent
 from app.cache.discovery_cache import (
     DiscoveryCache,
     arxiv_cache_key,
+    instant_cache_key,
     query_cache_identity,
     youtube_cache_key,
 )
@@ -18,6 +19,7 @@ from app.config import Settings
 from app.contracts.discovery import (
     ArxivCandidate,
     DiscoveryRefreshRequest,
+    InstantDiscoveryRequest,
     YoutubeCandidate,
     YoutubeEnrichment,
 )
@@ -132,6 +134,15 @@ def test_query_cache_identity_is_opaque() -> None:
     assert query.lower() not in key.lower()
     assert query_cache_identity(query) == query_cache_identity(
         "  how   does flashattention reduce memory usage? "
+    )
+
+
+def test_instant_cache_identity_is_opaque_and_intent_scoped() -> None:
+    query = "python for beginners"
+    key = instant_cache_key("video", query, "best_match")
+    assert query not in key
+    assert instant_cache_key("video", query, "best_match") != instant_cache_key(
+        "video", query, "practical"
     )
 
 
@@ -474,6 +485,68 @@ def test_explicit_query_is_primary_for_youtube_and_paper_search() -> None:
         )
         assert exa.calls[0] == (["python for beginners"], "video")
         assert exa.calls[1] == (["python for beginners"], "paper")
+
+    asyncio.run(run())
+
+
+def test_instant_discovery_uses_the_exact_query_and_skips_enrichment() -> None:
+    class FakeExa:
+        def __init__(self) -> None:
+            self.calls: list[tuple[list[str], str, bool]] = []
+
+        async def search(
+            self,
+            terms: list[str],
+            kind: str,
+            *args: object,
+            **kwargs: object,
+        ) -> list[dict[str, object]]:
+            del args
+            self.calls.append((terms, kind, kwargs.get("interactive") is True))
+            if kind == "video":
+                return [{
+                    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "title": "Python for Beginners",
+                }]
+            return [{
+                "url": "https://arxiv.org/abs/1706.03762",
+                "title": "Attention Is All You Need",
+            }]
+
+    async def run() -> None:
+        exa = FakeExa()
+        youtube = YoutubeDiscoveryAgent(
+            cast(ExaDiscoveryTool, exa), cast(YoutubeContentSearchTool, object()), 1
+        )
+        arxiv = ArxivDiscoveryAgent(
+            cast(ExaDiscoveryTool, exa), cast(ArxivPaperTool, object()), 1
+        )
+        instant_video = InstantDiscoveryRequest(
+            query_text="python for beginners", source_kind="video"
+        )
+        instant_paper = InstantDiscoveryRequest(
+            query_text="efficient transformer attention", source_kind="paper"
+        )
+        video_results = await youtube.discover_fast(
+            DiscoveryRefreshRequest.model_validate({
+                "query_text": instant_video.query_text,
+                "source_kind": instant_video.source_kind,
+            }),
+            ToolBudget(1),
+        )
+        paper_results = await arxiv.discover_fast(
+            DiscoveryRefreshRequest.model_validate({
+                "query_text": instant_paper.query_text,
+                "source_kind": instant_paper.source_kind,
+            }),
+            ToolBudget(1),
+        )
+        assert len(video_results) == 1
+        assert len(paper_results) == 1
+        assert exa.calls == [
+            (["python for beginners"], "video", True),
+            (["efficient transformer attention"], "paper", True),
+        ]
 
     asyncio.run(run())
 

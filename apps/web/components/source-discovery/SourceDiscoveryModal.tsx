@@ -154,6 +154,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
   useEffect(() => {
     if (!runId || candidates.length === 0) return;
     for (const [position, candidate] of candidates.entries()) {
+      if (!candidate.resourceId) continue;
       void fetch("/api/v1/discovery/impressions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -333,7 +334,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
           <div className={`source-discovery-lower ${state === "results" || state === "searching" ? "is-results" : ""}`}>
             {state === "searching" ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Finding the strongest videos…"}</p><span>{research ? "Comparing candidate papers…" : "Checking topic relevance and ranking learning resources…"}</span></div> : null}
-            {state === "results" ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? candidates.map((candidate) => <ResultRow key={candidate.resourceId} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />) : <div className="source-discovery-empty-results"><p>{research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic."}</p><span>Try making the topic more specific.</span></div>}</div> : null}
+            {state === "results" ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />) : <div className="source-discovery-empty-results"><p>{research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic."}</p><span>Try making the topic more specific.</span></div>}</div> : null}
             {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} /> : null}
             {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? "Research" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
             {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}
@@ -350,7 +351,12 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
 function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string; onStart: () => void }) {
   const duration = formatDuration(candidate.durationMs);
-  return <article className="source-discovery-result"><div className="source-discovery-thumbnail">{candidate.thumbnailUrl ? <Image src={candidate.thumbnailUrl} alt="" width={128} height={72} unoptimized /> : mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-result-copy"><h3>{candidate.title}</h3><p>{[candidate.author, duration, formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p><span>{candidate.reason}</span></div><StartStudyButton resourceId={candidate.resourceId} origin={mode === "research" ? "research" : "discover"} recommendationRunId={candidate.recommendationRunId} label={startLabel} className="source-discovery-start" onClick={onStart} /></article>;
+  const sourceProps = candidate.resourceId
+    ? { resourceId: candidate.resourceId }
+    : candidate.canonicalUrl
+      ? { sourceUrl: candidate.canonicalUrl, sourceMode: mode }
+      : {};
+  return <article className="source-discovery-result"><div className="source-discovery-thumbnail">{candidate.thumbnailUrl ? <Image src={candidate.thumbnailUrl} alt="" width={128} height={72} unoptimized /> : mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-result-copy"><h3>{candidate.title}</h3><p>{[candidate.author, duration, formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p><span>{candidate.reason}</span></div><StartStudyButton {...sourceProps} {...(candidate.recommendationRunId === undefined ? {} : { recommendationRunId: candidate.recommendationRunId })} origin={mode === "research" ? "research" : "discover"} label={startLabel} className="source-discovery-start" onClick={onStart} /></article>;
 }
 
 function Preview({ preview, label, onStart }: { preview: SourcePreview; label: string; onStart: () => void }) {

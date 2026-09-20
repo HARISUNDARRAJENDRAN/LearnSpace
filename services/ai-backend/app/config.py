@@ -15,6 +15,7 @@ class Settings:
     youtube_embedder_provider: str
     youtube_embedder_model: str
     youtube_enrichment_enabled: bool = False
+    interactive_timeout_seconds: float = 0.45
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,6 +38,9 @@ class Settings:
                 "DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED", "false"
             ).lower()
             == "true",
+            interactive_timeout_seconds=max(
+                0.1, min(2.0, float(os.getenv("DISCOVERY_INTERACTIVE_TIMEOUT_SECONDS", "0.45")))
+            ),
         )
 
     def readiness_errors(self) -> list[str]:

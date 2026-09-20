@@ -34,6 +34,11 @@ def query_cache_identity(query: str) -> str:
     return f"query:{_hash(normalized)}"
 
 
+def instant_cache_key(resource_kind: str, query: str, ranking_intent: str) -> str:
+    normalized = " ".join(query.split()).lower()
+    return f"ls:v1:discovery:instant:{resource_kind}:{ranking_intent}:{_hash(normalized)}"
+
+
 @dataclass
 class CacheEntry:
     value: list[dict[str, Any]]
@@ -80,6 +85,11 @@ class DiscoveryCache:
         return [item for item in cast(list[object], payload["value"]) if isinstance(item, dict)]
 
     async def get(self, key: str) -> list[dict[str, Any]] | None:
+        entry = self.entries.get(key)
+        if entry is not None and entry.expires_at > datetime.now(UTC):
+            self.entries.pop(key, None)
+            self.entries[key] = entry
+            return entry.value
         try:
             redis = await self._redis()
             if redis is not None:
@@ -90,18 +100,21 @@ class DiscoveryCache:
                         return decoded
         except Exception:
             pass
-        entry = self.entries.get(key)
-        if entry is None or entry.expires_at <= datetime.now(UTC):
-            return None
-        return entry.value
+        return None
 
     async def set(
         self, key: str, value: list[dict[str, Any]], ttl: timedelta = YOUTUBE_TTL
     ) -> None:
+        now = datetime.now(UTC)
+        self.entries.pop(key, None)
+        self.entries[key] = CacheEntry(
+            value=value, expires_at=now + ttl, stale_until=now + ttl + STALE_TTL
+        )
+        while len(self.entries) > max(1, self.max_local_entries):
+            self.entries.pop(next(iter(self.entries)))
         try:
             redis = await self._redis()
             if redis is not None:
-                now = datetime.now(UTC)
                 payload = {
                     "value": value,
                     "freshUntil": (now + ttl).isoformat(),
@@ -114,14 +127,13 @@ class DiscoveryCache:
                 )
         except Exception:
             pass
-        now = datetime.now(UTC)
-        self.entries[key] = CacheEntry(
-            value=value, expires_at=now + ttl, stale_until=now + ttl + STALE_TTL
-        )
-        while len(self.entries) > max(1, self.max_local_entries):
-            self.entries.pop(next(iter(self.entries)))
 
     async def get_stale(self, key: str) -> list[dict[str, Any]] | None:
+        entry = self.entries.get(key)
+        if entry is not None and entry.stale_until > datetime.now(UTC):
+            self.entries.pop(key, None)
+            self.entries[key] = entry
+            return entry.value
         try:
             redis = await self._redis()
             if redis is not None:
@@ -132,10 +144,7 @@ class DiscoveryCache:
                         return decoded
         except Exception:
             pass
-        entry = self.entries.get(key)
-        if entry is None or entry.stale_until <= datetime.now(UTC):
-            return None
-        return entry.value
+        return None
 
     async def has_enough(self, keys: list[str], minimum: int) -> bool:
         values = [await self.get(key) for key in keys]

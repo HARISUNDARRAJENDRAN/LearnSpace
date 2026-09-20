@@ -18,7 +18,18 @@ export async function POST(request: NextRequest) {
       const preview = await resolveSource(session.user.id, { mode: input.mode, url: input.query.trim(), correlationId: input.correlationId });
       return NextResponse.json({ status: "preview", runId: null, mode: input.mode, query: input.query, candidates: [], preview });
     }
-    return NextResponse.json(await searchSources(session.user.id, input));
+    const result = await searchSources(session.user.id, input);
+    const response = NextResponse.json(result);
+    if (result.timings) {
+      response.headers.set("Server-Timing", [
+        result.timings.cacheMs === undefined ? null : `cache;dur=${result.timings.cacheMs}`,
+        result.timings.catalogMs === undefined ? null : `catalog;dur=${result.timings.catalogMs}`,
+        result.timings.exaMs === undefined ? null : `exa;dur=${result.timings.exaMs}`,
+        result.timings.rankMs === undefined ? null : `rank;dur=${result.timings.rankMs}`,
+        result.timings.totalMs === undefined ? null : `total;dur=${result.timings.totalMs}`,
+      ].filter(Boolean).join(", "));
+    }
+    return response;
   } catch (error) {
     return authErrorResponse(error);
   }

@@ -43,6 +43,10 @@ test(
     const youtubeIds = [0, 1, 2].map(() => randomUUID().replaceAll("-", "").slice(0, 11));
     const failedRunId = randomUUID();
     const failedJobId = randomUUID();
+    const instantRunId = randomUUID();
+    const instantOutboxId = randomUUID();
+    const instantTraceId = `instant-source-picker-${randomUUID()}`;
+    const instantYoutubeId = "zY7xW5vU3tS";
     let failAgent = false;
     const sourceResourceIds: string[] = [];
     let seenRequest: Record<string, unknown> | null = null;
@@ -140,6 +144,56 @@ test(
 
       await migrator`
         INSERT INTO discovery.recommendation_runs
+          (id, user_id, surface, query_text, strategy_version, feature_version, context_snapshot, status, completed_at)
+        VALUES
+          (${instantRunId}, ${userId}, 'source_picker', 'python for beginners', 'test', 'test', ${migrator.json({ mode: "learn", canonicalConceptId: conceptId, canonicalConceptName: "Python", rankingIntent: "best_match", refreshStatus: "pending_persistence" })}, 'completed', now())
+      `;
+      await migrator`
+        INSERT INTO ops.outbox_events
+          (id, aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id, correlation_id)
+        VALUES
+          (${instantOutboxId}, 'recommendation_run', ${instantRunId}, 'discovery.candidates_discovered', 1, ${userId}, ${migrator.json({
+            sourcePickerRunId: instantRunId,
+            queryText: "python for beginners",
+            sourceKind: "video",
+            conceptIds: [conceptId],
+            candidateBatch: {
+              trace_id: instantTraceId,
+              youtube: [{
+                youtube_id: instantYoutubeId,
+                canonical_url: `https://www.youtube.com/watch?v=${instantYoutubeId}`,
+                title: "Python for Beginners - Persisted Fast Candidate",
+                channel: "Fast Candidate Lab",
+                matched_concept_ids: [conceptId],
+                learning_format: "clear_explanations",
+                estimated_level: "beginner",
+                has_implementation: false,
+                confidence: 0.9,
+                evidence: ["fast-path persistence fixture"],
+              }],
+              arxiv: [],
+            },
+          })}, ${instantTraceId}, ${randomUUID()})
+      `;
+      const instantResult = await runDiscoveryWorker();
+      assert.equal(instantResult.status, "done");
+      const [instantRun] = await migrator<{ status: string; refresh_status: string }[]>`
+        SELECT status, context_snapshot->>'refreshStatus' AS refresh_status
+        FROM discovery.recommendation_runs WHERE id = ${instantRunId}
+      `;
+      assert.deepEqual(instantRun, { status: "completed", refresh_status: "done" });
+      const [instantJob] = await migrator<{ status: string; job_type: string }[]>`
+        SELECT status, job_type FROM ops.jobs
+        WHERE dedup_key = ${`discovery:source-picker-persist:${instantRunId}`}
+      `;
+      assert.deepEqual(instantJob, { status: "done", job_type: "discovery.persist_candidates" });
+      const [instantResource] = await migrator<{ id: string }[]>`
+        SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id = ${instantYoutubeId} AND owner_user_id IS NULL
+      `;
+      if (instantResource) sourceResourceIds.push(instantResource.id);
+
+      await migrator`
+        INSERT INTO discovery.recommendation_runs
           (id, user_id, surface, query_text, strategy_version, feature_version, context_snapshot, status)
         VALUES
           (${failedRunId}, ${userId}, 'source_picker', 'A failing source search', 'test', 'test', ${migrator.json({ mode: "learn", rankingIntent: "best_match", refreshStatus: "requested" })}, 'running')
@@ -172,12 +226,14 @@ test(
         await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL)`;
         await migrator`DELETE FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL`;
       }
-      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}) OR id = ${failedJobId} OR dedup_key = ${`discovery:source-picker:${runId}`}`;
-      await migrator`DELETE FROM ops.outbox_events WHERE id = ${outboxId}`;
+      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}) OR id = ${failedJobId} OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`})`;
+      await migrator`DELETE FROM ops.outbox_events WHERE id IN (${outboxId}, ${instantOutboxId})`;
       await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${failedRunId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${failedRunId}`;
+      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${instantRunId}`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${instantRunId}`;
       await migrator`DELETE FROM knowledge.concepts WHERE id = ${conceptId}`;
       await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
       await migrator.end({ timeout: 5 });

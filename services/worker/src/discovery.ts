@@ -13,6 +13,7 @@ type TransactionSql = postgres.TransactionSql;
 
 type OutboxRow = {
   id: string;
+  event_type: string;
   user_id: string | null;
   payload: JsonObject;
   correlation_id: string | null;
@@ -21,6 +22,7 @@ type OutboxRow = {
 
 type JobRow = {
   id: string;
+  job_type: string;
   payload: JsonObject;
   attempts: number;
   max_attempts: number;
@@ -366,10 +368,10 @@ async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
 async function promoteOutbox(sql: SqlClient): Promise<string | null> {
   return sql.begin(async (tx) => {
     const rows = await tx<OutboxRow[]>`
-      SELECT id, user_id, payload, correlation_id, trace_id
+      SELECT id, event_type, user_id, payload, correlation_id, trace_id
       FROM ops.outbox_events
       WHERE status = 'pending'
-        AND event_type = 'discovery.refresh_requested'
+        AND event_type IN ('discovery.refresh_requested', 'discovery.candidates_discovered')
         AND available_at <= now()
       ORDER BY created_at
       FOR UPDATE SKIP LOCKED
@@ -386,7 +388,25 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const queryText = stringValue(outboxPayload.queryText);
     const sourceKind = stringValue(outboxPayload.sourceKind);
     const jobs: Array<{ id: string }> = [];
-    if (sourcePickerRunId) {
+    if (outbox.event_type === 'discovery.candidates_discovered' && sourcePickerRunId) {
+      const candidateBatch = objectValue(outboxPayload.candidateBatch);
+      if (!candidateBatch) throw new Error(`outbox ${outbox.id} has no candidate batch`);
+      const payload = {
+        source_picker_run_id: sourcePickerRunId,
+        audit_user_id: outbox.user_id,
+        concept_ids: conceptIds,
+        candidate_batch: candidateBatch,
+        trace_id: traceId,
+      };
+      const dedupKey = `discovery:source-picker-persist:${sourcePickerRunId}`;
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', 'discovery.persist_candidates', ${tx.json(payload)}, 'pending', 10, ${dedupKey}, ${`${outbox.id}:source-picker-persist`}, ${outbox.correlation_id}, ${traceId})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) jobs.push(inserted[0]);
+    } else if (sourcePickerRunId) {
       const payload = sourcePickerJobPayload(
         traceId,
         outbox.user_id,
@@ -448,7 +468,7 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
 async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null> {
   return sql.begin(async (tx) => {
     const rows = await tx<JobRow[]>`
-      SELECT id, payload, attempts, max_attempts, correlation_id, trace_id
+      SELECT id, job_type, payload, attempts, max_attempts, correlation_id, trace_id
       FROM ops.jobs
       WHERE queue = 'discovery'
         AND status = 'pending'
@@ -464,7 +484,7 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
       UPDATE ops.jobs
       SET status = 'running', attempts = attempts + 1, lease_owner = ${workerId}, lease_expires_at = now() + interval '2 minutes', heartbeat_at = now(), started_at = COALESCE(started_at, now()), updated_at = now()
       WHERE id = ${job.id}
-      RETURNING id, payload, attempts, max_attempts, correlation_id, trace_id
+      RETURNING id, job_type, payload, attempts, max_attempts, correlation_id, trace_id
     `;
     const claimedJob = claimed[0];
     if (!claimedJob) return null;
@@ -712,6 +732,15 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
     const job = await claimJob(sql, workerId);
     if (!job) return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
     try {
+      if (job.job_type === "discovery.persist_candidates") {
+        const candidateBatch = objectValue(job.payload.candidate_batch);
+        if (!candidateBatch) throw new Error("source-picker persistence job has no candidate batch");
+        const persisted = await persistBatch(sql, job, parseBatch(candidateBatch));
+        const result = { ...persisted };
+        await markSourcePickerRefresh(sql, job, persisted.resourceIds);
+        await finishJob(sql, job, result);
+        return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
+      }
       const batch = await callAgent(agentUrl, token, job);
       const persisted = await persistBatch(sql, job, batch);
       const result = {

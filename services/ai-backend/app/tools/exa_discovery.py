@@ -25,19 +25,20 @@ class ExaDiscoveryTool:
         limit: int,
         budget: ToolBudget,
         paper_strategy: str = "current",
+        interactive: bool = False,
     ) -> list[dict[str, Any]]:
         if not self.api_key:
             return []
         budget.consume(self.name)
         domain = "youtube.com" if resource_kind == "video" else "arxiv.org"
-        query = " educational " + " ".join(concept_names)
-        if resource_kind == "paper" and paper_strategy == "foundational":
+        explicit_query = " ".join(value.strip() for value in concept_names if value.strip()).strip()
+        query = explicit_query if interactive else " educational " + explicit_query
+        if not interactive and resource_kind == "paper" and paper_strategy == "foundational":
             query = (
                 "seminal foundational landmark canonical original influential early defining "
-                "research paper "
-                + " ".join(concept_names)
+                "research paper " + " ".join(concept_names)
             )
-        elif resource_kind == "paper":
+        elif not interactive and resource_kind == "paper":
             query = "recent current research paper " + " ".join(concept_names)
         payload = {
             "query": query,
@@ -46,7 +47,7 @@ class ExaDiscoveryTool:
             "includeDomains": [domain],
             "contents": {"highlights": {"maxCharacters": 800}},
         }
-        if resource_kind == "video" or paper_strategy == "current":
+        if not interactive and (resource_kind == "video" or paper_strategy == "current"):
             payload["startPublishedDate"] = (
                 datetime.now(UTC) - timedelta(days=window_days)
             ).isoformat()
@@ -84,8 +85,10 @@ class ExaDiscoveryTool:
                 continue
             else:
                 seen.add(url)
-            candidates.append({
-                **item,
-                "retrieval_strategy": paper_strategy if resource_kind == "paper" else "video",
-            })
+            candidates.append(
+                {
+                    **item,
+                    "retrieval_strategy": paper_strategy if resource_kind == "paper" else "video",
+                }
+            )
         return candidates

@@ -38,6 +38,15 @@ async function redisCommand(command: string[]): Promise<unknown> {
   return body && typeof body === "object" && "result" in body ? body.result : null;
 }
 
+export async function getRedisValue(key: string): Promise<string | null> {
+  const result = await redisCommand(["GET", key]);
+  return typeof result === "string" ? result : null;
+}
+
+export async function setRedisValue(key: string, value: string, ttlSeconds: number): Promise<void> {
+  await redisCommand(["SETEX", key, String(Math.max(1, Math.floor(ttlSeconds))), value]);
+}
+
 export async function getCachedHomeFeed(userId: string, fingerprints: HomeFeedFingerprint): Promise<DiscoveryHomeResponse | null> {
   try {
     const key = homeFeedCacheKey(userId, fingerprints);

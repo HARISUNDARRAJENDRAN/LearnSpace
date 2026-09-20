@@ -7,6 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ResourceKind = Literal["video", "paper"]
 LearningLevel = Literal["beginner", "intermediate", "advanced", "mixed"]
 PaperStrategy = Literal["current", "foundational"]
+RankingIntent = Literal[
+    "best_match",
+    "beginner_friendly",
+    "in_depth",
+    "practical",
+    "foundational",
+    "recent",
+]
 LearningFormat = Literal[
     "clear_explanations",
     "deep_dive",
@@ -48,6 +56,25 @@ class DiscoveryRefreshRequest(BaseModel):
             raise ValueError("concept ids and names must have the same length")
         if not self.concept_ids and not self.query_text:
             raise ValueError("discovery refresh requires a canonical concept or query text")
+        return self
+
+
+class InstantDiscoveryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query_text: str = Field(min_length=2, max_length=240)
+    source_kind: ResourceKind
+    ranking_intent: RankingIntent = "best_match"
+    limit: int = Field(default=8, ge=1, le=20)
+    trace_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def ranking_intent_matches_source(self) -> "InstantDiscoveryRequest":
+        learn_intents = {"best_match", "beginner_friendly", "in_depth", "practical"}
+        research_intents = {"best_match", "foundational", "recent"}
+        allowed = learn_intents if self.source_kind == "video" else research_intents
+        if self.ranking_intent not in allowed:
+            raise ValueError(f"{self.ranking_intent} is not valid for {self.source_kind}")
         return self
 
 

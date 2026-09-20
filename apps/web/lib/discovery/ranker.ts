@@ -504,11 +504,11 @@ function intentFit(resource: DiscoveryResource, intent: SourceQueryIntent, refer
   ].filter(Boolean).join(" "));
   if (intent === "beginner") {
     if (level === "beginner" || ["basic", "beginner", "fundamental", "intro", "introduction", "novice", "starter"].some((token) => evidence.has(token))) return 1;
-    return level === "advanced" || evidence.has("advanced") || evidence.has("expert") ? 0 : 0;
+    return level === "advanced" || evidence.has("advanced") || evidence.has("expert") || evidence.has("experienced") || evidence.has("production") ? 0 : 0.5;
   }
   if (intent === "practical") {
     if (hasImplementation || format === "hands_on" || ["implementation", "practical", "project"].some((token) => evidence.has(token))) return 1;
-    return 0;
+    return 0.5;
   }
   if (intent === "depth") {
     if (format === "deep_dive" || resource.durationMs !== null && resource.durationMs >= 20 * 60_000 || ["advanced", "deep", "depth", "detailed", "expert"].some((token) => evidence.has(token))) return 1;
@@ -548,14 +548,17 @@ export function sourceQuerySignals(resource: DiscoveryResource, query: string, r
   const nonCanonicalTopicCoverage = coverage(nonCanonicalTopicTokens, new Set([...titleSet, ...descriptionSet]));
   const lexical = phraseMatch ? 1 : clamp(topicTitleCoverage * 0.65 + topicDescriptionCoverage * 0.25);
   const canonicalQueryOnly = topicTokens.length > 0 && nonCanonicalTopicTokens.length === 0;
-  const canonicalContextMatch = canonicalRelevance >= 0.5 && canonicalCoverage >= 0.5 && (nonCanonicalTopicCoverage >= 0.25 || canonicalQueryOnly);
+  const canonicalContextMatch = canonicalRelevance >= 0.5 && canonicalCoverage >= 0.5 && (
+    nonCanonicalTopicCoverage >= 0.25
+    || (canonicalQueryOnly && (!intent || topicTitleCoverage >= 0.5 || topicDescriptionCoverage >= 0.25))
+  );
   const relevance = clamp(Math.max(lexical, canonicalContextMatch ? Math.max(0.55, canonicalRelevance * (0.55 + canonicalCoverage * 0.45)) : 0));
   const matchedIntent = intentFit(resource, intent);
-  const intentAdjustedRelevance = intent && matchedIntent < 0.5 ? Math.min(relevance, 0.49) : relevance;
+  const intentAdjustedRelevance = intent && matchedIntent < 0.5 ? Math.min(relevance, 0.52) : relevance;
   const strongLexicalMatch = phraseMatch || topicTitleCoverage >= 0.75 || (topicTokens.length > 1 && topicTitleCoverage >= 0.5 && topicDescriptionCoverage >= 0.5);
   const qualified = intentAdjustedRelevance > SOURCE_QUERY_RELEVANCE_THRESHOLD
     && (strongLexicalMatch || canonicalContextMatch)
-    && (!intent || matchedIntent >= 0.5);
+    && (!intent || matchedIntent > 0.5);
   return {
     relevance: intentAdjustedRelevance,
     qualified,
