@@ -2,8 +2,8 @@
 
 This boundary deploys the existing `services/ai-backend` FastAPI application
 as an x86_64 Lambda container image. The worker remains a separate durable
-process: it owns PostgreSQL job leases, calls this Function URL, validates the
-response, and persists catalogue resources.
+process: it owns PostgreSQL job leases, calls the throttled API Gateway URL,
+validates the response, and persists catalogue resources.
 
 The current deployment contains the bounded Exa/arXiv/YouTube discovery agents
 in one Lambda. That keeps the first cloud slice small while preserving the
@@ -57,7 +57,7 @@ export INTERNAL_SERVICE_TOKEN_SECRET_ARN='arn:aws:secretsmanager:...'
 
 The script creates the ECR repository when needed, builds and pushes a
 unique image tag, deploys the SAM template through CloudFormation, and prints
-the Function URL:
+the throttled API Gateway URL:
 
 ```text
 bash infra/aws/discovery-agent/deploy.sh

@@ -39,6 +39,7 @@ class DiscoveryRefreshRequest(BaseModel):
     paper_coverage: int = Field(default=0, ge=0, le=100)
     window_days: int = Field(default=30, ge=1, le=365)
     paper_strategy: PaperStrategy = "current"
+    ranking_intent: RankingIntent | None = None
     force_refresh: bool = False
     audit_user_id: UUID | None = None
     trace_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -56,6 +57,14 @@ class DiscoveryRefreshRequest(BaseModel):
             raise ValueError("concept ids and names must have the same length")
         if not self.concept_ids and not self.query_text:
             raise ValueError("discovery refresh requires a canonical concept or query text")
+        if self.ranking_intent is not None and self.source_kind is not None:
+            allowed = (
+                {"best_match", "beginner_friendly", "in_depth", "practical"}
+                if self.source_kind == "video"
+                else {"best_match", "foundational", "recent"}
+            )
+            if self.ranking_intent not in allowed:
+                raise ValueError(f"{self.ranking_intent} is not valid for {self.source_kind}")
         return self
 
 

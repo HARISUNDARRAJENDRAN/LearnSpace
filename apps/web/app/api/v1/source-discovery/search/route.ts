@@ -25,7 +25,9 @@ export async function POST(request: NextRequest) {
         result.timings.cacheMs === undefined ? null : `cache;dur=${result.timings.cacheMs}`,
         result.timings.catalogMs === undefined ? null : `catalog;dur=${result.timings.catalogMs}`,
         result.timings.exaMs === undefined ? null : `exa;dur=${result.timings.exaMs}`,
+        result.timings.providerMs === undefined ? null : `provider;dur=${result.timings.providerMs}`,
         result.timings.rankMs === undefined ? null : `rank;dur=${result.timings.rankMs}`,
+        result.timings.persistMs === undefined ? null : `persist;dur=${result.timings.persistMs}`,
         result.timings.totalMs === undefined ? null : `total;dur=${result.timings.totalMs}`,
       ].filter(Boolean).join(", "));
     }

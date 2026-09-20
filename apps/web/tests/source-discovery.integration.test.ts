@@ -231,11 +231,12 @@ test(
       assert.notEqual(best.runId, practical.runId);
       assert.equal(best.status, "searching");
       assert.equal(practical.status, "searching");
-      const runs = await migrator<{ id: string; context_snapshot: Record<string, unknown> }[]>`
-        SELECT id, context_snapshot
+      const runs = await migrator<{ id: string; status: string; context_snapshot: Record<string, unknown> }[]>`
+        SELECT id, status, context_snapshot
         FROM discovery.recommendation_runs
         WHERE id IN ${migrator(runIds)}
       `;
+      assert.ok(runs.every((run) => run.status === "running"));
       assert.deepEqual(new Set(runs.map((run) => run.context_snapshot.rankingIntent)), new Set(["best_match", "practical"]));
       const refreshes = await migrator<{ count: string }[]>`
         SELECT count(*)::text AS count
@@ -335,8 +336,15 @@ test(
         `;
       }
 
-      const initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
+      let initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
       runId = initial.runId ?? "";
+      if (initial.candidates.length === 0) {
+        const deadline = Date.now() + 2_000;
+        while (!seenQuery && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
+        runId = initial.runId ?? runId;
+      }
       assert.equal(initial.status, "completed");
       assert.equal(seenQuery, query);
       assert.equal(seenLimit, 30);
@@ -344,24 +352,25 @@ test(
       assert.ok(initial.candidates.every((candidate) => candidate.title.includes(query.slice(-8))));
       assert.ok(initial.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
       assert.ok(initial.candidates.every((candidate) => !candidate.resourceId));
-      const [outbox] = await migrator<{ payload: Record<string, unknown> }[]>`
-        SELECT payload
+      const candidateOutbox = await migrator<{ id: string }[]>`
+        SELECT id
         FROM ops.outbox_events
         WHERE user_id = ${user.id} AND event_type = 'discovery.candidates_discovered'
         ORDER BY created_at DESC
-        LIMIT 1
+        LIMIT 30
       `;
-      assert.equal(outbox?.payload.queryText, query);
-      const [pendingRun] = await migrator<{ context_snapshot: Record<string, unknown> }[]>`
-        SELECT context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
+      assert.equal(candidateOutbox.length, 0);
+      const [pendingRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
+        SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
       `;
+      assert.equal(pendingRun?.status, "completed");
       assert.equal(pendingRun?.context_snapshot.qualifiedCatalogCandidateCount, 0);
       const [persistedRun] = await migrator<{ status: string; refresh_status: string; diagnostics: Array<Record<string, unknown>> }[]>`
         SELECT status, context_snapshot->>'refreshStatus' AS refresh_status, context_snapshot->'candidateDiagnostics' AS diagnostics
         FROM discovery.recommendation_runs WHERE id = ${runId}
       `;
       assert.equal(persistedRun?.status, "completed");
-      assert.equal(persistedRun?.refresh_status, "pending_persistence");
+      assert.equal(persistedRun?.refresh_status, "not_needed");
       assert.equal(persistedRun?.diagnostics.length, 30);
       assert.ok(persistedRun?.diagnostics.every((diagnostic) => diagnostic.sourceOrigin === "external_refresh" && String(diagnostic.resourceId).startsWith("external:youtube:") && typeof diagnostic.queryRelevance === "number" && typeof diagnostic.qualificationReason === "string"));
       const [polled] = await migrator<{ context_snapshot: Record<string, unknown> }[]>`
@@ -450,7 +459,7 @@ test(
         SELECT event_type FROM ops.outbox_events
         WHERE user_id = ${user.id} AND aggregate_id = ${runId}
       `;
-      assert.deepEqual(outbox.map((row) => row.event_type), ["discovery.candidates_discovered"]);
+      assert.deepEqual(outbox.map((row) => row.event_type), []);
       assert.equal(result.timings?.totalMs !== undefined, true);
       const selected = result.candidates[0];
       assert.ok(selected?.canonicalUrl);

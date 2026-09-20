@@ -79,6 +79,7 @@ export async function setSourceCandidatePool(
   query: string,
   resources: DiscoveryResource[],
 ): Promise<void> {
+  if (resources.length === 0) return;
   const now = Date.now();
   const pool: StoredPool = { resources: resources.slice(0, SOURCE_DISCOVERY_MAX_RESULTS), freshUntil: now + freshTtlMs, staleUntil: now + staleTtlMs };
   const key = cacheKey(mode, rankingIntent, query);

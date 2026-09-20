@@ -68,9 +68,9 @@ Configure these Vercel Production variables for the staging deployment:
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `RESEND_API_KEY`, `EMAIL_FROM`, `AUTH_EXPOSE_VERIFICATION_LINK=false`
 - `KV_REST_API_URL`, `KV_REST_API_TOKEN` for shared rate limiting and discovery cache
-- `DISCOVERY_AGENT_URL` — the discovery-agent Lambda Function URL
+- `DISCOVERY_AGENT_URL` — the throttled discovery-agent API Gateway URL
 - `INTERNAL_SERVICE_TOKEN` — the same token stored in the discovery-agent Secrets Manager secret
-- `SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS=1400`
+- `SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS=450`
 - the server-safe `DB_*` values described above
 
 The Google callback must be exactly
@@ -95,7 +95,8 @@ are configured, main-branch CI deploys and verifies the tested agent image in
 its own release job. The Vercel release remains independent so an AWS
 credential or OIDC outage does not prevent a web deployment. The manual
 workflow remains available for recovery. The CloudFormation stack output is
-the current Function URL. The refresh and instant routes remain protected by
+the current API Gateway URL with a bounded stage throttle. The refresh, instant,
+and version routes remain protected by
 `INTERNAL_SERVICE_TOKEN`. The discovery worker uses the same worker connection
 for catalogue writes and durable job state. Run it outside Vercel with
 `pnpm discovery:worker` and set `DISCOVERY_AGENT_URL` to the stack output plus

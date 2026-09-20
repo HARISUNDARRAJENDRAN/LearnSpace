@@ -26,19 +26,30 @@ class ExaDiscoveryTool:
         budget: ToolBudget,
         paper_strategy: str = "current",
         interactive: bool = False,
+        ranking_intent: str = "best_match",
     ) -> list[dict[str, Any]]:
         if not self.api_key:
             return []
         budget.consume(self.name)
         domain = "youtube.com" if resource_kind == "video" else "arxiv.org"
         explicit_query = " ".join(value.strip() for value in concept_names if value.strip()).strip()
-        query = (
-            f"videos on {explicit_query}"
-            if interactive and resource_kind == "video"
-            else explicit_query
-            if interactive
-            else " educational " + explicit_query
-        )
+        video_prefixes = {
+            "beginner_friendly": "beginner introductory fundamental full course videos on",
+            "practical": "hands-on practical implementation project videos on",
+            "in_depth": "advanced detailed deep dive lecture videos on",
+            "best_match": "videos on",
+        }
+        if interactive and resource_kind == "video":
+            prefix = video_prefixes.get(ranking_intent, video_prefixes["best_match"])
+            query = f"{prefix} {explicit_query}"
+        elif interactive and resource_kind == "paper" and ranking_intent == "foundational":
+            query = f"seminal foundational canonical original research papers on {explicit_query}"
+        elif interactive and resource_kind == "paper" and ranking_intent == "recent":
+            query = f"recent latest research papers on {explicit_query}"
+        elif interactive:
+            query = explicit_query
+        else:
+            query = " educational " + explicit_query
         if not interactive and resource_kind == "paper" and paper_strategy == "foundational":
             query = (
                 "seminal foundational landmark canonical original influential early defining "
@@ -57,7 +68,9 @@ class ExaDiscoveryTool:
             ),
             "contents": {"highlights": {"maxCharacters": 800}},
         }
-        if not interactive and resource_kind == "paper" and paper_strategy == "current":
+        if resource_kind == "paper" and (
+            (not interactive and paper_strategy == "current") or ranking_intent == "recent"
+        ):
             payload["startPublishedDate"] = (
                 datetime.now(UTC) - timedelta(days=window_days)
             ).isoformat()

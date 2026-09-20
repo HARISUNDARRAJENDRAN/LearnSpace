@@ -202,6 +202,8 @@
 @keyframes source-discovery-spin { to { transform: rotate(360deg); } }
 
 .source-discovery-results { max-height: 260px; overflow: auto; padding: 5px 16px; }
+.source-discovery-more { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 12px 0 8px; color: #7a8088; font-size: 12px; }
+.source-discovery-more .source-discovery-spinner { width: 14px; height: 14px; }
 .source-discovery-result { display: grid; min-height: 82px; grid-template-columns: 128px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 10px 0; border-bottom: 1px solid #edf0f4; }
 .source-discovery-result:last-child { border-bottom: 0; }
 .source-discovery-thumbnail { display: grid; width: 128px; height: 72px; place-items: center; overflow: hidden; border-radius: 7px; background: #edf1f8; color: #8290aa; }

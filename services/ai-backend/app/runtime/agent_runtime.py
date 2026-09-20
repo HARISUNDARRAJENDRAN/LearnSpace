@@ -79,9 +79,9 @@ class AgentRuntime:
         stale = await self.flow.cache.get_stale(key)
         if stale is not None:
             if key not in self._instant_refreshes or self._instant_refreshes[key].done():
-                self._instant_refreshes[key] = asyncio.create_task(
-                    self._refresh_instant(request, key)
-                )
+                task = asyncio.create_task(self._refresh_instant(request, key))
+                self._instant_refreshes[key] = task
+                task.add_done_callback(lambda completed: self._clear_refresh(key, completed))
             return self._cached_batch(request, stale, trace_id)
         inflight = self._instant_inflight.get(key)
         if inflight is None:
@@ -120,11 +120,16 @@ class AgentRuntime:
         except Exception:
             return
 
+    def _clear_refresh(self, key: str, task: asyncio.Task[None]) -> None:
+        if self._instant_refreshes.get(key) is task:
+            self._instant_refreshes.pop(key, None)
+
     async def _fetch_instant(self, request: InstantDiscoveryRequest) -> DiscoveryCandidateBatch:
         discovery_request = DiscoveryRefreshRequest(
             query_text=request.query_text,
             source_kind=request.source_kind,
             window_days=365,
+            ranking_intent=request.ranking_intent,
             paper_strategy=(
                 "foundational" if request.ranking_intent == "foundational" else "current"
             ),
@@ -150,11 +155,15 @@ class AgentRuntime:
     async def _cache_instant(
         self, request: InstantDiscoveryRequest, key: str, batch: DiscoveryCandidateBatch
     ) -> None:
+        if batch.failures:
+            return
         values = (
             [candidate.model_dump(mode="json") for candidate in batch.youtube]
             if request.source_kind == "video"
             else [candidate.model_dump(mode="json") for candidate in batch.arxiv]
         )
+        if not values:
+            return
         await self.flow.cache.set(key, values, timedelta(minutes=10))
 
     @staticmethod

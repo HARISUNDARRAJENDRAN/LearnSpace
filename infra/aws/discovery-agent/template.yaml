@@ -32,6 +32,10 @@ Parameters:
     Default: 180
     MinValue: 1
     MaxValue: 900
+  BuildSha:
+    Type: String
+    Default: unknown
+    AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 
 Resources:
   DiscoveryAgent:
@@ -48,9 +52,6 @@ Resources:
         Size: 1024
       ReservedConcurrentExecutions: 2
       AutoPublishAlias: live
-      FunctionUrlConfig:
-        AuthType: NONE
-        InvokeMode: BUFFERED
       Environment:
         Variables:
           DISCOVERY_AGENTS_ENABLED: 'true'
@@ -58,6 +59,9 @@ Resources:
           DISCOVERY_MAX_TOOL_CALLS: '4'
           DISCOVERY_REQUEST_TIMEOUT_SECONDS: '8'
           DISCOVERY_INTERACTIVE_TIMEOUT_SECONDS: '1.2'
+          DISCOVERY_BUILD_SHA: !Ref BuildSha
+          DISCOVERY_PROTOCOL_VERSION: 'source-discovery-v3'
+          DISCOVERY_SCHEMA_VERSION: '1'
           DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED: 'false'
           CREWAI_DISABLE_TELEMETRY: 'true'
           EXA_API_KEY_SECRET_ARN: !Ref ExaApiKeySecretArn
@@ -76,10 +80,49 @@ Resources:
         Service: learnspace-discovery-agent
         Environment: !Ref EnvironmentName
 
+  DiscoveryApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub '${FunctionName}-http'
+      ProtocolType: HTTP
+
+  DiscoveryApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref DiscoveryApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt DiscoveryAgent.Arn
+      PayloadFormatVersion: '2.0'
+
+  DiscoveryApiRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref DiscoveryApi
+      RouteKey: 'ANY /{proxy+}'
+      Target: !Sub 'integrations/${DiscoveryApiIntegration}'
+
+  DiscoveryApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref DiscoveryApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 10
+        ThrottlingRateLimit: 5
+
+  DiscoveryApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref DiscoveryAgent
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${DiscoveryApi}/*/*'
+
 Outputs:
-  FunctionUrl:
-    Description: Function URL used by the durable discovery worker.
-    Value: !GetAtt DiscoveryAgentUrl.FunctionUrl
+  AgentUrl:
+    Description: Throttled API Gateway URL used by the durable discovery worker.
+    Value: !Sub 'https://${DiscoveryApi}.execute-api.${AWS::Region}.amazonaws.com'
   FunctionArn:
     Description: Discovery agent Lambda ARN.
     Value: !GetAtt DiscoveryAgent.Arn

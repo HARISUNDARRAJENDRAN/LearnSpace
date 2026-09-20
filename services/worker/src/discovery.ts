@@ -65,6 +65,7 @@ type CandidateBatch = {
   trace_id: string;
   youtube: YoutubeProposal[];
   arxiv: ArxivProposal[];
+  failures: string[];
   audit_run_id: string | null;
   cache_hit: boolean;
   provider_calls: number;
@@ -255,6 +256,7 @@ export function parseBatch(value: unknown): CandidateBatch {
     trace_id: stringValue(body.trace_id) ?? "worker-trace",
     youtube,
     arxiv,
+    failures: stringArray(body.failures).slice(0, 10),
     audit_run_id: stringValue(body.audit_run_id),
     cache_hit: body.cache_hit === true,
     provider_calls: countValue(body.provider_calls),
@@ -288,6 +290,7 @@ export function sourcePickerJobPayload(
   sourceKind: string | null,
   conceptIds: string[],
   conceptNames: string[],
+  rankingIntent: string | null = null,
 ): JsonObject {
   if (conceptIds.length > 0 && conceptIds.length !== conceptNames.length) {
     throw new Error("source-picker concept ids and names must have the same length");
@@ -306,6 +309,7 @@ export function sourcePickerJobPayload(
     force_refresh: true,
     source_picker_run_id: runId,
     refresh_reason: "source_picker",
+    ...(rankingIntent ? { ranking_intent: rankingIntent } : {}),
     trace_id: traceId,
   };
 }
@@ -387,6 +391,7 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const sourcePickerRunId = stringValue(outboxPayload.sourcePickerRunId);
     const queryText = stringValue(outboxPayload.queryText);
     const sourceKind = stringValue(outboxPayload.sourceKind);
+    const rankingIntent = stringValue(outboxPayload.rankingIntent);
     const jobs: Array<{ id: string }> = [];
     if (outbox.event_type === 'discovery.candidates_discovered' && sourcePickerRunId) {
       const candidateBatch = objectValue(outboxPayload.candidateBatch);
@@ -415,6 +420,7 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
         sourceKind,
         conceptIds,
         conceptNames,
+        rankingIntent,
       );
       const dedupKey = `discovery:source-picker:${sourcePickerRunId}`;
       const inserted = await tx<{ id: string }[]>`
@@ -495,30 +501,40 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
 }
 
 async function reclaimExpiredJobs(sql: SqlClient): Promise<number> {
-  const rows = await sql<{ id: string }[]>`
-    UPDATE ops.jobs
-    SET status = CASE
-        WHEN attempts >= max_attempts THEN 'dead'::ops.job_status
-        ELSE 'pending'::ops.job_status
-      END,
-      available_at = CASE
-        WHEN attempts >= max_attempts THEN available_at
-        ELSE now() + make_interval(secs => LEAST(3600::double precision, 30::double precision * power(2::double precision, GREATEST(0, attempts - 1))))
-      END,
-      finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
-      last_error_code = 'DISCOVERY_LEASE_EXPIRED',
-      last_error_detail = 'Worker lease expired before completion',
-      lease_owner = NULL,
-      lease_expires_at = NULL,
-      heartbeat_at = NULL,
-      updated_at = now()
-    WHERE queue = 'discovery'
-      AND status = 'running'
-      AND lease_expires_at IS NOT NULL
-      AND lease_expires_at < now()
-    RETURNING id
-  `;
-  return rows.length;
+  return sql.begin(async (tx) => {
+    const rows = await tx<{ id: string; run_id: string | null; terminal: boolean }[]>`
+      UPDATE ops.jobs
+      SET status = CASE
+          WHEN attempts >= max_attempts THEN 'dead'::ops.job_status
+          ELSE 'pending'::ops.job_status
+        END,
+        available_at = CASE
+          WHEN attempts >= max_attempts THEN available_at
+          ELSE now() + make_interval(secs => LEAST(3600::double precision, 30::double precision * power(2::double precision, GREATEST(0, attempts - 1))))
+        END,
+        finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
+        last_error_code = 'DISCOVERY_LEASE_EXPIRED',
+        last_error_detail = 'Worker lease expired before completion',
+        lease_owner = NULL,
+        lease_expires_at = NULL,
+        heartbeat_at = NULL,
+        updated_at = now()
+      WHERE queue = 'discovery'
+        AND status = 'running'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at < now()
+      RETURNING id, payload->>'source_picker_run_id' AS run_id, attempts >= max_attempts AS terminal
+    `;
+    for (const row of rows) {
+      if (!row.terminal || !row.run_id) continue;
+      await tx`
+        UPDATE discovery.recommendation_runs
+        SET status = 'failed', completed_at = now(), context_snapshot = context_snapshot || ${tx.json({ refreshStatus: "failed" })}
+        WHERE id = ${row.run_id} AND status IN ('queued', 'running')
+      `;
+    }
+    return rows.length;
+  });
 }
 
 async function callAgent(agentUrl: string, token: string, job: JobRow): Promise<CandidateBatch> {
@@ -547,6 +563,7 @@ const discoveryAgentPayloadKeys = [
   "trace_id",
   "query_text",
   "source_kind",
+  "ranking_intent",
 ] as const;
 
 export function discoveryAgentPayload(payload: JsonObject): JsonObject {
@@ -579,57 +596,96 @@ async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<strin
 
 async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<{ videos: number; papers: number; resourceIds: string[] }> {
   const userId = stringValue(job.payload.audit_user_id);
+  const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
   return sql.begin(async (tx) => {
     const targetConceptId = (await validConceptIds(tx, [
       stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0] ?? "",
     ]))[0];
-    const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
     if (!targetConceptId && !sourcePickerRunId) return { videos: 0, papers: 0, resourceIds: [] };
+    const sourcePickerOwner = sourcePickerRunId && userId ? userId : null;
+    async function resourceIdFor(
+      provider: string,
+      externalId: string,
+      type: "video" | "paper",
+      canonicalUrl: string,
+      title: string,
+      description: string | null,
+      language: string | null,
+      metadata: JsonObject,
+    ): Promise<string | null> {
+      const existing = userId
+        ? await tx<{ id: string }[]>`
+            SELECT id FROM catalog.resources
+            WHERE provider = ${provider} AND external_id = ${externalId} AND deleted_at IS NULL
+              AND (owner_user_id IS NULL OR owner_user_id = ${userId})
+            ORDER BY owner_user_id NULLS FIRST
+            LIMIT 1
+          `
+        : await tx<{ id: string }[]>`
+            SELECT id FROM catalog.resources
+            WHERE provider = ${provider} AND external_id = ${externalId} AND deleted_at IS NULL
+              AND owner_user_id IS NULL
+            LIMIT 1
+          `;
+      if (existing[0]) return existing[0].id;
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO catalog.resources
+          (owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
+        VALUES
+          (${sourcePickerOwner}, ${type}, ${provider}, ${externalId}, ${canonicalUrl}, ${title}, ${description}, ${language}, ${sourcePickerOwner ? "private" : "public"}, 'ready', ${tx.json(metadata)})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return inserted[0].id;
+      const afterRace = userId
+        ? await tx<{ id: string }[]>`
+            SELECT id FROM catalog.resources
+            WHERE provider = ${provider} AND external_id = ${externalId} AND deleted_at IS NULL
+              AND (owner_user_id IS NULL OR owner_user_id = ${userId})
+            ORDER BY owner_user_id NULLS FIRST
+            LIMIT 1
+          `
+        : await tx<{ id: string }[]>`
+            SELECT id FROM catalog.resources
+            WHERE provider = ${provider} AND external_id = ${externalId} AND deleted_at IS NULL
+              AND owner_user_id IS NULL
+            LIMIT 1
+          `;
+      return afterRace[0]?.id ?? null;
+    }
     let videos = 0;
     let papers = 0;
     const resourceIds = new Set<string>();
     for (const candidate of batch.youtube) {
       if (targetConceptId && !candidate.matched_concept_ids.includes(targetConceptId)) continue;
-      const [resource] = await tx<{ id: string }[]>`
-        INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
-        VALUES ('video', 'youtube', ${candidate.youtube_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.evidence.join("\n") || null}, ${candidate.language}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, hasImplementation: candidate.has_implementation, sourceConfidence: candidate.confidence })})
-        ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL
-        DO UPDATE SET canonical_url = EXCLUDED.canonical_url, title = EXCLUDED.title, description = EXCLUDED.description, language = EXCLUDED.language, status = 'ready', deleted_at = NULL, updated_at = now(), metadata = EXCLUDED.metadata
-        RETURNING id
-      `;
-      if (!resource) continue;
-      resourceIds.add(resource.id);
+      const resourceId = await resourceIdFor("youtube", candidate.youtube_id, "video", candidate.canonical_url, candidate.title, candidate.evidence.join("\n") || null, candidate.language, { source: sourcePickerRunId ? "source-picker" : "discovery-agent", featureVersion: "discovery-v1", learningFormat: candidate.learning_format, estimatedLevel: candidate.estimated_level, hasImplementation: candidate.has_implementation, sourceConfidence: candidate.confidence });
+      if (!resourceId) continue;
+      resourceIds.add(resourceId);
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at, default_audio_language, fetched_at)
-        VALUES (${resource.id}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
+        VALUES (${resourceId}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
         ON CONFLICT (resource_id) DO UPDATE SET channel_title = EXCLUDED.channel_title, duration_ms = EXCLUDED.duration_ms, published_at = EXCLUDED.published_at, default_audio_language = EXCLUDED.default_audio_language, fetched_at = now()
       `;
       if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
-        VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
+        VALUES (${resourceId}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
         ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
       `;
       videos += 1;
     }
     for (const candidate of batch.arxiv) {
       if (targetConceptId && !candidate.matched_concept_ids.includes(targetConceptId)) continue;
-      const [resource] = await tx<{ id: string }[]>`
-        INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, visibility, status, metadata)
-        VALUES ('paper', 'arxiv', ${candidate.arxiv_id}, ${candidate.canonical_url}, ${candidate.title}, ${candidate.abstract}, 'public', 'ready', ${tx.json({ source: "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories })})
-        ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL
-        DO UPDATE SET canonical_url = EXCLUDED.canonical_url, title = EXCLUDED.title, description = EXCLUDED.description, status = 'ready', deleted_at = NULL, updated_at = now(), metadata = EXCLUDED.metadata
-        RETURNING id
-      `;
-      if (!resource) continue;
-      resourceIds.add(resource.id);
+      const resourceId = await resourceIdFor("arxiv", candidate.arxiv_id, "paper", candidate.canonical_url, candidate.title, candidate.abstract, null, { source: sourcePickerRunId ? "source-picker" : "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories });
+      if (!resourceId) continue;
+      resourceIds.add(resourceId);
       await tx`
         INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, submitted_at, primary_category, metadata)
-        VALUES (${resource.id}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: "discovery-agent" })})
+        VALUES (${resourceId}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: sourcePickerRunId ? "source-picker" : "discovery-agent" })})
         ON CONFLICT (resource_id) DO UPDATE SET abstract = EXCLUDED.abstract, publication_date = EXCLUDED.publication_date, submitted_at = EXCLUDED.submitted_at, primary_category = EXCLUDED.primary_category, metadata = EXCLUDED.metadata
       `;
       if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
-        VALUES (${resource.id}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
+        VALUES (${resourceId}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')
         ON CONFLICT (resource_id, concept_id, source) DO UPDATE SET relevance = GREATEST(catalog.resource_concepts.relevance, EXCLUDED.relevance), extractor_version = EXCLUDED.extractor_version
       `;
       papers += 1;
@@ -684,11 +740,27 @@ async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promi
 async function markSourcePickerRefresh(sql: SqlClient, job: JobRow, resourceIds: string[]): Promise<void> {
   const runId = stringValue(job.payload.source_picker_run_id);
   if (!runId) return;
-  await sql`
-    UPDATE discovery.recommendation_runs
-    SET status = 'completed', completed_at = COALESCE(completed_at, now()), context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
-    WHERE id = ${runId}
-  `;
+  await sql.begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`source-picker-refresh:${runId}`}, 0))`;
+    for (const resourceId of resourceIds) {
+      const [nextRank] = await tx<{ rank: number }[]>`
+        SELECT coalesce(max(candidate_rank), 0) + 1 AS rank
+        FROM discovery.recommendation_candidates
+        WHERE recommendation_run_id = ${runId}
+      `;
+      await tx`
+        INSERT INTO discovery.recommendation_candidates
+          (recommendation_run_id, resource_id, candidate_rank, final_rank, score, reason_codes, selected)
+        VALUES (${runId}, ${resourceId}, ${nextRank?.rank ?? 1}, NULL, 0, ${tx.json(["external_refresh"])}, false)
+        ON CONFLICT DO NOTHING
+      `;
+    }
+    await tx`
+      UPDATE discovery.recommendation_runs
+      SET status = 'completed', completed_at = COALESCE(completed_at, now()), context_snapshot = context_snapshot || ${tx.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
+      WHERE id = ${runId}
+    `;
+  });
 }
 
 async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<void> {
@@ -742,12 +814,17 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
         return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
       }
       const batch = await callAgent(agentUrl, token, job);
+      const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
+      if (sourcePickerRunId && batch.failures.length > 0 && batch.youtube.length === 0 && batch.arxiv.length === 0) {
+        throw new Error(`discovery agent reported no candidates: ${batch.failures[0]}`);
+      }
       const persisted = await persistBatch(sql, job, batch);
       const result = {
         traceId: batch.trace_id,
         providerCalls: batch.provider_calls,
         fallbackCalls: batch.fallback_calls,
         enrichmentCalls: batch.enrichment_calls,
+        failures: batch.failures,
         cacheHit: batch.cache_hit,
         ...persisted,
       };

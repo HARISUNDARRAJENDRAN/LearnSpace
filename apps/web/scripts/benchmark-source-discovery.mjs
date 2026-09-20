@@ -63,7 +63,7 @@ for (const query of queries) {
 const summary = Object.groupBy(samples, (sample) => `${sample.scenario}:${sample.retrieval}`);
 const report = Object.fromEntries(Object.entries(summary).map(([scenario, values]) => {
   const timings = values.map((sample) => sample.elapsedMs);
-  const providerTimings = values.map((sample) => sample.timings?.exaMs).filter((value) => typeof value === "number");
+  const providerTimings = values.map((sample) => sample.timings?.providerMs ?? sample.timings?.exaMs).filter((value) => typeof value === "number");
   return [scenario, {
     count: timings.length,
     p50Ms: percentile(timings, 50),

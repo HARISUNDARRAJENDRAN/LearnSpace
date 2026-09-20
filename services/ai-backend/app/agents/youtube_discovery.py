@@ -46,6 +46,7 @@ class YoutubeDiscoveryAgent:
             max_results,
             budget=budget,
             interactive=interactive,
+            ranking_intent=request.ranking_intent or "best_match",
         )
         output: list[YoutubeCandidate] = []
         for item in raw_results:

@@ -596,6 +596,26 @@ def test_interactive_exa_uses_instant_mode_without_video_recency_cutoff(
     async def run() -> None:
         tool = ExaDiscoveryTool("test-key")
         await tool.search(["Rust for beginners"], "video", 30, 30, ToolBudget(1), interactive=True)
+        await tool.search(
+            ["Rust"], "video", 30, 30, ToolBudget(1),
+            interactive=True, ranking_intent="beginner_friendly"
+        )
+        await tool.search(
+            ["Rust"], "video", 30, 30, ToolBudget(1),
+            interactive=True, ranking_intent="practical"
+        )
+        await tool.search(
+            ["Rust"], "video", 30, 30, ToolBudget(1),
+            interactive=True, ranking_intent="in_depth"
+        )
+        await tool.search(
+            ["attention"], "paper", 365, 30, ToolBudget(1),
+            interactive=True, ranking_intent="foundational"
+        )
+        await tool.search(
+            ["attention"], "paper", 30, 30, ToolBudget(1),
+            interactive=True, ranking_intent="recent"
+        )
         await tool.search(["Rust"], "video", 30, 5, ToolBudget(1), interactive=False)
 
     asyncio.run(run())
@@ -603,11 +623,18 @@ def test_interactive_exa_uses_instant_mode_without_video_recency_cutoff(
     assert payloads[0]["includeDomains"] == ["youtube.com", "youtu.be"]
     assert payloads[0]["numResults"] == 30
     assert payloads[0]["type"] == "instant"
-    assert payloads[1]["includeDomains"] == ["youtube.com"]
-    assert payloads[1]["numResults"] == 5
-    assert payloads[1]["type"] == "neural"
-    assert "startPublishedDate" not in payloads[0]
-    assert "startPublishedDate" not in payloads[1]
+    assert payloads[1]["query"] == "beginner introductory fundamental full course videos on Rust"
+    assert payloads[2]["query"] == "hands-on practical implementation project videos on Rust"
+    assert payloads[3]["query"] == "advanced detailed deep dive lecture videos on Rust"
+    assert payloads[4]["query"] == (
+        "seminal foundational canonical original research papers on attention"
+    )
+    assert payloads[5]["query"] == "recent latest research papers on attention"
+    assert payloads[5]["startPublishedDate"]
+    assert payloads[6]["includeDomains"] == ["youtube.com"]
+    assert payloads[6]["numResults"] == 5
+    assert payloads[6]["type"] == "neural"
+    assert all("startPublishedDate" not in payloads[index] for index in (0, 1, 2, 3, 6))
 
 
 def test_fast_video_discovery_supports_thirty_results_and_normalizes_youtu_be() -> None:
@@ -701,6 +728,107 @@ def test_instant_timeout_keeps_provider_fetch_alive_and_warms_cache() -> None:
         second = await runtime.run_instant_discovery(request)
         assert len(second.youtube) == 1
         assert second.cache_hit
+
+    asyncio.run(run())
+
+
+def test_stale_instant_refresh_failure_does_not_poison_cache_or_leak_tasks() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.writes = 0
+
+        async def get(self, key: str) -> None:
+            del key
+            return None
+
+        async def get_stale(self, key: str) -> list[dict[str, object]]:
+            del key
+            return [youtube_candidate().model_dump(mode="json")]
+
+        async def set(self, key: str, value: list[dict[str, object]], ttl: object) -> None:
+            del key, value, ttl
+            self.writes += 1
+
+    async def run() -> None:
+        cache = Cache()
+        settings = Settings(
+            internal_service_token="token",
+            exa_api_key="key",
+            agents_enabled=True,
+            max_concurrency=1,
+            max_tool_calls=1,
+            request_timeout_seconds=1,
+            redis_url=None,
+            database_ai_url=None,
+            youtube_embedder_provider="openai",
+            youtube_embedder_model="text-embedding-3-small",
+        )
+
+        class FailingRuntime(AgentRuntime):
+            async def _fetch_instant(
+                self, request: InstantDiscoveryRequest
+            ) -> DiscoveryCandidateBatch:
+                del request
+                raise RuntimeError("transient provider failure")
+
+        runtime = FailingRuntime(settings, cast(DiscoveryCache, cache))
+        result = await runtime.run_instant_discovery(
+            InstantDiscoveryRequest(query_text="python for beginners", source_kind="video")
+        )
+        assert result.cache_hit
+        await asyncio.sleep(0.02)
+        assert cache.writes == 0
+        assert vars(runtime)["_instant_refreshes"] == {}
+
+    asyncio.run(run())
+
+
+def test_empty_instant_success_is_not_cached_as_a_positive_result() -> None:
+    class Cache:
+        def __init__(self) -> None:
+            self.writes = 0
+
+        async def get(self, key: str) -> None:
+            del key
+            return None
+
+        async def get_stale(self, key: str) -> None:
+            del key
+            return None
+
+        async def set(self, key: str, value: list[dict[str, object]], ttl: object) -> None:
+            del key, value, ttl
+            self.writes += 1
+
+    async def run() -> None:
+        cache = Cache()
+        settings = Settings(
+            internal_service_token="token",
+            exa_api_key="key",
+            agents_enabled=True,
+            max_concurrency=1,
+            max_tool_calls=1,
+            request_timeout_seconds=1,
+            redis_url=None,
+            database_ai_url=None,
+            youtube_embedder_provider="openai",
+            youtube_embedder_model="text-embedding-3-small",
+        )
+
+        class EmptyRuntime(AgentRuntime):
+            async def _fetch_instant(
+                self, request: InstantDiscoveryRequest
+            ) -> DiscoveryCandidateBatch:
+                return DiscoveryCandidateBatch(trace_id=request.trace_id or "empty")
+
+        runtime = EmptyRuntime(settings, cast(DiscoveryCache, cache))
+        result = await runtime.run_instant_discovery(
+            InstantDiscoveryRequest(query_text="a query with no hits", source_kind="video")
+        )
+        assert result.youtube == []
+        await asyncio.sleep(0.02)
+        assert cache.writes == 0
+        assert vars(runtime)["_instant_inflight"] == {}
 
     asyncio.run(run())
 

@@ -66,10 +66,13 @@ class ArxivDiscoveryAgent:
                 paper_strategy=request.paper_strategy,
                 budget=budget,
                 interactive=interactive,
+                ranking_intent=request.ranking_intent or request.paper_strategy,
             )
         except ToolBudgetExceeded:
             raise
         except Exception:
+            if interactive:
+                raise
             raw_results = []
         if not interactive and len(raw_results) < 3:
             try:
@@ -96,11 +99,19 @@ class ArxivDiscoveryAgent:
             ):
                 continue
             evidence_text = self._evidence(item)
-            if request.paper_strategy == "foundational" and not has_foundational_evidence(
+            foundational = (
+                request.paper_strategy == "foundational"
+                or request.ranking_intent == "foundational"
+            )
+            if foundational and not has_foundational_evidence(
                 title, evidence_text
             ):
                 continue
             published_at = self._date(item.get("publishedDate"))
+            if request.ranking_intent == "recent" and published_at is not None:
+                age_days = (now - published_at).total_seconds() / 86_400
+                if age_days > request.window_days:
+                    continue
             if not interactive and request.paper_strategy == "current" and published_at is not None:
                 age_days = (now - published_at).total_seconds() / 86_400
                 if age_days > request.window_days:
@@ -128,7 +139,7 @@ class ArxivDiscoveryAgent:
                 or ([str(item["category"])] if isinstance(item.get("category"), str) else []),
                 authors=self._strings(item.get("authors")),
                 matched_concept_ids=request.concept_ids,
-                paper_class=request.paper_strategy,
+                paper_class="foundational" if foundational else "current",
                 evidence=(
                     [evidence_text[:800]]
                     if evidence_text

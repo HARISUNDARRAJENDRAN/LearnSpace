@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -55,6 +56,7 @@ class DiscoveryCache:
     entries: dict[str, CacheEntry] = field(default_factory=lambda: {})
     redis_url: str | None = None
     max_local_entries: int = 256
+    redis_timeout_seconds: float = 0.25
     redis_client: Any = field(default=None, init=False, repr=False)
 
     async def _redis(self) -> Any:
@@ -63,7 +65,12 @@ class DiscoveryCache:
         if self.redis_client is None:
             from redis.asyncio import from_url
 
-            self.redis_client = from_url(self.redis_url, decode_responses=True)
+            self.redis_client = from_url(
+                self.redis_url,
+                decode_responses=True,
+                socket_connect_timeout=self.redis_timeout_seconds,
+                socket_timeout=self.redis_timeout_seconds,
+            )
         return self.redis_client
 
     @staticmethod
@@ -97,7 +104,7 @@ class DiscoveryCache:
         try:
             redis = await self._redis()
             if redis is not None:
-                value = await redis.get(key)
+                value = await asyncio.wait_for(redis.get(key), timeout=self.redis_timeout_seconds)
                 if value is not None:
                     decoded = self._decode(value, stale=False)
                     if decoded is not None:
@@ -124,10 +131,13 @@ class DiscoveryCache:
                     "freshUntil": (now + ttl).isoformat(),
                     "staleUntil": (now + ttl + STALE_TTL).isoformat(),
                 }
-                await redis.set(
-                    key,
-                    json.dumps(payload),
-                    ex=max(1, int((ttl + STALE_TTL).total_seconds())),
+                await asyncio.wait_for(
+                    redis.set(
+                        key,
+                        json.dumps(payload),
+                        ex=max(1, int((ttl + STALE_TTL).total_seconds())),
+                    ),
+                    timeout=self.redis_timeout_seconds,
                 )
         except Exception:
             pass
@@ -141,7 +151,7 @@ class DiscoveryCache:
         try:
             redis = await self._redis()
             if redis is not None:
-                value = await redis.get(key)
+                value = await asyncio.wait_for(redis.get(key), timeout=self.redis_timeout_seconds)
                 if value is not None:
                     decoded = self._decode(value, stale=True)
                     if decoded is not None:

@@ -16,6 +16,9 @@ class Settings:
     youtube_embedder_model: str
     youtube_enrichment_enabled: bool = False
     interactive_timeout_seconds: float = 1.2
+    build_sha: str = "unknown"
+    protocol_version: str = "source-discovery-v3"
+    schema_version: str = "1"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -41,6 +44,9 @@ class Settings:
             interactive_timeout_seconds=max(
                 0.5, min(5.0, float(os.getenv("DISCOVERY_INTERACTIVE_TIMEOUT_SECONDS", "1.2")))
             ),
+            build_sha=os.getenv("DISCOVERY_BUILD_SHA", "unknown"),
+            protocol_version=os.getenv("DISCOVERY_PROTOCOL_VERSION", "source-discovery-v3"),
+            schema_version=os.getenv("DISCOVERY_SCHEMA_VERSION", "1"),
         )
 
     def readiness_errors(self) -> list[str]:

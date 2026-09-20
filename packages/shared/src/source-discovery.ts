@@ -238,7 +238,9 @@ export const sourceDiscoverySearchResponseSchema = z.object({
     cacheMs: z.number().nonnegative().optional(),
     catalogMs: z.number().nonnegative().optional(),
     exaMs: z.number().nonnegative().optional(),
+    providerMs: z.number().nonnegative().optional(),
     rankMs: z.number().nonnegative().optional(),
+    persistMs: z.number().nonnegative().optional(),
     totalMs: z.number().nonnegative().optional(),
   }).optional(),
 });

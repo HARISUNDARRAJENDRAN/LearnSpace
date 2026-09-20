@@ -43,20 +43,27 @@ test(
     const youtubeIds = [0, 1, 2].map(() => randomUUID().replaceAll("-", "").slice(0, 11));
     const failedRunId = randomUUID();
     const failedJobId = randomUUID();
+    const leaseRunId = randomUUID();
+    const leaseJobId = randomUUID();
     const instantRunId = randomUUID();
     const instantOutboxId = randomUUID();
     const instantTraceId = `instant-source-picker-${randomUUID()}`;
     const instantYoutubeId = "zY7xW5vU3tS";
-    let failAgent = false;
+    let reportAgentFailure = false;
     const sourceResourceIds: string[] = [];
     let seenRequest: Record<string, unknown> | null = null;
     const agent = createServer(async (request, response) => {
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       seenRequest = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-      if (failAgent) {
-        response.writeHead(500);
-        response.end();
+      if (reportAgentFailure) {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          trace_id: traceId,
+          youtube: [],
+          arxiv: [],
+          failures: ["youtube:TimeoutError"],
+        }));
         return;
       }
       response.writeHead(200, { "content-type": "application/json" });
@@ -135,12 +142,19 @@ test(
       assert.equal(sourceJob?.source_picker_run_id, runId);
       assert.equal(sourceJob?.priority, 10);
 
-      const resources = await migrator<{ id: string; title: string }[]>`
-        SELECT id, title FROM catalog.resources
-        WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL
+      const resources = await migrator<{ id: string; title: string; owner_user_id: string | null; visibility: string }[]>`
+        SELECT id, title, owner_user_id, visibility FROM catalog.resources
+        WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id = ${userId}
       `;
       sourceResourceIds.push(...resources.map((resource) => resource.id));
       assert.deepEqual(new Set(resources.map((resource) => resource.title)), new Set(["Python for Beginners - Full Course", "Learn Python Variables", "Beginner Python Projects"]));
+      assert.ok(resources.every((resource) => resource.owner_user_id === userId && resource.visibility === "private"));
+      const publicResources = await migrator<{ id: string }[]>`
+        SELECT id
+        FROM catalog.resources
+        WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL
+      `;
+      assert.equal(publicResources.length, 0);
 
       await migrator`
         INSERT INTO discovery.recommendation_runs
@@ -188,7 +202,7 @@ test(
       `;
       assert.deepEqual(instantJob, { status: "done", job_type: "discovery.persist_candidates" });
       const [instantResource] = await migrator<{ id: string }[]>`
-        SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id = ${instantYoutubeId} AND owner_user_id IS NULL
+        SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id = ${instantYoutubeId} AND owner_user_id = ${userId}
       `;
       if (instantResource) sourceResourceIds.push(instantResource.id);
 
@@ -204,8 +218,8 @@ test(
         VALUES
           (${failedJobId}, 'discovery', 'discovery.refresh_concept', ${migrator.json({ concept_ids: [conceptId], concept_names: ["Python"], query_text: "A failing source search", source_kind: "video", source_picker_run_id: failedRunId, audit_user_id: userId, force_refresh: true })}, 'pending', 10, 1, ${`discovery:source-picker:${failedRunId}`}, ${`failed-${failedRunId}`}, ${`failed-${failedRunId}`})
       `;
-      failAgent = true;
-      await assert.rejects(() => runDiscoveryWorker(), /discovery agent returned 500/);
+      reportAgentFailure = true;
+      await assert.rejects(() => runDiscoveryWorker(), /discovery agent reported no candidates/);
       const [failedRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
         SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${failedRunId}
       `;
@@ -213,10 +227,31 @@ test(
       assert.equal(failedRun?.context_snapshot.refreshStatus, "failed");
       const [failedJob] = await migrator<{ status: string }[]>`SELECT status FROM ops.jobs WHERE id = ${failedJobId}`;
       assert.equal(failedJob?.status, "dead");
+
+      await migrator`
+        INSERT INTO discovery.recommendation_runs
+          (id, user_id, surface, query_text, strategy_version, feature_version, context_snapshot, status)
+        VALUES
+          (${leaseRunId}, ${userId}, 'source_picker', 'Lease expiry search', 'test', 'test', ${migrator.json({ mode: "learn", rankingIntent: "best_match", refreshStatus: "requested" })}, 'running')
+      `;
+      await migrator`
+        INSERT INTO ops.jobs
+          (id, queue, job_type, payload, status, attempts, max_attempts, lease_expires_at, dedup_key, idempotency_key, trace_id)
+        VALUES
+          (${leaseJobId}, 'discovery', 'discovery.refresh_concept', ${migrator.json({ query_text: "Lease expiry search", source_kind: "video", source_picker_run_id: leaseRunId })}, 'running', 1, 1, now() - interval '1 minute', ${`discovery:source-picker:${leaseRunId}`}, ${`lease-${leaseRunId}`}, ${`lease-${leaseRunId}`})
+      `;
+      const reclaimed = await runDiscoveryWorker();
+      assert.equal(reclaimed.status, "idle");
+      const [reclaimedRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
+        SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${leaseRunId}
+      `;
+      assert.equal(reclaimedRun?.status, "failed");
+      assert.equal(reclaimedRun?.context_snapshot.refreshStatus, "failed");
     } finally {
       restoreEnv("DISCOVERY_AGENT_URL", previousAgentUrl);
       restoreEnv("INTERNAL_SERVICE_TOKEN", previousToken);
       await close(agent);
+      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
       if (sourceResourceIds.length > 0) {
         await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${migrator(sourceResourceIds)}`;
         await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(sourceResourceIds)}`;
@@ -226,14 +261,9 @@ test(
         await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL)`;
         await migrator`DELETE FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL`;
       }
-      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}) OR id = ${failedJobId} OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`})`;
+      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}, ${`lease-${leaseRunId}`}) OR id IN (${failedJobId}, ${leaseJobId}) OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`}, ${`discovery:source-picker:${leaseRunId}`})`;
       await migrator`DELETE FROM ops.outbox_events WHERE id IN (${outboxId}, ${instantOutboxId})`;
-      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
-      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${failedRunId}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${runId}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${failedRunId}`;
-      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${instantRunId}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE id = ${instantRunId}`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
       await migrator`DELETE FROM knowledge.concepts WHERE id = ${conceptId}`;
       await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
       await migrator.end({ timeout: 5 });

@@ -88,9 +88,12 @@ function sourceCandidate(candidate: RankedResource, runId: string | null, mode: 
 
 function selectSourceResults(ranked: RankedResource[]): RankedResource[] {
   return [...ranked]
-    .sort((left, right) => left.candidateRank - right.candidateRank || right.score - left.score || left.resource.id.localeCompare(right.resource.id))
-    .slice(0, sourceResultLimit)
-    .map((candidate, index) => ({ ...candidate, candidateRank: index + 1, finalRank: index + 1 }));
+    .filter((candidate) => candidate.finalRank !== null)
+    .sort((left, right) => (left.finalRank ?? Number.MAX_SAFE_INTEGER) - (right.finalRank ?? Number.MAX_SAFE_INTEGER)
+      || left.candidateRank - right.candidateRank
+      || right.score - left.score
+      || left.resource.id.localeCompare(right.resource.id))
+    .slice(0, sourceResultLimit);
 }
 
 function candidateDiagnostics(run: typeof recommendationRuns.$inferSelect, resourceId: string, queryRelevance?: number | null): CandidateDiagnostics {
@@ -151,97 +154,55 @@ async function findReusableRun(tx: Transaction, userId: string, mode: SourceDisc
     eq(recommendationRuns.userId, userId),
     eq(recommendationRuns.surface, "source_picker"),
     eq(recommendationRuns.queryText, query),
-    eq(recommendationRuns.status, "completed"),
+    sql`(${recommendationRuns.status} = 'running' OR ${recommendationRuns.status} = 'completed')`,
     gte(recommendationRuns.createdAt, new Date(Date.now() - sourceRunReuseMs)),
     sql`${recommendationRuns.contextSnapshot}->>'mode' = ${mode}`,
     sql`${recommendationRuns.contextSnapshot}->>'rankingIntent' = ${rankingIntent}`,
-    sql`${recommendationRuns.contextSnapshot}->>'refreshStatus' IN ('not_needed', 'done', 'complete')`,
+    sql`(${recommendationRuns.status} = 'running' OR ${recommendationRuns.contextSnapshot}->>'refreshStatus' IN ('not_needed', 'done', 'complete'))`,
   )).orderBy(desc(recommendationRuns.createdAt)).limit(1);
   return rows[0] ?? null;
 }
 
-async function finalizeRefreshRun(tx: Transaction, userId: string, run: typeof recommendationRuns.$inferSelect): Promise<typeof recommendationRuns.$inferSelect> {
-  const profileLoad = await loadDiscoveryProfile(tx, userId);
-  const candidateRows = await tx.select({ resourceId: recommendationCandidates.resourceId }).from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
+async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect, userId: string): Promise<SourceDiscoverySearchResponse> {
+  const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(sourceResultLimit);
   const refreshedResourceIds = arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string");
-  const refreshedResourceSet = new Set(refreshedResourceIds);
-  const initialResourceIds = candidateRows.map((row) => row.resourceId);
-  const poolResourceIds = [...new Set([...refreshedResourceIds, ...initialResourceIds])];
+  const poolResourceIds = [...new Set([...candidateRows.map((row) => row.resourceId), ...refreshedResourceIds])];
+  const mode = runMode(run);
+  if (run.status === "failed") throw sourceError("DISCOVERY_FAILED", mode === "research" ? "We couldn't finish finding relevant papers." : "We couldn't finish finding strong learning videos.", 502);
+  const ephemeral = ephemeralCandidates(run);
+  if (poolResourceIds.length === 0) {
+    return {
+      status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
+      runId: run.id,
+      mode,
+      query: run.queryText ?? "",
+      candidates: ephemeral,
+    };
+  }
+  const profileLoad = await loadDiscoveryProfile(tx, userId);
   const ranked = selectSourceResults(rankSourceResources(
     await loadDiscoveryResources(tx, poolResourceIds, userId),
     profileLoad.profile,
     run.queryText ?? "",
-    runMode(run),
+    mode,
     typeof run.contextSnapshot.rankingIntent === "string" ? run.contextSnapshot.rankingIntent : "best_match",
     new Date(),
     typeof run.contextSnapshot.canonicalConceptId === "string" ? run.contextSnapshot.canonicalConceptId : null,
   ));
-  await tx.delete(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
-  if (ranked.length > 0) {
-    await tx.insert(recommendationCandidates).values(ranked.map((candidate) => ({
-      recommendationRunId: run.id,
-      resourceId: candidate.resource.id,
-      candidateRank: candidate.candidateRank,
-      finalRank: candidate.finalRank,
-      score: candidate.score,
-      semanticRelevance: candidate.semanticRelevance,
-      qualityScore: candidate.qualityScore,
-      learnerAffinity: candidate.learnerAffinity,
-      masteryFit: candidate.masteryFit,
-      coverageScore: candidate.coverageScore,
-      freshnessScore: candidate.freshnessScore,
-      diversityPenalty: candidate.diversityPenalty,
-      reasonCodes: candidate.reasonCodes,
-      selected: true,
-    })));
-  }
-  const candidateDiagnostics = ranked.map((candidate) => ({
-    resourceId: candidate.resource.id,
-    sourceOrigin: refreshedResourceSet.has(candidate.resource.id) ? "external_refresh" : "catalog",
-    queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
-    qualificationReason: candidate.qualificationReason ?? null,
-  }));
-  const [completed] = await tx.update(recommendationRuns).set({ status: "completed", completedAt: run.completedAt ?? new Date(), contextSnapshot: { ...run.contextSnapshot, refreshStatus: "complete", refreshFinalized: true, candidateDiagnostics } }).where(eq(recommendationRuns.id, run.id)).returning();
-  if (!completed) throw new Error("Source discovery refresh could not be finalized");
-  return completed;
-}
-
-async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect, userId: string): Promise<SourceDiscoverySearchResponse> {
-  if (run.contextSnapshot?.refreshStatus === "done" && run.status !== "failed") {
-    return responseForRun(tx, await finalizeRefreshRun(tx, userId, run), userId);
-  }
-  const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(sourceResultLimit);
-  const resourcesForRun = await loadDiscoveryResources(tx, candidateRows.map((row) => row.resourceId), userId);
-  const byId = new Map(resourcesForRun.map((resource) => [resource.id, resource]));
-  const mode = runMode(run);
-  if (run.status === "failed") throw sourceError("DISCOVERY_FAILED", mode === "research" ? "We couldn't finish finding relevant papers." : "We couldn't finish finding strong learning videos.", 502);
-  const persistedCandidates = candidateRows.flatMap((row) => {
-    const resource = byId.get(row.resourceId);
-    if (!resource || row.finalRank === null) return [];
-    const diagnostics = candidateDiagnostics(run, row.resourceId, row.semanticRelevance);
-    return [sourceCandidate({
-      resource,
-      candidateRank: row.candidateRank,
-      finalRank: row.finalRank,
-      score: row.score,
-      semanticRelevance: row.semanticRelevance ?? 0,
-      qualityScore: row.qualityScore ?? 0.5,
-      learnerAffinity: row.learnerAffinity ?? 0,
-      masteryFit: row.masteryFit,
-      coverageScore: row.coverageScore ?? 0,
-      freshnessScore: row.freshnessScore ?? 0.5,
-      diversityPenalty: row.diversityPenalty ?? 0,
-      reasonCodes: Array.isArray(row.reasonCodes) ? row.reasonCodes.filter((code): code is string => typeof code === "string") : [],
-      ...(typeof diagnostics.queryRelevance === "number" ? { queryRelevance: diagnostics.queryRelevance } : {}),
-      ...(diagnostics.qualificationReason ? { qualificationReason: diagnostics.qualificationReason } : {}),
-    }, run.id, mode, diagnostics)];
+  const persistedCandidates = ranked.map((candidate) => {
+    const diagnostics = candidateDiagnostics(run, candidate.resource.id, candidate.queryRelevance ?? candidate.semanticRelevance);
+    return sourceCandidate(candidate, run.id, mode, diagnostics);
   });
-  const candidates = [...persistedCandidates, ...ephemeralCandidates(run)]
+  const candidates = [...persistedCandidates, ...ephemeral]
     .sort((left, right) => (left.finalRank ?? Number.MAX_SAFE_INTEGER) - (right.finalRank ?? Number.MAX_SAFE_INTEGER) || left.candidateRank - right.candidateRank)
-    .filter((candidate, index, all) => all.findIndex((other) => (other.resourceId ?? other.canonicalUrl ?? other.title) === (candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title)) === index)
+    .filter((candidate, index, all) => all.findIndex((other) => (
+      candidate.provider && candidate.externalId && other.provider === candidate.provider && other.externalId === candidate.externalId
+        ? true
+        : (other.resourceId ?? other.canonicalUrl ?? other.title) === (candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title)
+    )) === index)
     .slice(0, sourceResultLimit);
   return {
-    status: candidates.length > 0 ? "completed" : run.status === "running" || run.status === "queued" ? "searching" : "completed",
+    status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
     runId: run.id,
     mode,
     query: run.queryText ?? "",
@@ -249,7 +210,7 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
   };
 }
 
-async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mode: SourceDiscoveryMode, query: string, concept: { id: string; name: string } | null, correlationId: string): Promise<void> {
+async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mode: SourceDiscoveryMode, query: string, concept: { id: string; name: string } | null, rankingIntent: SourceRankingIntent, correlationId: string): Promise<void> {
   await tx.insert(outboxEvents).values({
     aggregateType: "resource",
     aggregateId: runId,
@@ -262,6 +223,7 @@ async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mo
       conceptNames: concept ? [concept.name] : [],
       queryText: query,
       sourceKind: mode === "learn" ? "video" : "paper",
+      rankingIntent,
       sourcePickerRunId: runId,
       source: "source-picker",
       refreshReason: "source_picker",
@@ -287,10 +249,6 @@ function parseDateValue(value: string | null | undefined): Date | null {
   if (!value) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
-}
-
-function metadataString(metadata: Record<string, unknown>, key: string): string | null {
-  return typeof metadata[key] === "string" && metadata[key] ? metadata[key] as string : null;
 }
 
 function dedupeExternalResources(resources: DiscoveryResource[]): DiscoveryResource[] {
@@ -371,8 +329,8 @@ function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode):
 }
 
 function instantBudgetMs(): number {
-  const value = Number(process.env.SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS ?? 1_400);
-  return Number.isFinite(value) ? Math.min(1_500, Math.max(500, value)) : 1_400;
+  const value = Number(process.env.SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS ?? 450);
+  return Number.isFinite(value) ? Math.min(450, Math.max(100, value)) : 450;
 }
 
 function instantPoolKey(mode: SourceDiscoveryMode, rankingIntent: SourceRankingIntent, query: string): string {
@@ -439,40 +397,6 @@ async function loadExternalPool(mode: SourceDiscoveryMode, query: string, rankin
   return { ...result, cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs };
 }
 
-function persistenceBatch(resourcesForPersistence: DiscoveryResource[], mode: SourceDiscoveryMode, conceptId: string | null): Record<string, unknown> {
-  const matchedConceptIds = conceptId ? [conceptId] : [];
-  const youtube = mode === "learn" ? resourcesForPersistence.map((resource) => ({
-    youtube_id: resource.externalId,
-    canonical_url: resource.canonicalUrl,
-    title: resource.title,
-    channel: resource.channelTitle,
-    published_at: resource.publishedAt?.toISOString() ?? null,
-    duration_ms: resource.durationMs,
-    language: resource.language,
-    matched_concept_ids: matchedConceptIds,
-    learning_format: metadataString(resource.metadata, "learningFormat"),
-    estimated_level: metadataString(resource.metadata, "estimatedLevel"),
-    has_implementation: typeof resource.metadata.hasImplementation === "boolean" ? resource.metadata.hasImplementation : null,
-    evidence: Array.isArray(resource.metadata.evidence) ? resource.metadata.evidence : [],
-    confidence: Number(resource.metadata.sourceConfidence ?? resource.qualityScore ?? 0.6),
-  })) : [];
-  const arxiv = mode === "research" ? resourcesForPersistence.map((resource) => ({
-    arxiv_id: resource.externalId,
-    canonical_url: resource.canonicalUrl,
-    title: resource.title,
-    authors: resource.authors ?? [],
-    abstract: resource.paperAbstract,
-    published_at: resource.publicationDate?.toISOString() ?? null,
-    categories: [],
-    matched_concept_ids: matchedConceptIds,
-    estimated_level: metadataString(resource.metadata, "estimatedLevel"),
-    paper_class: metadataString(resource.metadata, "paperClass") === "foundational" ? "foundational" : "current",
-    evidence: Array.isArray(resource.metadata.evidence) ? resource.metadata.evidence : [],
-    confidence: Number(resource.metadata.sourceConfidence ?? resource.qualityScore ?? 0.6),
-  })) : [];
-  return { trace_id: `source-picker-${Date.now()}`, youtube, arxiv };
-}
-
 async function persistInteractiveRun(
   userId: string,
   input: SourceDiscoverySearchRequest,
@@ -486,8 +410,8 @@ async function persistInteractiveRun(
 ): Promise<typeof recommendationRuns.$inferSelect> {
   const qualifiedExternal = externalResources.filter((resource) => sourceQuerySignals(resource, query, concept?.id).qualified).slice(0, sourceResultLimit);
   const shouldRefresh = catalogQualifiedCount + qualifiedExternal.length < sourceCoverageMinimum;
-  const refreshStatus = qualifiedExternal.length > 0 ? "pending_persistence" : shouldRefresh ? "requested" : "not_needed";
-  const status = ranked.length === 0 && shouldRefresh && qualifiedExternal.length === 0 ? "running" : "completed";
+  const refreshStatus = shouldRefresh ? "requested" : "not_needed";
+  const status = shouldRefresh ? "running" : "completed";
   return withUserTransaction(userId, async (tx) => {
     const [run] = await tx.insert(recommendationRuns).values({
       userId,
@@ -549,24 +473,8 @@ async function persistInteractiveRun(
       }).where(eq(recommendationRuns.id, run.id)).returning();
       if (withEphemeral) persistedRun = withEphemeral;
     }
-    if (qualifiedExternal.length > 0) {
-      await tx.insert(outboxEvents).values({
-        aggregateType: "recommendation_run",
-        aggregateId: run.id,
-        eventType: "discovery.candidates_discovered",
-        schemaVersion: 1,
-        userId,
-        correlationId,
-        payload: {
-          sourcePickerRunId: run.id,
-          queryText: query,
-          sourceKind: input.mode === "learn" ? "video" : "paper",
-          conceptIds: concept ? [concept.id] : [],
-          candidateBatch: persistenceBatch(qualifiedExternal, input.mode, concept?.id ?? null),
-        },
-      });
-    } else if (shouldRefresh) {
-      await enqueueRefresh(tx, userId, run.id, input.mode, query, concept, correlationId);
+    if (shouldRefresh) {
+      await enqueueRefresh(tx, userId, run.id, input.mode, query, concept, input.rankingIntent, correlationId);
     }
     return persistedRun;
   });
@@ -580,7 +488,7 @@ function responseFromFastRun(
   externalIds: Set<string>,
   retrieval: "memory" | "redis" | "catalog" | "live_web" | "blended",
   cacheState: "fresh" | "stale" | "miss",
-  timings: { cacheMs: number; catalogMs: number; exaMs: number; rankMs: number; totalMs: number },
+  timings: { cacheMs: number; catalogMs: number; exaMs: number; providerMs: number; rankMs: number; persistMs: number; totalMs: number },
 ): SourceDiscoverySearchResponse {
   const diagnostics = new Map(ranked.map((candidate) => [candidate.resource.id, {
     sourceOrigin: externalIds.has(candidate.resource.id) ? "external_refresh" as const : "catalog" as const,
@@ -589,7 +497,7 @@ function responseFromFastRun(
   }]));
   const selected = selectSourceResults(ranked);
   return {
-    status: selected.length > 0 ? "completed" : run.status === "running" ? "searching" : "completed",
+    status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
     runId: run.id,
     mode,
     query,
@@ -604,9 +512,9 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   const query = normalizeQuery(input.query);
   const reusable = await withUserTransaction(userId, async (tx) => {
     const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
-    if (!existing || existing.status !== "completed") return null;
+    if (!existing || (existing.status !== "completed" && existing.status !== "running")) return null;
     const response = await responseForRun(tx, existing, userId);
-    return response.candidates.length > 0 ? response : null;
+    return existing.status === "running" || response.candidates.length > 0 ? response : null;
   });
   if (reusable) return reusable;
   const started = performance.now();
@@ -636,21 +544,22 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   const ranked = selectSourceResults(rankSourceResources(allResources, local.profile, query, input.mode, input.rankingIntent, new Date(), local.concept?.id));
   const rankMs = performance.now() - rankStarted;
   const externalIds = new Set(external.resources.map((resource) => resource.id));
-  const run = await persistInteractiveRun(userId, input, query, local.concept, ranked, catalogQualifiedCount, external.resources, input.correlationId, {
+  const persistStarted = performance.now();
+  const baseTimings = {
     cacheMs: Number(external.cacheMs.toFixed(2)),
     catalogMs: Number(local.catalogMs.toFixed(2)),
     exaMs: Number(external.exaMs.toFixed(2)),
+    providerMs: Number(external.exaMs.toFixed(2)),
     rankMs: Number(rankMs.toFixed(2)),
-    totalMs: Number((performance.now() - started).toFixed(2)),
-  });
+  };
+  const run = await persistInteractiveRun(userId, input, query, local.concept, ranked, catalogQualifiedCount, external.resources, input.correlationId, baseTimings);
+  const persistMs = Number((performance.now() - persistStarted).toFixed(2));
   const retrieval = external.resources.length > 0
     ? local.resources.length > 0 ? "blended" : external.cacheHit ? external.cacheTier ?? "live_web" : "live_web"
     : "catalog";
   return responseFromFastRun(run, input.mode, query, ranked, externalIds, retrieval, external.cacheState, {
-    cacheMs: Number(external.cacheMs.toFixed(2)),
-    catalogMs: Number(local.catalogMs.toFixed(2)),
-    exaMs: Number(external.exaMs.toFixed(2)),
-    rankMs: Number(rankMs.toFixed(2)),
+    ...baseTimings,
+    persistMs,
     totalMs: Number((performance.now() - started).toFixed(2)),
   });
 }
@@ -669,7 +578,6 @@ export async function searchSources(userId: string, input: SourceDiscoverySearch
 
 export async function getSourceDiscoveryRun(userId: string, runId: string): Promise<SourceDiscoverySearchResponse> {
   return withUserTransaction(userId, async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`source-discovery-run:${userId}:${runId}`}, 0))`);
     const rows = await tx.select().from(recommendationRuns).where(and(eq(recommendationRuns.id, runId), eq(recommendationRuns.userId, userId), eq(recommendationRuns.surface, "source_picker"))).limit(1);
     const run = rows[0];
     if (!run) throw sourceError("RUN_NOT_FOUND", "That discovery search is no longer available.", 404);

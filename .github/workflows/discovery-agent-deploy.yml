@@ -25,10 +25,10 @@ jobs:
       EXA_API_KEY_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
       INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
@@ -38,3 +38,17 @@ jobs:
 
       - name: Deploy Lambda container
         run: bash infra/aws/discovery-agent/deploy.sh
+
+      - name: Verify deployed agent compatibility
+        env:
+          EXPECTED_BUILD_SHA: ${{ inputs.image_tag || github.sha }}
+        run: |
+          agent_url="$(aws cloudformation describe-stacks --stack-name "$AWS_STACK_NAME" --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`AgentUrl`].OutputValue | [0]' --output text)"
+          token="$(aws secretsmanager get-secret-value --secret-id "$INTERNAL_SERVICE_TOKEN_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text | jq -r '.INTERNAL_SERVICE_TOKEN')"
+          version="$(curl --fail --silent --show-error --max-time 10 -H "x-internal-service-token: $token" "${agent_url%/}/internal/v1/discovery/version")"
+          echo "AGENT_DEPLOYED build=$EXPECTED_BUILD_SHA" >> "$GITHUB_STEP_SUMMARY"
+          if ! echo "$version" | jq -e --arg sha "$EXPECTED_BUILD_SHA" '.buildSha == $sha and .protocolVersion == "source-discovery-v3" and .schemaVersion == "1"' > /dev/null; then
+            echo "AGENT_INCOMPATIBLE — deployed discovery agent failed the build/protocol/schema check." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "AGENT_VERIFIED build=$EXPECTED_BUILD_SHA protocol=source-discovery-v3 schema=1" >> "$GITHUB_STEP_SUMMARY"

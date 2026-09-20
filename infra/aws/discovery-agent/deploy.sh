@@ -53,14 +53,15 @@ aws cloudformation deploy \
     "FunctionName=${function_name}" \
     "ImageUri=${image_uri}" \
     "EnvironmentName=${stage}" \
+    "BuildSha=${image_tag}" \
     "ExaApiKeySecretArn=${EXA_API_KEY_SECRET_ARN}" \
     "InternalServiceTokenSecretArn=${INTERNAL_SERVICE_TOKEN_SECRET_ARN}" \
   --no-fail-on-empty-changeset
 
-function_url="$(aws cloudformation describe-stacks \
+agent_url="$(aws cloudformation describe-stacks \
   --stack-name "$stack_name" \
   --region "$region" \
-  --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue | [0]' \
+  --query 'Stacks[0].Outputs[?OutputKey==`AgentUrl`].OutputValue | [0]' \
   --output text)"
 
-printf 'Discovery agent deployed: %s\n' "$function_url"
+printf 'Discovery agent deployed behind API Gateway: %s\n' "$agent_url"
