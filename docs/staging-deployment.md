@@ -49,6 +49,13 @@ Configure these GitHub Actions secrets:
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
 - `VERCEL_TOKEN`
+
+The main workflow deploys Vercel independently after the foundation,
+database, and Python checks pass. AWS discovery deployment is a separate
+release job, so missing AWS credentials no longer block the web deployment.
+
+To deploy the discovery agent from main as well, also configure:
+
 - `AWS_DISCOVERY_AGENT_ROLE_ARN`
 - `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`
 - `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`
@@ -83,11 +90,12 @@ pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educ
 ```
 
 The discovery agent is the AWS Lambda function
-`learnspace-discovery-agent-staging` in `us-east-1`. Main-branch CI deploys the
-tested agent image and verifies the instant route before deploying Vercel, so
-the web and agent cannot drift between commits. The manual workflow remains
-available for recovery. The CloudFormation stack output is the current Function
-URL. The refresh and instant routes remain protected by
+`learnspace-discovery-agent-staging` in `us-east-1`. When the AWS OIDC secrets
+are configured, main-branch CI deploys and verifies the tested agent image in
+its own release job. The Vercel release remains independent so an AWS
+credential or OIDC outage does not prevent a web deployment. The manual
+workflow remains available for recovery. The CloudFormation stack output is
+the current Function URL. The refresh and instant routes remain protected by
 `INTERNAL_SERVICE_TOKEN`. The discovery worker uses the same worker connection
 for catalogue writes and durable job state. Run it outside Vercel with
 `pnpm discovery:worker` and set `DISCOVERY_AGENT_URL` to the stack output plus

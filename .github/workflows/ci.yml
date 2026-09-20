@@ -95,7 +95,7 @@ jobs:
       - run: uv run pyright
       - run: uv run pytest
 
-  deploy:
+  deploy-agent:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
     needs: [foundation, database, python]
     runs-on: ubuntu-latest
@@ -124,21 +124,36 @@ jobs:
       DB_LOCK_TIMEOUT_MS: "500"
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11.24.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.15.0
-          cache: pnpm
+      - name: Check AWS deployment configuration
+        id: aws_config
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
+          AWS_EXA_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
+          AWS_INTERNAL_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
+        run: |
+          missing=0
+          for variable in AWS_ROLE_ARN AWS_EXA_SECRET_ARN AWS_INTERNAL_TOKEN_SECRET_ARN; do
+            if [ -z "${!variable}" ]; then
+              echo "::warning title=AWS discovery deployment skipped::$variable is not configured. Vercel deployment will continue; run the manual discovery-agent workflow after configuring GitHub OIDC."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Configure AWS credentials
+        if: steps.aws_config.outputs.ready == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
       - name: Deploy the tested discovery agent
+        if: steps.aws_config.outputs.ready == 'true'
         run: bash infra/aws/discovery-agent/deploy.sh
       - name: Verify the instant discovery route
+        if: steps.aws_config.outputs.ready == 'true'
         run: |
           function_url="$(aws cloudformation describe-stacks --stack-name "$AWS_STACK_NAME" --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue | [0]' --output text)"
           token="$(aws secretsmanager get-secret-value --secret-id "$INTERNAL_SERVICE_TOKEN_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text | jq -r '.INTERNAL_SERVICE_TOKEN')"
@@ -148,6 +163,32 @@ jobs:
             -d "{\"query_text\":\"deployment smoke test\",\"source_kind\":\"video\",\"ranking_intent\":\"best_match\",\"limit\":1,\"trace_id\":\"deploy-$GITHUB_SHA\"}" \
             "${function_url%/}/internal/v1/discovery/instant" \
             | jq -e '(.youtube | type == "array") and (.arxiv | type == "array") and (.failures | type == "array")' > /dev/null
+
+  deploy-vercel:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
+    needs: [foundation, database, python]
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      DB_POOL_MAX: "1"
+      DB_CONNECT_TIMEOUT_SECONDS: "10"
+      DB_IDLE_TIMEOUT_SECONDS: "20"
+      DB_MAX_LIFETIME_SECONDS: "300"
+      DB_PREPARED_STATEMENTS: "false"
+      DB_STATEMENT_TIMEOUT_MS: "3000"
+      DB_LOCK_TIMEOUT_MS: "500"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.15.0
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run db:check
       - run: pnpm run db:migrate
