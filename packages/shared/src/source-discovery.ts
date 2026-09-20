@@ -2,6 +2,8 @@ import { z } from "zod";
 import { isAllowedYoutubeHost, youtubeIdFromUrl } from "./discovery.js";
 
 export const SOURCE_MODES = ["learn", "research"] as const;
+export const SOURCE_DISCOVERY_MIN_RESULTS = 3;
+export const SOURCE_DISCOVERY_MAX_RESULTS = 30;
 export const sourceDiscoveryModeSchema = z.enum(SOURCE_MODES);
 export type SourceDiscoveryMode = z.infer<typeof sourceDiscoveryModeSchema>;
 
@@ -194,8 +196,8 @@ export const sourceDiscoveryAgentArxivCandidateSchema = z.object({
 
 export const sourceDiscoveryInstantBatchSchema = z.object({
   trace_id: z.string(),
-  youtube: z.array(sourceDiscoveryAgentYoutubeCandidateSchema).default([]),
-  arxiv: z.array(sourceDiscoveryAgentArxivCandidateSchema).default([]),
+  youtube: z.array(sourceDiscoveryAgentYoutubeCandidateSchema).max(SOURCE_DISCOVERY_MAX_RESULTS).default([]),
+  arxiv: z.array(sourceDiscoveryAgentArxivCandidateSchema).max(SOURCE_DISCOVERY_MAX_RESULTS).default([]),
   cache_hit: z.boolean().default(false),
   failures: z.array(z.string()).default([]),
   provider_calls: z.number().int().nonnegative().default(0),
@@ -228,7 +230,7 @@ export const sourceDiscoverySearchResponseSchema = z.object({
   runId: z.string().uuid().nullable(),
   mode: sourceDiscoveryModeSchema,
   query: z.string(),
-  candidates: z.array(sourceDiscoveryCandidateSchema),
+  candidates: z.array(sourceDiscoveryCandidateSchema).max(SOURCE_DISCOVERY_MAX_RESULTS),
   preview: sourcePreviewSchema.optional(),
   retrieval: z.enum(["memory", "redis", "catalog", "live_web", "blended"]).optional(),
   cacheState: z.enum(["fresh", "stale", "miss"]).optional(),

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { SOURCE_DISCOVERY_MAX_RESULTS } from "@learnspace/shared";
 import type { DiscoveryResource } from "../discovery/ranker";
 import { getRedisValue, setRedisValue } from "../discovery/cache";
 
@@ -18,7 +19,7 @@ function cacheKey(mode: "learn" | "research", rankingIntent: string, query: stri
   const fingerprint = createHash("sha256")
     .update(`${mode}\n${rankingIntent}\n${query.trim().replace(/\s+/g, " ").toLowerCase()}`)
     .digest("hex");
-  return `ls:v1:source-discovery:candidates:${mode}:${rankingIntent}:${fingerprint}`;
+  return `ls:v2:source-discovery:candidates:${mode}:${rankingIntent}:${fingerprint}`;
 }
 
 function decode(value: string): StoredPool | null {
@@ -35,7 +36,7 @@ function decode(value: string): StoredPool | null {
           publishedAt: value.publishedAt ? new Date(value.publishedAt) : null,
           publicationDate: value.publicationDate ? new Date(value.publicationDate) : null,
         };
-      });
+      }).slice(0, SOURCE_DISCOVERY_MAX_RESULTS);
     return { resources, freshUntil: body.freshUntil, staleUntil: body.staleUntil };
   } catch {
     return null;
@@ -79,7 +80,7 @@ export async function setSourceCandidatePool(
   resources: DiscoveryResource[],
 ): Promise<void> {
   const now = Date.now();
-  const pool: StoredPool = { resources, freshUntil: now + freshTtlMs, staleUntil: now + staleTtlMs };
+  const pool: StoredPool = { resources: resources.slice(0, SOURCE_DISCOVERY_MAX_RESULTS), freshUntil: now + freshTtlMs, staleUntil: now + staleTtlMs };
   const key = cacheKey(mode, rankingIntent, query);
   remember(key, pool);
   try {

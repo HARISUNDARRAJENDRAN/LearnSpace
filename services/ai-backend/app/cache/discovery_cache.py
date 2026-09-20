@@ -9,6 +9,7 @@ ARXIV_TTL = timedelta(hours=24)
 NEGATIVE_TTL = timedelta(minutes=15)
 STALE_TTL = timedelta(days=7)
 TOOL_VERSION = "discovery-tools-v1"
+INSTANT_CACHE_VERSION = "v2"
 
 
 def _hash(value: str) -> str:
@@ -36,7 +37,10 @@ def query_cache_identity(query: str) -> str:
 
 def instant_cache_key(resource_kind: str, query: str, ranking_intent: str) -> str:
     normalized = " ".join(query.split()).lower()
-    return f"ls:v1:discovery:instant:{resource_kind}:{ranking_intent}:{_hash(normalized)}"
+    return (
+        f"ls:{INSTANT_CACHE_VERSION}:discovery:instant:"
+        f"{resource_kind}:{ranking_intent}:{_hash(normalized)}"
+    )
 
 
 @dataclass

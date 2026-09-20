@@ -423,7 +423,7 @@ export function rankDiscoveryResources(resources: DiscoveryResource[], profile: 
 }
 
 const SOURCE_QUERY_STOP_WORDS = new Set([
-  "a", "about", "an", "and", "are", "can", "does", "for", "from", "how", "in", "is", "of", "on", "or", "the", "to", "what", "with",
+  "a", "about", "an", "and", "are", "by", "can", "does", "for", "from", "how", "in", "is", "of", "on", "or", "the", "to", "what", "with",
   "best", "course", "explain", "explained", "explanation", "guide", "learn", "learning", "lesson", "paper", "research", "study", "tutorial", "video",
 ]);
 
@@ -470,13 +470,48 @@ function textTokens(value: string): Set<string> {
   return new Set(lexicalTokens(value));
 }
 
+function oneEditAway(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (Math.min(left.length, right.length) < 5 || Math.abs(left.length - right.length) > 1) return false;
+  let leftIndex = 0;
+  let rightIndex = 0;
+  let edits = 0;
+  while (leftIndex < left.length && rightIndex < right.length) {
+    if (left[leftIndex] === right[rightIndex]) {
+      leftIndex += 1;
+      rightIndex += 1;
+      continue;
+    }
+    edits += 1;
+    if (edits > 1) return false;
+    if (left.length > right.length) leftIndex += 1;
+    else if (right.length > left.length) rightIndex += 1;
+    else {
+      leftIndex += 1;
+      rightIndex += 1;
+    }
+  }
+  return edits + (left.length - leftIndex) + (right.length - rightIndex) <= 1;
+}
+
+function tokenMatches(queryToken: string, candidateToken: string): boolean {
+  return oneEditAway(queryToken, candidateToken);
+}
+
+function hasMatchingToken(queryToken: string, values: Set<string>): boolean {
+  for (const value of values) {
+    if (tokenMatches(queryToken, value)) return true;
+  }
+  return false;
+}
+
 function coverage(tokens: string[], values: Set<string>): number {
-  return tokens.length === 0 ? 0 : tokens.filter((token) => values.has(token)).length / tokens.length;
+  return tokens.length === 0 ? 0 : tokens.filter((token) => hasMatchingToken(token, values)).length / tokens.length;
 }
 
 function containsTokenSequence(haystack: string[], needle: string[]): boolean {
   if (needle.length === 0 || needle.length > haystack.length) return false;
-  return haystack.some((_, index) => needle.every((token, offset) => haystack[index + offset] === token));
+  return haystack.some((_, index) => needle.every((token, offset) => tokenMatches(token, haystack[index + offset] ?? "")));
 }
 
 function queryIntent(tokens: string[]): SourceQueryIntent {
@@ -535,7 +570,10 @@ export function sourceQuerySignals(resource: DiscoveryResource, query: string, r
   const intent = queryIntent(tokens);
   const topicTokens = tokens.filter((token) => !SOURCE_QUERY_INTENT_WORDS.has(token));
   const titleTokens = lexicalTokens(resource.title);
-  const descriptionSet = textTokens([resource.description, resource.paperAbstract].filter(Boolean).join(" "));
+  const metadataEvidence = Array.isArray(resource.metadata.evidence)
+    ? resource.metadata.evidence.filter((value): value is string => typeof value === "string").join(" ")
+    : "";
+  const descriptionSet = textTokens([resource.description, resource.paperAbstract, metadataEvidence].filter(Boolean).join(" "));
   const titleSet = new Set(titleTokens);
   const topicTitleCoverage = coverage(topicTokens, titleSet);
   const topicDescriptionCoverage = coverage(topicTokens, descriptionSet);
@@ -544,9 +582,15 @@ export function sourceQuerySignals(resource: DiscoveryResource, query: string, r
   const canonicalRelevance = canonical ? clamp(canonical.relevance) : 0;
   const canonicalTerms = canonical ? textTokens(canonical.name) : new Set<string>();
   const canonicalCoverage = coverage(tokens, canonicalTerms);
-  const nonCanonicalTopicTokens = topicTokens.filter((token) => !canonicalTerms.has(token));
+  const nonCanonicalTopicTokens = topicTokens.filter((token) => !hasMatchingToken(token, canonicalTerms));
   const nonCanonicalTopicCoverage = coverage(nonCanonicalTopicTokens, new Set([...titleSet, ...descriptionSet]));
-  const lexical = phraseMatch ? 1 : clamp(topicTitleCoverage * 0.65 + topicDescriptionCoverage * 0.25);
+  const evidenceSet = new Set([...titleSet, ...descriptionSet]);
+  const topicEvidenceCoverage = coverage(topicTokens, evidenceSet);
+  const titleAnchorMatch = topicTokens.some((token) => token.length >= 3 && hasMatchingToken(token, titleSet));
+  const anchoredEvidenceMatch = titleAnchorMatch && topicEvidenceCoverage >= (topicTokens.length > 1 ? 0.75 : 1);
+  const lexical = phraseMatch
+    ? 1
+    : clamp(Math.max(topicTitleCoverage * 0.65 + topicDescriptionCoverage * 0.25, anchoredEvidenceMatch ? topicEvidenceCoverage * 0.85 : 0));
   const canonicalQueryOnly = topicTokens.length > 0 && nonCanonicalTopicTokens.length === 0;
   const canonicalContextMatch = canonicalRelevance >= 0.5 && canonicalCoverage >= 0.5 && (
     nonCanonicalTopicCoverage >= 0.25
@@ -555,7 +599,7 @@ export function sourceQuerySignals(resource: DiscoveryResource, query: string, r
   const relevance = clamp(Math.max(lexical, canonicalContextMatch ? Math.max(0.55, canonicalRelevance * (0.55 + canonicalCoverage * 0.45)) : 0));
   const matchedIntent = intentFit(resource, intent);
   const intentAdjustedRelevance = intent && matchedIntent < 0.5 ? Math.min(relevance, 0.52) : relevance;
-  const strongLexicalMatch = phraseMatch || topicTitleCoverage >= 0.75 || (topicTokens.length > 1 && topicTitleCoverage >= 0.5 && topicDescriptionCoverage >= 0.5);
+  const strongLexicalMatch = phraseMatch || topicTitleCoverage >= 0.75 || anchoredEvidenceMatch || (topicTokens.length > 1 && topicTitleCoverage >= 0.5 && topicDescriptionCoverage >= 0.5);
   const qualified = intentAdjustedRelevance > SOURCE_QUERY_RELEVANCE_THRESHOLD
     && (strongLexicalMatch || canonicalContextMatch)
     && (!intent || matchedIntent > 0.5);
@@ -635,5 +679,5 @@ export function rankSourceResources(
     };
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1, finalRank: null }));
-  return diversify(ranked, Math.min(5, ranked.length));
+  return diversify(ranked, Math.min(30, ranked.length));
 }

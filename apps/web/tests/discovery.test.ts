@@ -6,7 +6,7 @@ import test from "node:test";
 import { homeFeedCacheKey } from "../lib/discovery/cache";
 import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
 import { scoreYoutubeQuality } from "../lib/discovery/quality";
-import { rankDiscoveryResources, rankSourceResources, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
+import { rankDiscoveryResources, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
 
 const conceptId = "00000000-0000-0000-0000-000000000001";
 const behavioralConceptId = "00000000-0000-0000-0000-000000000002";
@@ -290,4 +290,34 @@ test("source ranking intent reorders qualified results without widening eligibil
   assert.equal(beginner.filter((candidate) => candidate.finalRank !== null)[0]?.resource.id, "beginner-python");
   assert.equal(inDepth.filter((candidate) => candidate.finalRank !== null)[0]?.resource.id, "deep-python");
   assert.equal(beginner.some((candidate) => candidate.resource.id === "python-agent"), false);
+});
+
+test("source relevance tolerates one typo without accepting substring matches", () => {
+  const candidate = { ...resource("reinforcement", "video", []), title: "Reinforcement Learning for Beginners", description: "A gentle introduction to reinforcement learning." };
+  const unrelated = { ...resource("reinforced-concrete", "video", []), title: "Reinforced Concrete Design for Beginners" };
+  const signals = sourceQuerySignals(candidate, "Reinorcement learning for beginners");
+  const ranked = rankSourceResources([candidate, unrelated], profile(), "Reinorcement learning for beginners", "learn", "best_match", now);
+  assert.equal(signals.qualified, true);
+  assert.deepEqual(ranked.filter((item) => item.finalRank !== null).map((item) => item.resource.id), ["reinforcement"]);
+});
+
+test("source relevance combines a distinctive title token with provider evidence", () => {
+  const jev = { ...resource("jev", "video", []), title: "Jev Destroys Claude and GPT on Simple Tasks", description: "Typesafe AI's Jev model handles practical coding tasks." };
+  const otherAi = { ...resource("other-ai", "video", [conceptId]), title: "Meet Pi: The Minimalist, Self-Modifying Coding Agent", description: "A Typesafe AI coding agent walkthrough." };
+  const jevan = { ...resource("jevan", "video", []), title: "How Jevan Fox Closed a Stalled Deal", description: "A Typesafe AI sales story." };
+  const ranked = rankSourceResources([jev, otherAi, jevan], profile(), "Jev by typesafe ai", "learn", "best_match", now);
+  assert.deepEqual(ranked.filter((item) => item.finalRank !== null).map((item) => item.resource.id), ["jev"]);
+  assert.equal(ranked.some((item) => item.resource.id === "other-ai"), false);
+  assert.equal(ranked.some((item) => item.resource.id === "jevan"), false);
+});
+
+test("source ranking returns up to thirty qualified resources without padding", () => {
+  const qualified = Array.from({ length: 30 }, (_, index) => ({
+    ...resource(`python-${index}`, "video", []),
+    title: `Python lesson ${index + 1}`,
+  }));
+  const ranked = rankSourceResources(qualified, profile(), "python", "learn", "best_match", now);
+  const visible = ranked.filter((item) => item.finalRank !== null);
+  assert.equal(visible.length, 30);
+  assert.equal(visible.at(-1)?.finalRank, 30);
 });

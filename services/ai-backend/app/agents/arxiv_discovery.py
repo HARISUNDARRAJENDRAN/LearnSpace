@@ -43,20 +43,26 @@ class ArxivDiscoveryAgent:
         return await self._discover(request, budget, interactive=False)
 
     async def discover_fast(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, limit: int = 30
     ) -> list[ArxivCandidate]:
-        return await self._discover(request, budget, interactive=True)
+        return await self._discover(request, budget, interactive=True, limit=limit)
 
     async def _discover(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget, *, interactive: bool
+        self,
+        request: DiscoveryRefreshRequest,
+        budget: ToolBudget,
+        *,
+        interactive: bool,
+        limit: int = 30,
     ) -> list[ArxivCandidate]:
+        max_results = min(30, max(1, limit)) if interactive else self.max_results
         search_terms = [request.query_text] if request.query_text else request.concept_names
         try:
             raw_results = await self.exa.search(
                 search_terms,
                 "paper",
                 request.window_days,
-                self.max_results,
+                max_results,
                 paper_strategy=request.paper_strategy,
                 budget=budget,
                 interactive=interactive,
@@ -70,7 +76,7 @@ class ArxivDiscoveryAgent:
                 raw_results.extend(
                     await self.arxiv.search(
                         search_terms,
-                        self.max_results - len(raw_results),
+                        max_results - len(raw_results),
                         budget,
                         paper_strategy=request.paper_strategy,
                     )

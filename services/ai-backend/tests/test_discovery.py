@@ -18,6 +18,7 @@ from app.cache.discovery_cache import (
 from app.config import Settings
 from app.contracts.discovery import (
     ArxivCandidate,
+    DiscoveryCandidateBatch,
     DiscoveryRefreshRequest,
     InstantDiscoveryRequest,
     YoutubeCandidate,
@@ -29,6 +30,7 @@ from app.guardrails.candidate_validation import (
     validate_arxiv_candidate,
     validate_youtube_candidate,
 )
+from app.runtime.agent_runtime import AgentRuntime
 from app.tools.arxiv_search import ArxivPaperTool, parse_arxiv_results
 from app.tools.budget import ToolBudget, ToolBudgetExceeded
 from app.tools.exa_discovery import ExaDiscoveryTool
@@ -140,6 +142,7 @@ def test_query_cache_identity_is_opaque() -> None:
 def test_instant_cache_identity_is_opaque_and_intent_scoped() -> None:
     query = "python for beginners"
     key = instant_cache_key("video", query, "best_match")
+    assert key.startswith("ls:v2:discovery:instant:")
     assert query not in key
     assert instant_cache_key("video", query, "best_match") != instant_cache_key(
         "video", query, "practical"
@@ -507,6 +510,7 @@ def test_instant_discovery_uses_the_exact_query_and_skips_enrichment() -> None:
                 return [{
                     "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
                     "title": "Python for Beginners",
+                    "highlights": ["A practical beginner Python course."],
                 }]
             return [{
                 "url": "https://arxiv.org/abs/1706.03762",
@@ -542,11 +546,161 @@ def test_instant_discovery_uses_the_exact_query_and_skips_enrichment() -> None:
             ToolBudget(1),
         )
         assert len(video_results) == 1
+        assert video_results[0].evidence == ["A practical beginner Python course."]
         assert len(paper_results) == 1
         assert exa.calls == [
             (["python for beginners"], "video", True),
             (["efficient transformer attention"], "paper", True),
         ]
+
+    asyncio.run(run())
+
+
+def test_interactive_exa_uses_instant_mode_without_video_recency_cutoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payloads: list[dict[str, object]] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return
+
+        def json(self) -> dict[str, object]:
+            return {
+                "results": [{
+                    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                    "title": "Rust for Beginners",
+                }]
+            }
+
+    class Client:
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            del args
+
+        async def post(
+            self, url: str, *, json: dict[str, object], headers: dict[str, str]
+        ) -> Response:
+            del url, headers
+            payloads.append(json)
+            return Response()
+
+    def client_factory(**kwargs: object) -> Client:
+        del kwargs
+        return Client()
+
+    monkeypatch.setattr("app.tools.exa_discovery.httpx.AsyncClient", client_factory)
+
+    async def run() -> None:
+        tool = ExaDiscoveryTool("test-key")
+        await tool.search(["Rust for beginners"], "video", 30, 30, ToolBudget(1), interactive=True)
+        await tool.search(["Rust"], "video", 30, 5, ToolBudget(1), interactive=False)
+
+    asyncio.run(run())
+    assert payloads[0]["query"] == "videos on Rust for beginners"
+    assert payloads[0]["includeDomains"] == ["youtube.com", "youtu.be"]
+    assert payloads[0]["numResults"] == 30
+    assert payloads[0]["type"] == "instant"
+    assert payloads[1]["includeDomains"] == ["youtube.com"]
+    assert payloads[1]["numResults"] == 5
+    assert payloads[1]["type"] == "neural"
+    assert "startPublishedDate" not in payloads[0]
+    assert "startPublishedDate" not in payloads[1]
+
+
+def test_fast_video_discovery_supports_thirty_results_and_normalizes_youtu_be() -> None:
+    class FakeExa:
+        def __init__(self) -> None:
+            self.limits: list[int] = []
+
+        async def search(
+            self,
+            terms: list[str],
+            kind: str,
+            window_days: int,
+            limit: int,
+            budget: ToolBudget,
+            **kwargs: object,
+        ) -> list[dict[str, object]]:
+            del terms, kind, window_days, budget, kwargs
+            self.limits.append(limit)
+            return [{
+                "url": "https://youtu.be/dQw4w9WgXcQ",
+                "title": "Jev by Typesafe AI",
+            }]
+
+    async def run() -> None:
+        exa = FakeExa()
+        agent = YoutubeDiscoveryAgent(
+            cast(ExaDiscoveryTool, exa), cast(YoutubeContentSearchTool, object()), 4
+        )
+        results = await agent.discover_fast(
+            DiscoveryRefreshRequest(
+                query_text="Jev by Typesafe AI",
+                source_kind="video",
+            ),
+            ToolBudget(1),
+            limit=30,
+        )
+        assert exa.limits == [30]
+        assert len(results) == 1
+        assert results[0].youtube_id == "dQw4w9WgXcQ"
+        assert results[0].canonical_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+
+    asyncio.run(run())
+
+
+def test_instant_timeout_keeps_provider_fetch_alive_and_warms_cache() -> None:
+    class Cache:
+        value: list[dict[str, object]] | None = None
+
+        async def get(self, key: str) -> list[dict[str, object]] | None:
+            del key
+            return self.value
+
+        async def get_stale(self, key: str) -> None:
+            del key
+            return None
+
+        async def set(self, key: str, value: list[dict[str, object]], ttl: object) -> None:
+            del key, ttl
+            self.value = value
+
+    async def run() -> None:
+        cache = Cache()
+        settings = Settings(
+            internal_service_token="token",
+            exa_api_key="key",
+            agents_enabled=True,
+            max_concurrency=1,
+            max_tool_calls=1,
+            request_timeout_seconds=1,
+            redis_url=None,
+            database_ai_url=None,
+            youtube_embedder_provider="openai",
+            youtube_embedder_model="text-embedding-3-small",
+            interactive_timeout_seconds=0.01,
+        )
+
+        class SlowRuntime(AgentRuntime):
+            async def _fetch_instant(
+                self, request: InstantDiscoveryRequest
+            ) -> DiscoveryCandidateBatch:
+                await asyncio.sleep(0.03)
+                return DiscoveryCandidateBatch(
+                    trace_id=request.trace_id or "test", youtube=[youtube_candidate()]
+                )
+
+        runtime = SlowRuntime(settings, cast(DiscoveryCache, cache))
+        request = InstantDiscoveryRequest(query_text="rust for beginners", source_kind="video")
+        first = await runtime.run_instant_discovery(request)
+        assert first.failures == ["instant:TimeoutError"]
+        await asyncio.sleep(0.04)
+        second = await runtime.run_instant_discovery(request)
+        assert len(second.youtube) == 1
+        assert second.cache_hit
 
     asyncio.run(run())
 

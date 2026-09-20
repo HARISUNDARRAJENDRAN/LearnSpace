@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { conceptAliases, concepts, outboxEvents, paperDetails, recommendationCandidates, recommendationRuns, resources, videoDetails } from "@learnspace/db/schema";
 import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchRequest, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
-import { classifySourceUrl, normalizeQuery, sourceDiscoveryInstantBatchSchema, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
+import { SOURCE_DISCOVERY_MAX_RESULTS, SOURCE_DISCOVERY_MIN_RESULTS, classifySourceUrl, normalizeQuery, sourceDiscoveryCandidateSchema, sourceDiscoveryInstantBatchSchema, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
 import { and, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { AuthError } from "../auth/errors";
@@ -10,7 +10,8 @@ import { loadDiscoveryProfile, loadDiscoveryResources } from "../discovery/servi
 import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type RankedResource } from "../discovery/ranker";
 import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
 
-const sourceResultLimit = 5;
+const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
+const sourceCoverageMinimum = SOURCE_DISCOVERY_MIN_RESULTS;
 const sourceRunReuseMs = 10 * 60 * 1000;
 
 function sourceError(code: string, message: string, status = 400, details: Record<string, unknown> = {}): AuthError {
@@ -85,6 +86,13 @@ function sourceCandidate(candidate: RankedResource, runId: string | null, mode: 
   };
 }
 
+function selectSourceResults(ranked: RankedResource[]): RankedResource[] {
+  return [...ranked]
+    .sort((left, right) => left.candidateRank - right.candidateRank || right.score - left.score || left.resource.id.localeCompare(right.resource.id))
+    .slice(0, sourceResultLimit)
+    .map((candidate, index) => ({ ...candidate, candidateRank: index + 1, finalRank: index + 1 }));
+}
+
 function candidateDiagnostics(run: typeof recommendationRuns.$inferSelect, resourceId: string, queryRelevance?: number | null): CandidateDiagnostics {
   const stored = arrayValue(run.contextSnapshot.candidateDiagnostics).find((value) => recordValue(value, "resourceId") === resourceId);
   const storedOrigin = recordValue(stored, "sourceOrigin");
@@ -98,6 +106,13 @@ function candidateDiagnostics(run: typeof recommendationRuns.$inferSelect, resou
   else if (typeof queryRelevance === "number") diagnostics.queryRelevance = queryRelevance;
   if (typeof storedQualificationReason === "string") diagnostics.qualificationReason = storedQualificationReason;
   return diagnostics;
+}
+
+function ephemeralCandidates(run: typeof recommendationRuns.$inferSelect): SourceDiscoveryCandidate[] {
+  return arrayValue(run.contextSnapshot.ephemeralCandidates).flatMap((value) => {
+    const parsed = sourceDiscoveryCandidateSchema.safeParse(value);
+    return parsed.success ? [{ ...parsed.data, recommendationRunId: run.id }] : [];
+  });
 }
 
 function runMode(run: typeof recommendationRuns.$inferSelect): SourceDiscoveryMode {
@@ -115,10 +130,18 @@ async function resolveConcept(tx: Transaction, query: string): Promise<{ id: str
   if (alias[0]) return alias[0];
   const fuzzy = await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(and(eq(concepts.status, "active"), ilike(concepts.name, `%${normalized}%`))).limit(1);
   if (fuzzy[0]) return fuzzy[0];
-  const stopWords = new Set(["about", "does", "from", "how", "learn", "need", "should", "teach", "the", "their", "this", "want", "what", "work", "you"]);
+  const stopWords = new Set(["about", "does", "for", "from", "how", "learn", "need", "should", "teach", "the", "their", "this", "want", "what", "work", "you"]);
   for (const token of normalized.split(/[^a-z0-9]+/).filter((value) => value.length > 2 && !stopWords.has(value))) {
-    const tokenMatch = await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(and(eq(concepts.status, "active"), ilike(concepts.name, `%${token}%`))).limit(1);
+    const tokenMatch = await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(and(
+      eq(concepts.status, "active"),
+      or(sql`lower(${concepts.name}) = ${token}`, eq(concepts.slug, token)),
+    )).limit(1);
     if (tokenMatch[0]) return tokenMatch[0];
+    const tokenAlias = await tx.select({ id: concepts.id, name: concepts.name }).from(conceptAliases).innerJoin(concepts, eq(concepts.id, conceptAliases.conceptId)).where(and(
+      eq(concepts.status, "active"),
+      eq(conceptAliases.normalizedAlias, token),
+    )).limit(1);
+    if (tokenAlias[0]) return tokenAlias[0];
   }
   return null;
 }
@@ -144,7 +167,7 @@ async function finalizeRefreshRun(tx: Transaction, userId: string, run: typeof r
   const refreshedResourceSet = new Set(refreshedResourceIds);
   const initialResourceIds = candidateRows.map((row) => row.resourceId);
   const poolResourceIds = [...new Set([...refreshedResourceIds, ...initialResourceIds])];
-  const ranked = rankSourceResources(
+  const ranked = selectSourceResults(rankSourceResources(
     await loadDiscoveryResources(tx, poolResourceIds, userId),
     profileLoad.profile,
     run.queryText ?? "",
@@ -152,7 +175,7 @@ async function finalizeRefreshRun(tx: Transaction, userId: string, run: typeof r
     typeof run.contextSnapshot.rankingIntent === "string" ? run.contextSnapshot.rankingIntent : "best_match",
     new Date(),
     typeof run.contextSnapshot.canonicalConceptId === "string" ? run.contextSnapshot.canonicalConceptId : null,
-  ).filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
+  ));
   await tx.delete(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id));
   if (ranked.length > 0) {
     await tx.insert(recommendationCandidates).values(ranked.map((candidate) => ({
@@ -187,37 +210,42 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
   if (run.contextSnapshot?.refreshStatus === "done" && run.status !== "failed") {
     return responseForRun(tx, await finalizeRefreshRun(tx, userId, run), userId);
   }
-  const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(24);
+  const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(sourceResultLimit);
   const resourcesForRun = await loadDiscoveryResources(tx, candidateRows.map((row) => row.resourceId), userId);
   const byId = new Map(resourcesForRun.map((resource) => [resource.id, resource]));
   const mode = runMode(run);
   if (run.status === "failed") throw sourceError("DISCOVERY_FAILED", mode === "research" ? "We couldn't finish finding relevant papers." : "We couldn't finish finding strong learning videos.", 502);
+  const persistedCandidates = candidateRows.flatMap((row) => {
+    const resource = byId.get(row.resourceId);
+    if (!resource || row.finalRank === null) return [];
+    const diagnostics = candidateDiagnostics(run, row.resourceId, row.semanticRelevance);
+    return [sourceCandidate({
+      resource,
+      candidateRank: row.candidateRank,
+      finalRank: row.finalRank,
+      score: row.score,
+      semanticRelevance: row.semanticRelevance ?? 0,
+      qualityScore: row.qualityScore ?? 0.5,
+      learnerAffinity: row.learnerAffinity ?? 0,
+      masteryFit: row.masteryFit,
+      coverageScore: row.coverageScore ?? 0,
+      freshnessScore: row.freshnessScore ?? 0.5,
+      diversityPenalty: row.diversityPenalty ?? 0,
+      reasonCodes: Array.isArray(row.reasonCodes) ? row.reasonCodes.filter((code): code is string => typeof code === "string") : [],
+      ...(typeof diagnostics.queryRelevance === "number" ? { queryRelevance: diagnostics.queryRelevance } : {}),
+      ...(diagnostics.qualificationReason ? { qualificationReason: diagnostics.qualificationReason } : {}),
+    }, run.id, mode, diagnostics)];
+  });
+  const candidates = [...persistedCandidates, ...ephemeralCandidates(run)]
+    .sort((left, right) => (left.finalRank ?? Number.MAX_SAFE_INTEGER) - (right.finalRank ?? Number.MAX_SAFE_INTEGER) || left.candidateRank - right.candidateRank)
+    .filter((candidate, index, all) => all.findIndex((other) => (other.resourceId ?? other.canonicalUrl ?? other.title) === (candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title)) === index)
+    .slice(0, sourceResultLimit);
   return {
-    status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
+    status: candidates.length > 0 ? "completed" : run.status === "running" || run.status === "queued" ? "searching" : "completed",
     runId: run.id,
     mode,
     query: run.queryText ?? "",
-    candidates: candidateRows.flatMap((row) => {
-      const resource = byId.get(row.resourceId);
-      if (!resource || row.finalRank === null) return [];
-      const diagnostics = candidateDiagnostics(run, row.resourceId, row.semanticRelevance);
-      return [sourceCandidate({
-        resource,
-        candidateRank: row.candidateRank,
-        finalRank: row.finalRank,
-        score: row.score,
-        semanticRelevance: row.semanticRelevance ?? 0,
-        qualityScore: row.qualityScore ?? 0.5,
-        learnerAffinity: row.learnerAffinity ?? 0,
-        masteryFit: row.masteryFit,
-        coverageScore: row.coverageScore ?? 0,
-        freshnessScore: row.freshnessScore ?? 0.5,
-        diversityPenalty: row.diversityPenalty ?? 0,
-        reasonCodes: Array.isArray(row.reasonCodes) ? row.reasonCodes.filter((code): code is string => typeof code === "string") : [],
-        ...(typeof diagnostics.queryRelevance === "number" ? { queryRelevance: diagnostics.queryRelevance } : {}),
-        ...(diagnostics.qualificationReason ? { qualificationReason: diagnostics.qualificationReason } : {}),
-      }, run.id, mode, diagnostics)];
-    }).slice(0, sourceResultLimit),
+    candidates,
   };
 }
 
@@ -343,8 +371,8 @@ function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode):
 }
 
 function instantBudgetMs(): number {
-  const value = Number(process.env.SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS ?? 480);
-  return Number.isFinite(value) ? Math.min(480, Math.max(150, value)) : 480;
+  const value = Number(process.env.SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS ?? 1_400);
+  return Number.isFinite(value) ? Math.min(1_500, Math.max(500, value)) : 1_400;
 }
 
 function instantPoolKey(mode: SourceDiscoveryMode, rankingIntent: SourceRankingIntent, query: string): string {
@@ -364,16 +392,24 @@ async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankin
         query_text: query,
         source_kind: mode === "learn" ? "video" : "paper",
         ranking_intent: rankingIntent,
-        limit: 10,
+        limit: sourceResultLimit,
         trace_id: correlationId,
       }),
       signal: AbortSignal.timeout(instantBudgetMs()),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.warn("source_discovery_instant_failed", { correlationId, status: response.status });
+      return null;
+    }
     const parsed = sourceDiscoveryInstantBatchSchema.safeParse(await response.json());
-    if (!parsed.success) return null;
+    if (!parsed.success) {
+      console.warn("source_discovery_instant_invalid_response", { correlationId });
+      return null;
+    }
+    if (parsed.data.failures.length > 0) console.warn("source_discovery_instant_provider_failure", { correlationId, failures: parsed.data.failures });
     return { resources: externalResources(parsed.data, mode), exaMs: performance.now() - started };
-  } catch {
+  } catch (error) {
+    console.warn("source_discovery_instant_unavailable", { correlationId, error: error instanceof Error ? error.name : "unknown" });
     return null;
   }
 }
@@ -449,7 +485,7 @@ async function persistInteractiveRun(
   timings: Record<string, number>,
 ): Promise<typeof recommendationRuns.$inferSelect> {
   const qualifiedExternal = externalResources.filter((resource) => sourceQuerySignals(resource, query, concept?.id).qualified).slice(0, sourceResultLimit);
-  const shouldRefresh = catalogQualifiedCount + qualifiedExternal.length < 3;
+  const shouldRefresh = catalogQualifiedCount + qualifiedExternal.length < sourceCoverageMinimum;
   const refreshStatus = qualifiedExternal.length > 0 ? "pending_persistence" : shouldRefresh ? "requested" : "not_needed";
   const status = ranked.length === 0 && shouldRefresh && qualifiedExternal.length === 0 ? "running" : "completed";
   return withUserTransaction(userId, async (tx) => {
@@ -467,8 +503,8 @@ async function persistInteractiveRun(
         refreshStatus,
         interactive: true,
         qualifiedCatalogCandidateCount: catalogQualifiedCount,
-        candidateDiagnostics: ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit).map((candidate) => ({
-          resourceId: /^[0-9a-f-]{36}$/i.test(candidate.resource.id) ? candidate.resource.id : candidate.resource.id,
+        candidateDiagnostics: ranked.slice(0, sourceResultLimit).map((candidate) => ({
+          resourceId: candidate.resource.id,
           sourceOrigin: candidate.resource.id.startsWith("external:") ? "external_refresh" : "catalog",
           queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
           qualificationReason: candidate.qualificationReason ?? null,
@@ -479,7 +515,7 @@ async function persistInteractiveRun(
       completedAt: status === "completed" ? new Date() : null,
     }).returning();
     if (!run) throw new Error("Source discovery run could not be created");
-    const catalogCandidates = ranked.filter((candidate) => candidate.finalRank !== null && /^[0-9a-f-]{36}$/i.test(candidate.resource.id));
+    const catalogCandidates = ranked.filter((candidate) => /^[0-9a-f-]{36}$/i.test(candidate.resource.id));
     if (catalogCandidates.length > 0) {
       await tx.insert(recommendationCandidates).values(catalogCandidates.map((candidate) => ({
         recommendationRunId: run.id,
@@ -497,6 +533,21 @@ async function persistInteractiveRun(
         reasonCodes: candidate.reasonCodes,
         selected: true,
       })));
+    }
+    const ephemeral = ranked
+      .filter((candidate) => candidate.resource.id.startsWith("external:"))
+      .slice(0, sourceResultLimit)
+      .map((candidate) => sourceCandidate(candidate, run.id, input.mode, {
+        sourceOrigin: "external_refresh",
+        ...(typeof candidate.queryRelevance === "number" ? { queryRelevance: candidate.queryRelevance } : {}),
+        ...(candidate.qualificationReason ? { qualificationReason: candidate.qualificationReason } : {}),
+      }));
+    let persistedRun = run;
+    if (ephemeral.length > 0) {
+      const [withEphemeral] = await tx.update(recommendationRuns).set({
+        contextSnapshot: { ...run.contextSnapshot, ephemeralCandidates: ephemeral },
+      }).where(eq(recommendationRuns.id, run.id)).returning();
+      if (withEphemeral) persistedRun = withEphemeral;
     }
     if (qualifiedExternal.length > 0) {
       await tx.insert(outboxEvents).values({
@@ -517,7 +568,7 @@ async function persistInteractiveRun(
     } else if (shouldRefresh) {
       await enqueueRefresh(tx, userId, run.id, input.mode, query, concept, correlationId);
     }
-    return run;
+    return persistedRun;
   });
 }
 
@@ -536,7 +587,7 @@ function responseFromFastRun(
     ...(typeof candidate.queryRelevance === "number" ? { queryRelevance: candidate.queryRelevance } : {}),
     ...(candidate.qualificationReason ? { qualificationReason: candidate.qualificationReason } : {}),
   }]));
-  const selected = ranked.filter((candidate) => candidate.finalRank !== null).slice(0, sourceResultLimit);
+  const selected = selectSourceResults(ranked);
   return {
     status: selected.length > 0 ? "completed" : run.status === "running" ? "searching" : "completed",
     runId: run.id,
@@ -553,7 +604,9 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   const query = normalizeQuery(input.query);
   const reusable = await withUserTransaction(userId, async (tx) => {
     const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
-    return existing && existing.status === "completed" ? responseForRun(tx, existing, userId) : null;
+    if (!existing || existing.status !== "completed") return null;
+    const response = await responseForRun(tx, existing, userId);
+    return response.candidates.length > 0 ? response : null;
   });
   if (reusable) return reusable;
   const started = performance.now();
@@ -572,7 +625,7 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   const local = await localPromise;
   const catalogQualifiedCount = local.resources.filter((resource) => sourceQuerySignals(resource, query, local.concept?.id).qualified).length;
   let external = emptyExternalPool();
-  if (catalogQualifiedCount < sourceResultLimit) {
+  if (catalogQualifiedCount < sourceCoverageMinimum) {
     const remainingBudget = Math.max(0, instantBudgetMs() - (performance.now() - started));
     external = await Promise.race([externalPromise, deadline(remainingBudget)]) ?? emptyExternalPool();
   } else {
@@ -580,9 +633,7 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   }
   const allResources = [...local.resources, ...external.resources.filter((externalResource) => !local.resources.some((resource) => resource.provider === externalResource.provider && resource.externalId === externalResource.externalId))];
   const rankStarted = performance.now();
-  const ranked = rankSourceResources(allResources, local.profile, query, input.mode, input.rankingIntent, new Date(), local.concept?.id)
-    .filter((candidate) => candidate.finalRank !== null)
-    .slice(0, sourceResultLimit);
+  const ranked = selectSourceResults(rankSourceResources(allResources, local.profile, query, input.mode, input.rankingIntent, new Date(), local.concept?.id));
   const rankMs = performance.now() - rankStarted;
   const externalIds = new Set(external.resources.map((resource) => resource.id));
   const run = await persistInteractiveRun(userId, input, query, local.concept, ranked, catalogQualifiedCount, external.resources, input.correlationId, {

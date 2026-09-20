@@ -99,7 +99,18 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
     needs: [foundation, database, python]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
+      AWS_REGION: us-east-1
+      LEARNSPACE_STAGE: staging
+      AWS_STACK_NAME: learnspace-discovery-agent-staging
+      AWS_FUNCTION_NAME: learnspace-discovery-agent-staging
+      AWS_ECR_REPOSITORY: learnspace-discovery-agent-staging
+      IMAGE_TAG: ${{ github.sha }}
+      EXA_API_KEY_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
+      INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
       DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -120,6 +131,23 @@ jobs:
         with:
           node-version: 22.15.0
           cache: pnpm
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
+      - name: Deploy the tested discovery agent
+        run: bash infra/aws/discovery-agent/deploy.sh
+      - name: Verify the instant discovery route
+        run: |
+          function_url="$(aws cloudformation describe-stacks --stack-name "$AWS_STACK_NAME" --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`FunctionUrl`].OutputValue | [0]' --output text)"
+          token="$(aws secretsmanager get-secret-value --secret-id "$INTERNAL_SERVICE_TOKEN_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text | jq -r '.INTERNAL_SERVICE_TOKEN')"
+          curl --fail --silent --show-error --max-time 30 \
+            -H 'Content-Type: application/json' \
+            -H "x-internal-service-token: $token" \
+            -d "{\"query_text\":\"deployment smoke test\",\"source_kind\":\"video\",\"ranking_intent\":\"best_match\",\"limit\":1,\"trace_id\":\"deploy-$GITHUB_SHA\"}" \
+            "${function_url%/}/internal/v1/discovery/instant" \
+            | jq -e '(.youtube | type == "array") and (.arxiv | type == "array") and (.failures | type == "array")' > /dev/null
       - run: pnpm install --frozen-lockfile
       - run: pnpm run db:check
       - run: pnpm run db:migrate

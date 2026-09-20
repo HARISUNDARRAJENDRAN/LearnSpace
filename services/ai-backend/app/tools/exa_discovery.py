@@ -32,7 +32,13 @@ class ExaDiscoveryTool:
         budget.consume(self.name)
         domain = "youtube.com" if resource_kind == "video" else "arxiv.org"
         explicit_query = " ".join(value.strip() for value in concept_names if value.strip()).strip()
-        query = explicit_query if interactive else " educational " + explicit_query
+        query = (
+            f"videos on {explicit_query}"
+            if interactive and resource_kind == "video"
+            else explicit_query
+            if interactive
+            else " educational " + explicit_query
+        )
         if not interactive and resource_kind == "paper" and paper_strategy == "foundational":
             query = (
                 "seminal foundational landmark canonical original influential early defining "
@@ -42,12 +48,16 @@ class ExaDiscoveryTool:
             query = "recent current research paper " + " ".join(concept_names)
         payload = {
             "query": query,
-            "type": "neural",
-            "numResults": min(10, max(1, limit)),
-            "includeDomains": [domain],
+            "type": "instant" if interactive else "neural",
+            "numResults": min(30 if interactive else 10, max(1, limit)),
+            "includeDomains": (
+                ["youtube.com", "youtu.be"]
+                if interactive and resource_kind == "video"
+                else [domain]
+            ),
             "contents": {"highlights": {"maxCharacters": 800}},
         }
-        if not interactive and (resource_kind == "video" or paper_strategy == "current"):
+        if not interactive and resource_kind == "paper" and paper_strategy == "current":
             payload["startPublishedDate"] = (
                 datetime.now(UTC) - timedelta(days=window_days)
             ).isoformat()

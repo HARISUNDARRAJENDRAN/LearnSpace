@@ -65,7 +65,7 @@ class InstantDiscoveryRequest(BaseModel):
     query_text: str = Field(min_length=2, max_length=240)
     source_kind: ResourceKind
     ranking_intent: RankingIntent = "best_match"
-    limit: int = Field(default=8, ge=1, le=20)
+    limit: int = Field(default=30, ge=1, le=30)
     trace_id: str | None = Field(default=None, min_length=1, max_length=128)
 
     @model_validator(mode="after")

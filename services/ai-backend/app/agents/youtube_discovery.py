@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from app.contracts.discovery import DiscoveryRefreshRequest, YoutubeCandidate
 from app.guardrails.candidate_validation import validate_youtube_candidate, youtube_id_from_url
@@ -25,19 +25,25 @@ class YoutubeDiscoveryAgent:
         return await self._discover(request, budget, interactive=False)
 
     async def discover_fast(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, limit: int = 30
     ) -> list[YoutubeCandidate]:
-        return await self._discover(request, budget, interactive=True)
+        return await self._discover(request, budget, interactive=True, limit=limit)
 
     async def _discover(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget, *, interactive: bool
+        self,
+        request: DiscoveryRefreshRequest,
+        budget: ToolBudget,
+        *,
+        interactive: bool,
+        limit: int = 30,
     ) -> list[YoutubeCandidate]:
+        max_results = min(30, max(1, limit)) if interactive else self.max_results
         search_terms = [request.query_text] if request.query_text else request.concept_names
         raw_results = await self.exa.search(
             search_terms,
             "video",
             request.window_days,
-            self.max_results,
+            max_results,
             budget=budget,
             interactive=interactive,
         )
@@ -50,6 +56,18 @@ class YoutubeDiscoveryAgent:
             youtube_id = youtube_id_from_url(url)
             if youtube_id is None:
                 continue
+            raw_evidence = item.get("text")
+            if not isinstance(raw_evidence, str):
+                highlights = item.get("highlights")
+                raw_evidence = (
+                    " ".join(
+                        value
+                        for value in cast(list[object], highlights)
+                        if isinstance(value, str)
+                    )
+                    if isinstance(highlights, list)
+                    else ""
+                )
             candidate = YoutubeCandidate(
                 youtube_id=youtube_id,
                 canonical_url=f"https://www.youtube.com/watch?v={youtube_id}",
@@ -61,7 +79,7 @@ class YoutubeDiscoveryAgent:
                 learning_format=None,
                 estimated_level=None,
                 has_implementation=None,
-                evidence=[str(item.get("text"))[:800]] if item.get("text") else [],
+                evidence=[raw_evidence[:800]] if raw_evidence else [],
                 confidence=0.6,
             )
             valid = validate_youtube_candidate(candidate)

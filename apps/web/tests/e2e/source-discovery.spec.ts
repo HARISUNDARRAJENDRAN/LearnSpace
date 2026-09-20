@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SOURCE_DISCOVERY_MAX_RESULTS } from "@learnspace/shared";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 
@@ -130,7 +131,7 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   await learnSearchInput.fill("Python generators");
   await learnSearchInput.press("Enter");
   await expect.poll(() => page.locator(".source-discovery-result").count()).toBeGreaterThanOrEqual(3);
-  expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(5);
+  expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(SOURCE_DISCOVERY_MAX_RESULTS);
   const studyRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/study-sessions") && request.method() === "POST");
   await page.locator(".source-discovery-result").first().getByRole("button", { name: "Start learning" }).click();
   const requestBody = (await studyRequest).postDataJSON() as { recommendationRunId?: string };
@@ -144,7 +145,7 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   await researchInput.fill("Efficient transformer attention mechanisms");
   await researchInput.press("Enter");
   await expect.poll(() => page.locator(".source-discovery-result").count()).toBeGreaterThanOrEqual(3);
-  expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(5);
+  expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(SOURCE_DISCOVERY_MAX_RESULTS);
   await page.locator(".source-discovery-result").first().getByRole("button", { name: "Start researching" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
 

@@ -22,13 +22,13 @@ from app.tools.youtube_content_search import YoutubeContentSearchTool
 
 class FastYoutubeDiscoverer(Protocol):
     async def discover_fast(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, limit: int
     ) -> list[YoutubeCandidate]: ...
 
 
 class FastArxivDiscoverer(Protocol):
     async def discover_fast(
-        self, request: DiscoveryRefreshRequest, budget: ToolBudget
+        self, request: DiscoveryRefreshRequest, budget: ToolBudget, limit: int
     ) -> list[ArxivCandidate]: ...
 
 
@@ -85,24 +85,33 @@ class AgentRuntime:
             return self._cached_batch(request, stale, trace_id)
         inflight = self._instant_inflight.get(key)
         if inflight is None:
-            inflight = asyncio.create_task(
-                asyncio.wait_for(
-                    self._fetch_instant(request),
-                    timeout=self.settings.interactive_timeout_seconds,
-                )
-            )
+            inflight = asyncio.create_task(self._fetch_instant(request))
             self._instant_inflight[key] = inflight
+            asyncio.create_task(self._finish_instant(request, key, inflight))
         try:
-            batch = await inflight
+            batch = await asyncio.wait_for(
+                asyncio.shield(inflight),
+                timeout=self.settings.interactive_timeout_seconds,
+            )
         except Exception as error:
             return DiscoveryCandidateBatch(
                 trace_id=trace_id, failures=[f"instant:{type(error).__name__}"]
             )
+        return batch
+
+    async def _finish_instant(
+        self,
+        request: InstantDiscoveryRequest,
+        key: str,
+        inflight: asyncio.Task[DiscoveryCandidateBatch],
+    ) -> None:
+        try:
+            await self._cache_instant(request, key, await inflight)
+        except Exception:
+            pass
         finally:
             if self._instant_inflight.get(key) is inflight:
                 self._instant_inflight.pop(key, None)
-        asyncio.create_task(self._cache_instant(request, key, batch))
-        return batch
 
     async def _refresh_instant(self, request: InstantDiscoveryRequest, key: str) -> None:
         try:
@@ -124,14 +133,14 @@ class AgentRuntime:
         budget = ToolBudget(1)
         if request.source_kind == "video":
             youtube = cast(FastYoutubeDiscoverer, self.flow.youtube)
-            candidates = await youtube.discover_fast(discovery_request, budget)
+            candidates = await youtube.discover_fast(discovery_request, budget, request.limit)
             return DiscoveryCandidateBatch(
                 trace_id=request.trace_id or "instant-discovery",
                 youtube=candidates[: request.limit],
                 provider_calls=budget.call_counts.get("exa_discovery", 0),
             )
         arxiv = cast(FastArxivDiscoverer, self.flow.arxiv)
-        candidates = await arxiv.discover_fast(discovery_request, budget)
+        candidates = await arxiv.discover_fast(discovery_request, budget, request.limit)
         return DiscoveryCandidateBatch(
             trace_id=request.trace_id or "instant-discovery",
             arxiv=candidates[: request.limit],

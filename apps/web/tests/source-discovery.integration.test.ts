@@ -268,7 +268,7 @@ test(
   "python beginner regression keeps unrelated catalog rows out and returns qualified fast candidates",
   { skip: databaseAvailable ? false : "database URLs are required" },
   async () => {
-    const [{ createEmailUser }, { searchSources }, { closeDb }] = await Promise.all([
+    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
       import("../lib/auth/repository"),
       import("../lib/source-discovery/service"),
       import("@learnspace/db"),
@@ -282,19 +282,31 @@ test(
     const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
     const query = `python for beginners ${randomUUID().slice(0, 8)}`;
     let seenQuery = "";
+    let seenLimit = 0;
     process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
     process.env.INTERNAL_SERVICE_TOKEN = "source-python-test";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
       if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
-      seenQuery = JSON.parse(String(init?.body ?? "{}")).query_text as string;
+      const request = JSON.parse(String(init?.body ?? "{}")) as { query_text?: string; limit?: number };
+      seenQuery = request.query_text ?? "";
+      seenLimit = request.limit ?? 0;
       return new Response(JSON.stringify({
         trace_id: "python-regression-test",
-        youtube: [
-          { youtube_id: "aB3dE5fG7hJ", canonical_url: "https://www.youtube.com/watch?v=aB3dE5fG7hJ", title: `${query} - Full Course`, channel: "Fresh Python Lab", confidence: 0.95, learning_format: "clear_explanations", estimated_level: "beginner", evidence: ["beginner Python course"] },
-          { youtube_id: "bC4eF6gH8iK", canonical_url: "https://www.youtube.com/watch?v=bC4eF6gH8iK", title: `Learn Python Variables for Beginners ${query.slice(-8)}`, channel: "Fresh Python Lab", confidence: 0.9, learning_format: "clear_explanations", estimated_level: "beginner", evidence: ["Python variables for beginners"] },
-          { youtube_id: "cD5fG7hI9jL", canonical_url: "https://www.youtube.com/watch?v=cD5fG7hI9jL", title: `Beginner Python Projects ${query.slice(-8)}`, channel: "Fresh Python Lab", confidence: 0.88, learning_format: "hands_on", estimated_level: "beginner", has_implementation: true, evidence: ["hands-on beginner Python projects"] },
-        ],
+        youtube: Array.from({ length: 30 }, (_, index) => {
+          const youtubeId = `A${index.toString(36).padStart(10, "0")}`;
+          return {
+            youtube_id: youtubeId,
+            canonical_url: `https://www.youtube.com/watch?v=${youtubeId}`,
+            title: `${query} - Lesson ${index + 1}`,
+            channel: "Fresh Python Lab",
+            confidence: 0.95 - index * 0.01,
+            learning_format: index % 2 === 0 ? "clear_explanations" : "hands_on",
+            estimated_level: "beginner",
+            has_implementation: index % 2 === 1,
+            evidence: ["beginner Python course"],
+          };
+        }),
         arxiv: [],
       }), { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
@@ -327,7 +339,8 @@ test(
       runId = initial.runId ?? "";
       assert.equal(initial.status, "completed");
       assert.equal(seenQuery, query);
-      assert.equal(initial.candidates.length, 3);
+      assert.equal(seenLimit, 30);
+      assert.equal(initial.candidates.length, 30);
       assert.ok(initial.candidates.every((candidate) => candidate.title.includes(query.slice(-8))));
       assert.ok(initial.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
       assert.ok(initial.candidates.every((candidate) => !candidate.resourceId));
@@ -349,8 +362,17 @@ test(
       `;
       assert.equal(persistedRun?.status, "completed");
       assert.equal(persistedRun?.refresh_status, "pending_persistence");
-      assert.equal(persistedRun?.diagnostics.length, 3);
+      assert.equal(persistedRun?.diagnostics.length, 30);
       assert.ok(persistedRun?.diagnostics.every((diagnostic) => diagnostic.sourceOrigin === "external_refresh" && String(diagnostic.resourceId).startsWith("external:youtube:") && typeof diagnostic.queryRelevance === "number" && typeof diagnostic.qualificationReason === "string"));
+      const [polled] = await migrator<{ context_snapshot: Record<string, unknown> }[]>`
+        SELECT context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
+      `;
+      const ephemeralCandidates = polled?.context_snapshot.ephemeralCandidates;
+      assert.ok(Array.isArray(ephemeralCandidates));
+      assert.equal(ephemeralCandidates.length, 30);
+      const polledResponse = await getSourceDiscoveryRun(user.id, runId);
+      assert.equal(polledResponse.status, "completed");
+      assert.equal(polledResponse.candidates.length, 30);
     } finally {
       globalThis.fetch = originalFetch;
       if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
@@ -372,7 +394,7 @@ test(
 );
 
 test(
-  "interactive source discovery returns qualified ephemeral candidates without worker latency",
+  "interactive Rust discovery avoids false concept matches and returns qualified candidates without worker latency",
   { skip: databaseAvailable ? false : "database URLs are required" },
   async () => {
     const [{ createEmailUser }, { searchSources, resolveSource }, { startOrResumeStudySession }, { closeDb }] = await Promise.all([
@@ -386,23 +408,23 @@ test(
     const originalFetch = globalThis.fetch;
     const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
     const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
-    const query = `python for beginners ${randomUUID().slice(0, 8)}`;
+    const query = `Rust for beginners ${randomUUID().slice(0, 8)}`;
     let seenQuery = "";
     process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
     process.env.INTERNAL_SERVICE_TOKEN = "instant-source-test";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
       if (requestUrl.startsWith("https://www.youtube.com/oembed")) {
-        return new Response(JSON.stringify({ title: "Python for Beginners - Full Course", thumbnail_url: "https://i.ytimg.com/vi/aB3dE5fG7hJ/hqdefault.jpg", author_name: "Fast Source Lab" }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ title: "Rust for Beginners - Full Course", thumbnail_url: "https://i.ytimg.com/vi/aB3dE5fG7hJ/hqdefault.jpg", author_name: "Fast Source Lab" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
       seenQuery = JSON.parse(String(init?.body ?? "{}")).query_text as string;
       return new Response(JSON.stringify({
         trace_id: "instant-test",
         youtube: [
-          { youtube_id: "aB3dE5fG7hJ", canonical_url: "https://www.youtube.com/watch?v=aB3dE5fG7hJ", title: `${query} - Full Course`, channel: "Fast Source Lab", confidence: 0.95, evidence: ["beginner Python course"] },
-          { youtube_id: "bC4eF6gH8iK", canonical_url: "https://www.youtube.com/watch?v=bC4eF6gH8iK", title: `Learn Python Variables for Beginners ${query.slice(-8)}`, channel: "Fast Source Lab", confidence: 0.9, evidence: ["Python variables for beginners"] },
-          { youtube_id: "cD5fG7hI9jL", canonical_url: "https://www.youtube.com/watch?v=cD5fG7hI9jL", title: `Beginner Python Projects ${query.slice(-8)}`, channel: "Fast Source Lab", confidence: 0.88, evidence: ["hands-on beginner Python projects"] },
+          { youtube_id: "aB3dE5fG7hJ", canonical_url: "https://www.youtube.com/watch?v=aB3dE5fG7hJ", title: `${query} - Full Course`, channel: "Fast Source Lab", confidence: 0.95, evidence: ["beginner Rust course"] },
+          { youtube_id: "bC4eF6gH8iK", canonical_url: "https://www.youtube.com/watch?v=bC4eF6gH8iK", title: `Learn ${query} step by step`, channel: "Fast Source Lab", confidence: 0.9, evidence: ["Rust fundamentals for beginners"] },
+          { youtube_id: "cD5fG7hI9jL", canonical_url: "https://www.youtube.com/watch?v=cD5fG7hI9jL", title: `Beginner projects — ${query}`, channel: "Fast Source Lab", confidence: 0.88, evidence: ["hands-on beginner Rust projects"] },
         ],
         arxiv: [],
       }), { status: 200, headers: { "content-type": "application/json" } });
@@ -418,6 +440,12 @@ test(
       assert.equal(result.candidates.length, 3);
       assert.equal(result.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"), true);
       assert.equal(result.candidates.every((candidate) => !candidate.resourceId), true);
+      const [run] = await migrator<{ canonical_concept_name: string | null }[]>`
+        SELECT context_snapshot->>'canonicalConceptName' AS canonical_concept_name
+        FROM discovery.recommendation_runs
+        WHERE id = ${runId}
+      `;
+      assert.equal(run?.canonical_concept_name, null);
       const outbox = await migrator<{ event_type: string }[]>`
         SELECT event_type FROM ops.outbox_events
         WHERE user_id = ${user.id} AND aggregate_id = ${runId}

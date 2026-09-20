@@ -49,6 +49,9 @@ Configure these GitHub Actions secrets:
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
 - `VERCEL_TOKEN`
+- `AWS_DISCOVERY_AGENT_ROLE_ARN`
+- `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`
+- `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`
 
 Configure these Vercel Production variables for the staging deployment:
 
@@ -58,6 +61,9 @@ Configure these Vercel Production variables for the staging deployment:
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`
 - `RESEND_API_KEY`, `EMAIL_FROM`, `AUTH_EXPOSE_VERIFICATION_LINK=false`
 - `KV_REST_API_URL`, `KV_REST_API_TOKEN` for shared rate limiting and discovery cache
+- `DISCOVERY_AGENT_URL` — the discovery-agent Lambda Function URL
+- `INTERNAL_SERVICE_TOKEN` — the same token stored in the discovery-agent Secrets Manager secret
+- `SOURCE_DISCOVERY_INTERACTIVE_TIMEOUT_MS=1400`
 - the server-safe `DB_*` values described above
 
 The Google callback must be exactly
@@ -77,9 +83,11 @@ pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educ
 ```
 
 The discovery agent is the AWS Lambda function
-`learnspace-discovery-agent-staging` in `us-east-1`. Deploy it from
-`infra/aws/discovery-agent/README.md`; the CloudFormation stack output is the
-current Function URL. The refresh route remains protected by
+`learnspace-discovery-agent-staging` in `us-east-1`. Main-branch CI deploys the
+tested agent image and verifies the instant route before deploying Vercel, so
+the web and agent cannot drift between commits. The manual workflow remains
+available for recovery. The CloudFormation stack output is the current Function
+URL. The refresh and instant routes remain protected by
 `INTERNAL_SERVICE_TOKEN`. The discovery worker uses the same worker connection
 for catalogue writes and durable job state. Run it outside Vercel with
 `pnpm discovery:worker` and set `DISCOVERY_AGENT_URL` to the stack output plus
