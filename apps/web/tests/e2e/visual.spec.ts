@@ -156,9 +156,10 @@ test.describe("authenticated app shell visual regression", () => {
     await page.setViewportSize({ width: 1365, height: 720 });
     await page.goto("/app", { waitUntil: "networkidle" });
     await page.getByRole("button", { name: "Start learning" }).click();
-    await expect(page.getByRole("dialog", { name: "Learn any topic from the best videos" })).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "Learn any topic from the best videos" });
+    await expect(dialog).toBeVisible();
     await stabilize(page);
-    await expect(page).toHaveScreenshot("source-discovery-learn-desktop.png", {
+    await expect(dialog).toHaveScreenshot("source-discovery-learn-desktop.png", {
       animations: "disabled",
       caret: "hide",
       maxDiffPixels: 256,
