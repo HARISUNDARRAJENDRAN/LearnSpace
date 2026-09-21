@@ -24,7 +24,7 @@ export function AppHeader({ onMenu }: { onMenu: () => void }) {
   const sourceTriggerRef = useRef<HTMLButtonElement>(null);
   const mode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
   return (
-    <header className="application-header">
+    <header className={`application-header${pathname === "/app" ? " application-header-home" : ""}`}>
       <div className="application-header-start">
         <button className="application-menu-button" type="button" onClick={onMenu} aria-label="Open navigation">
           <Menu aria-hidden="true" />

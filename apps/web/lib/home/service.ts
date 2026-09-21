@@ -11,6 +11,7 @@ type HomeVideo = {
   channelTitle: string | null;
   youtubeId: string;
   thumbnailUrl: string | null;
+  thumbnailFallbackUrl: string | null;
   durationMs: number | null;
 };
 
@@ -31,8 +32,12 @@ export type LearnHomeData = {
   relatedVideos: HomeVideoItem[];
 };
 
-function thumbnailUrl(youtubeId: string): string | null {
-  return /^[A-Za-z0-9_-]{11}$/.test(youtubeId) ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` : null;
+function thumbnailUrls(youtubeId: string): { primary: string; fallback: string } | null {
+  if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeId)) return null;
+  return {
+    primary: `https://i.ytimg.com/vi/${youtubeId}/maxresdefault.jpg`,
+    fallback: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+  };
 }
 
 function visibleResource(userId: string) {
@@ -67,23 +72,29 @@ async function loadContinueCandidates(tx: Transaction, userId: string, status: "
     .where(and(
       eq(studySessions.userId, userId),
       eq(studySessions.status, status),
+      sql`coalesce(${userResourceProgress.progressPct}, 0) < 100`,
+      sql`coalesce(${userResourceProgress.status}, 'not_started') <> 'completed'`,
       videoResource(userId),
     ))
     .orderBy(desc(studySessions.lastActiveAt))
     .limit(continueLimit);
 
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    const thumbnails = thumbnailUrls(row.video.youtubeId);
+    return {
     resourceId: row.resource.id,
     title: row.resource.title,
     description: row.resource.description,
     channelTitle: row.video.channelTitle,
     youtubeId: row.video.youtubeId,
-    thumbnailUrl: thumbnailUrl(row.video.youtubeId),
+    thumbnailUrl: thumbnails?.primary ?? null,
+    thumbnailFallbackUrl: thumbnails?.fallback ?? null,
     durationMs: row.video.durationMs,
     sessionId: row.sessionId,
     progressPct: Number(row.progressPct ?? 0),
     lastActiveAt: row.lastActiveAt.toISOString(),
-  }));
+    };
+  });
 }
 
 async function loadRecentAnchor(tx: Transaction, userId: string): Promise<{ resourceId: string; title: string } | null> {
@@ -146,15 +157,19 @@ async function loadRelatedVideos(tx: Transaction, userId: string, anchorResource
     .limit(relatedLimit);
 
   const reasonConcept = anchorConcepts[0]?.name ?? "this lesson";
-  return rows.map((row) => ({
+  return rows.map((row) => {
+    const thumbnails = thumbnailUrls(row.youtubeId);
+    return {
       resourceId: row.resourceId,
       title: row.title,
       channelTitle: row.channelTitle,
     youtubeId: row.youtubeId,
-    thumbnailUrl: thumbnailUrl(row.youtubeId),
+    thumbnailUrl: thumbnails?.primary ?? null,
+    thumbnailFallbackUrl: thumbnails?.fallback ?? null,
     durationMs: row.durationMs,
     reason: `Related to ${reasonConcept}`,
-  }));
+    };
+  });
 }
 
 export async function getLearnHome(userId: string): Promise<LearnHomeData> {

@@ -37,7 +37,7 @@ export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, re
       setState("error");
     }
   }
-  return <button className={className} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
+  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }
 
 export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {

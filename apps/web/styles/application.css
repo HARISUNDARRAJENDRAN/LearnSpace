@@ -702,6 +702,10 @@
   font-family: Inter, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+.application-main:has(.home-dashboard) { background: #fff; }
+.application-header-home { border-bottom: 0; background: #fff; min-height: 80px; }
+.application-header-home .application-header-title { color: #1d1d1f; font-size: 29px; font-weight: 600; letter-spacing: -0.035em; }
+
 .application-header-start,
 .application-header-context {
   display: flex;

@@ -10,7 +10,7 @@
     "start:standalone": "node scripts/start-standalone.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint app components tests next.config.mjs types.d.ts",
-    "test": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/hero.test.tsx tests/auth.test.ts tests/auth.integration.test.ts tests/onboarding.integration.test.ts tests/discovery.test.ts tests/discovery.integration.test.ts tests/source-discovery.integration.test.ts tests/home.integration.test.ts tests/study.integration.test.ts",
+    "test": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/hero.test.tsx tests/auth.test.ts tests/auth.integration.test.ts tests/onboarding.integration.test.ts tests/discovery.test.ts tests/discovery.integration.test.ts tests/source-discovery.integration.test.ts tests/home.integration.test.ts tests/home-dashboard.test.tsx tests/study.integration.test.ts",
     "test:e2e": "node tests/e2e/run.mjs",
     "test:e2e:production": "node tests/e2e/run.mjs --production",
     "benchmark:source-discovery": "node scripts/benchmark-source-discovery.mjs",

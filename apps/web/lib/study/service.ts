@@ -1013,7 +1013,7 @@ export async function askStudyQuestion(userId: string, sessionId: string, questi
   });
 }
 
-export async function listStudySessions(userId: string): Promise<Array<{ id: string; title: string; status: SessionRow["status"]; mode: SessionRow["mode"]; lastActiveAt: string; resourceCount: number; progressPct: number; activeResource: { id: string; title: string; type: StudyType; readiness: StudyResourceReadiness } | null; route: string | null }>> {
+export async function listStudySessions(userId: string): Promise<Array<{ id: string; title: string; status: SessionRow["status"]; mode: SessionRow["mode"]; lastActiveAt: string; resourceCount: number; progressPct: number; activeResource: { id: string; title: string; type: StudyType; youtubeId: string | null; readiness: StudyResourceReadiness } | null; route: string | null }>> {
   return withUserTransaction(userId, async (tx) => {
     const sessions = await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"))).orderBy(desc(studySessions.lastActiveAt)).limit(50);
     const ids = sessions.map((session) => session.id);
@@ -1036,7 +1036,7 @@ export async function listStudySessions(userId: string): Promise<Array<{ id: str
       if (!row.resource) return [];
       const resource = resourceFromRow({ resource: row.resource, video: row.video, paper: row.paper, versionId: row.versionId, versionStatus: row.versionStatus });
       const type = studyType(resource.type);
-      return type ? [[row.sessionId, { id: resource.id, title: resource.title, type, readiness: resourceReadiness(resource, row.versionId) } as const]] : [];
+      return type ? [[row.sessionId, { id: resource.id, title: resource.title, type, youtubeId: resource.video?.youtubeId ?? null, readiness: resourceReadiness(resource, row.versionId) } as const]] : [];
     }));
     return sessions.map((session) => {
       const active = activeBySession.get(session.id) ?? null;

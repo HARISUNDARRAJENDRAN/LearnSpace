@@ -201,6 +201,10 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
   await expect(page.locator("main.home-canvas")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Continue Learning", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent History", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "You Might Like", exact: true })).toBeVisible();
+  await expect(page.getByText("Your next lesson is waiting.")).toBeVisible();
   await page.goto("/app/discover");
   await expect(page.getByRole("heading", { name: "Recommended videos" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Research worth reading" })).toBeVisible();

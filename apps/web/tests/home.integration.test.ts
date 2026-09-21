@@ -153,6 +153,10 @@ test(
 
       const otherHome = await getLearnHome(otherLearner.id);
       assert.equal(otherHome.continueWatching?.resourceId, resourceIds.other);
+      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.anchor}`;
+      assert.equal((await getLearnHome(owner.id)).continueWatching?.resourceId, resourceIds.olderSession);
+      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.olderSession}`;
+      assert.equal((await getLearnHome(owner.id)).continueWatching, null);
     } finally {
       await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN ${migrator(userIds)}`;
       await migrator`DELETE FROM study.session_resources WHERE study_session_id IN ${migrator(Object.values(sessionIds))}`;
