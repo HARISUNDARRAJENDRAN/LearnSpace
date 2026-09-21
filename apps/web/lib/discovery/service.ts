@@ -603,39 +603,32 @@ async function generateRun(
 }
 
 export async function getHomeFeed(userId: string, surface: "home" | "discover" = "home"): Promise<DiscoveryHomeResponse> {
-  const fingerprints = await withUserTransaction(userId, async (tx) => {
-    const profileLoad = await loadDiscoveryProfile(tx, userId);
-    return {
-      profileFingerprint: profileFingerprint(profileLoad),
-      catalogFingerprint: await catalogFingerprint(tx),
-    };
-  });
-  const cached = surface === "home" ? await getCachedHomeFeed(userId, fingerprints) : null;
-  if (cached) return cached;
   const result = await withUserTransaction(userId, async (tx) => {
     const now = new Date();
     const profileLoad = await loadDiscoveryProfile(tx, userId);
-    const currentFingerprints = {
+    const fingerprints = {
       profileFingerprint: profileFingerprint(profileLoad),
       catalogFingerprint: await catalogFingerprint(tx),
     };
-    const reusableRun = await findReusableRun(tx, userId, now, surface, currentFingerprints);
+    const cached = surface === "home" ? await getCachedHomeFeed(userId, fingerprints) : null;
+    if (cached) return { response: cached, fingerprints: null };
+    const reusableRun = await findReusableRun(tx, userId, now, surface, fingerprints);
     const activeSessionResources = await loadDiscoveryResources(tx, profileLoad.activeSessionResourceIds, userId);
     if (reusableRun) {
       const ranked = await loadRankedRun(tx, reusableRun);
       return {
         response: responseFromRanked(reusableRun.id, reusableRun.createdAt, profileLoad, ranked, activeSessionResources, now.getTime() - reusableRun.createdAt.getTime() > durableFeedTtlMs),
-        fingerprints: currentFingerprints,
+        fingerprints,
       };
     }
     const resourcesForRanker = (await loadDiscoveryResources(tx)).filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id));
-    const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface, currentFingerprints);
+    const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface, fingerprints);
     return {
       response: responseFromRanked(run.id, now, profileLoad, ranked, activeSessionResources, false),
-      fingerprints: currentFingerprints,
+      fingerprints,
     };
   });
-  if (surface === "home") await setCachedHomeFeed(userId, result.fingerprints, result.response);
+  if (surface === "home" && result.fingerprints) await setCachedHomeFeed(userId, result.fingerprints, result.response);
   return result.response;
 }
 

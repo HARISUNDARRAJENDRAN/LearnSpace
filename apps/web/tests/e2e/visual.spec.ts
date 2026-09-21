@@ -3,10 +3,13 @@ import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 import { sessionCookieName } from "../../lib/auth/cookies";
 import { createSession } from "../../lib/auth/repository";
+import { getHomeFeed } from "../../lib/discovery/service";
+import { cleanupHomeFixture, seedHomeFixture, stabilizeHomeRecommendations, type HomeFixture } from "./home-fixture";
 
 const desktop = { width: 1440, height: 900 };
 const tablet = { width: 1024, height: 768 };
 const mobile = { width: 390, height: 844 };
+const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
 
 async function stabilize(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -50,6 +53,49 @@ test("landing hero visual regression", async ({ page }) => {
   }
 });
 
+test.describe("populated Home visual regression", () => {
+  test.skip(!databaseUrl, "requires the CI database environment");
+
+  let homeDatabase: ReturnType<typeof postgres> | undefined;
+  let homeFixture: HomeFixture;
+
+  test.beforeAll(async () => {
+    homeDatabase = postgres(databaseUrl as string, { max: 1, prepare: false });
+    homeFixture = await seedHomeFixture(homeDatabase);
+    const feed = await getHomeFeed(homeFixture.userId);
+    if (feed.sections.recommendedVideos.length < 4) throw new Error("Home visual fixture needs four recommendations");
+    if (!feed.runId) throw new Error("Home visual fixture did not create a recommendation run");
+    await stabilizeHomeRecommendations(homeDatabase, homeFixture, feed.runId);
+  });
+
+  test.afterAll(async () => {
+    if (!homeDatabase || !homeFixture) return;
+    await cleanupHomeFixture(homeDatabase, homeFixture);
+    await homeDatabase.end({ timeout: 5 });
+    homeDatabase = undefined;
+  });
+
+  test("populated Home dashboard at desktop, tablet, and mobile breakpoints", async ({ page }) => {
+    await page.context().addCookies([{ name: sessionCookieName, value: homeFixture.sessionToken, url: "http://localhost:3100", httpOnly: true, sameSite: "Lax" }]);
+    for (const [name, viewport] of [
+      ["desktop", desktop],
+      ["tablet", tablet],
+      ["mobile", mobile],
+    ] as const) {
+      await page.setViewportSize(viewport);
+      await page.goto("/app", { waitUntil: "networkidle" });
+      await expect(page.locator(".home-dashboard")).toBeVisible();
+      await page.waitForFunction(() => [...document.images].every((image) => image.complete));
+      await stabilize(page);
+      await expect(page.locator(".application-main")).toHaveScreenshot(`home-populated-${name}.png`, {
+        animations: "disabled",
+        caret: "hide",
+        maxDiffPixels: 256,
+      });
+    }
+  });
+});
+
 test("login and register auth layouts visual regression", async ({ page }) => {
   for (const [route, name, viewport] of [
     ["/login", "login-desktop", desktop],
@@ -67,8 +113,6 @@ test("login and register auth layouts visual regression", async ({ page }) => {
     });
   }
 });
-
-const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
 
 test.describe("authenticated app shell visual regression", () => {
   test.skip(!databaseUrl, "requires the CI database environment");

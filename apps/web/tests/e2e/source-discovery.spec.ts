@@ -26,7 +26,7 @@ test.beforeAll(async () => {
         INSERT INTO catalog.resources
           (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
         VALUES
-          (${resourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${`Python generators explained ${index + 1}`}, 'A deterministic source-picker video.', 'en', 'public', 'ready', 0.95, '{"test":true}'::jsonb)
+          (${resourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${`Python generators explained ${index + 1}`}, 'A deterministic source-picker video.', 'en', 'public', 'ready', 0.95, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb)
       `;
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)

@@ -1,6 +1,7 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { concepts, libraryItems, resourceConcepts, resources, studySessions, userResourceProgress, videoDetails } from "@learnspace/db/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { youtubeThumbnailSources } from "./thumbnail";
 
 const continueLimit = 1;
 const relatedLimit = 4;
@@ -31,14 +32,6 @@ export type LearnHomeData = {
   relatedAnchor: { resourceId: string; title: string } | null;
   relatedVideos: HomeVideoItem[];
 };
-
-function thumbnailUrls(youtubeId: string): { primary: string; fallback: string } | null {
-  if (!/^[A-Za-z0-9_-]{11}$/.test(youtubeId)) return null;
-  return {
-    primary: `https://i.ytimg.com/vi/${youtubeId}/maxresdefault.jpg`,
-    fallback: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
-  };
-}
 
 function visibleResource(userId: string) {
   return or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"]));
@@ -80,7 +73,7 @@ async function loadContinueCandidates(tx: Transaction, userId: string, status: "
     .limit(continueLimit);
 
   return rows.map((row) => {
-    const thumbnails = thumbnailUrls(row.video.youtubeId);
+    const thumbnails = youtubeThumbnailSources(row.video.youtubeId);
     return {
     resourceId: row.resource.id,
     title: row.resource.title,
@@ -158,7 +151,7 @@ async function loadRelatedVideos(tx: Transaction, userId: string, anchorResource
 
   const reasonConcept = anchorConcepts[0]?.name ?? "this lesson";
   return rows.map((row) => {
-    const thumbnails = thumbnailUrls(row.youtubeId);
+    const thumbnails = youtubeThumbnailSources(row.youtubeId);
     return {
       resourceId: row.resourceId,
       title: row.title,

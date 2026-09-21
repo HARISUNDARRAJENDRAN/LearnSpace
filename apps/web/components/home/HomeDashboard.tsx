@@ -1,10 +1,10 @@
-import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, BookOpen, Clock3, MoreHorizontal, Play, Sparkles } from "lucide-react";
 import type { DiscoveryCard, DiscoveryHomeResponse } from "@learnspace/shared";
 import type { LearnHomeData } from "../../lib/home/service";
 import { StartStudyButton } from "../study/StudyActions";
 import { YouTubeThumbnail } from "./YouTubeThumbnail";
+import { youtubeThumbnailFallback, youtubeThumbnailSources } from "../../lib/home/thumbnail";
 
 type HomeSession = Awaited<ReturnType<typeof import("../../lib/study/service").listStudySessions>>[number];
 
@@ -80,13 +80,11 @@ function HistoryItem({ session }: { session: HomeSession }) {
   const resource = session.activeResource;
   const type = resource?.type === "paper" ? "Research" : "Learning";
   const youtubeId = resource?.type === "video" ? resource.youtubeId : null;
-  const thumbnail = youtubeId && /^[A-Za-z0-9_-]{11}$/.test(youtubeId)
-    ? { src: `https://i.ytimg.com/vi/${youtubeId}/maxresdefault.jpg`, fallback: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` }
-    : null;
+  const thumbnail = youtubeThumbnailSources(youtubeId);
   return (
     <Link className="home-history-item" href={session.route ?? "/app/sessions"}>
       <span className="home-history-thumb" aria-hidden="true">
-        {thumbnail ? <YouTubeThumbnail src={thumbnail.src} fallbackSrc={thumbnail.fallback} alt="" fill sizes="58px" /> : <span className={`home-history-icon home-history-icon-${resource?.type ?? "session"}`}>{resource?.type === "paper" ? "P" : "V"}</span>}
+        {thumbnail ? <YouTubeThumbnail src={thumbnail.primary} fallbackSrc={thumbnail.fallback} alt="" fill sizes="58px" /> : <span className={`home-history-icon home-history-icon-${resource?.type ?? "session"}`}>{resource?.type === "paper" ? "P" : "V"}</span>}
       </span>
       <span className="home-history-copy">
         <strong>{resource?.title ?? session.title}</strong>
@@ -103,7 +101,7 @@ function RecommendationCard({ card }: { card: DiscoveryCard }) {
   return (
     <article className="home-recommendation-card">
       <div className="home-recommendation-media">
-        {card.thumbnailUrl ? <Image src={card.thumbnailUrl} alt="" fill sizes="(max-width: 640px) 100vw, (max-width: 1040px) 50vw, 25vw" /> : <div className="home-media-placeholder" aria-hidden="true"><Sparkles /></div>}
+        {card.thumbnailUrl ? <YouTubeThumbnail src={card.thumbnailUrl} fallbackSrc={youtubeThumbnailFallback(card.thumbnailUrl)} alt="" fill sizes="(max-width: 640px) 100vw, (max-width: 1040px) 50vw, 25vw" /> : <div className="home-media-placeholder" aria-hidden="true"><Sparkles /></div>}
         <span className="home-recommendation-play" aria-hidden="true"><Play /></span>
         <StartStudyButton resourceId={card.resourceId} origin="home" recommendationRunId={card.runId} label={`Play ${card.title}`} className="home-recommendation-action" />
       </div>

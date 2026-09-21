@@ -55,8 +55,8 @@ test.beforeAll(async () => {
       VALUES
         (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A seeded discovery lesson', 'A deterministic lesson used by browser tests.', 'en', 'public', 'ready', 0.98, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
         (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A seeded research paper', 'A deterministic paper used by browser tests.', 'en', 'public', 'ready', 0.96, '{"paperClass":"current","test":true}'::jsonb),
-        (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"test":true}'::jsonb),
-        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"test":true}'::jsonb)
+        (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
+        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb)
     `;
     await tx`
       INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
@@ -85,7 +85,7 @@ test.beforeAll(async () => {
         INSERT INTO catalog.resources
           (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
         VALUES
-          (${decoyResourceId}, NULL, 'video', 'youtube', ${decoyYoutubeId}, ${`https://www.youtube.com/watch?v=${decoyYoutubeId}`}, ${`Core concept decoy ${index + 1}`}, 'A deterministic core-concept decoy used to keep an adjacent resource outside the initial recommendation range.', 'en', 'public', 'ready', ${decoyQuality}, '{"test":true}'::jsonb)
+          (${decoyResourceId}, NULL, 'video', 'youtube', ${decoyYoutubeId}, ${`https://www.youtube.com/watch?v=${decoyYoutubeId}`}, ${`Core concept decoy ${index + 1}`}, 'A deterministic core-concept decoy used to keep an adjacent resource outside the initial recommendation range.', 'en', 'public', 'ready', ${decoyQuality}, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb)
       `;
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)

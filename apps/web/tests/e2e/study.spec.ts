@@ -41,7 +41,7 @@ test.beforeAll(async () => {
       INSERT INTO catalog.resources
         (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
       VALUES
-        (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A deterministic Study video', 'A local browser-test lesson with no fabricated transcript.', 'en', 'public', 'ready', 0.99, '{"test":true}'::jsonb),
+        (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A deterministic Study video', 'A local browser-test lesson with no fabricated transcript.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
         (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A deterministic Study paper', 'A local browser-test paper with catalogue metadata only.', 'en', 'public', 'ready', 0.98, '{"paperClass":"current","test":true}'::jsonb)
     `;
     await tx`

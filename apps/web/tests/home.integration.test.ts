@@ -9,10 +9,12 @@ test(
   "Learn Home reads scoped continuation and related videos",
   { skip: databaseAvailable ? false : "DATABASE_URL, DATABASE_AUTH_URL, and DATABASE_MIGRATOR_URL are required" },
   async () => {
-    const [{ closeDb }, { createEmailUser }, { getLearnHome }] = await Promise.all([
+    const [{ closeDb }, { createEmailUser }, { getLearnHome }, { getHomeFeed }, { startOrResumeStudySession }] = await Promise.all([
       import("@learnspace/db"),
       import("../lib/auth/repository"),
       import("../lib/home/service"),
+      import("../lib/discovery/service"),
+      import("../lib/study/service"),
     ]);
     const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
     if (!migratorUrl) throw new Error("DATABASE_MIGRATOR_URL is required for Home integration tests");
@@ -32,12 +34,19 @@ test(
       paper: randomUUID(),
       paused: randomUUID(),
       other: randomUUID(),
+      abandoned: randomUUID(),
+      private: randomUUID(),
+      deleted: randomUUID(),
+      invalid: randomUUID(),
     };
     const sessionIds = {
       anchor: randomUUID(),
       older: randomUUID(),
       paused: randomUUID(),
       other: randomUUID(),
+      abandoned: randomUUID(),
+      private: randomUUID(),
+      invalid: randomUUID(),
     };
     const now = new Date();
     const ago = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
@@ -52,6 +61,10 @@ test(
       [resourceIds.completed, "Neural networks from scratch", "History Lab", "completed"],
       [resourceIds.paused, "Paused video lesson", "Paused Lab", "paused"],
       [resourceIds.other, "Other learner lesson", "Other Lab", "other"],
+      [resourceIds.abandoned, "Abandoned lesson", "Abandoned Lab", "abandoned"],
+      [resourceIds.private, "Private lesson", "Private Lab", "private"],
+      [resourceIds.deleted, "Deleted lesson", "Deleted Lab", "deleted"],
+      [resourceIds.invalid, "Invalid metadata lesson", "Invalid Lab", "invalid"],
     ] as const;
 
     try {
@@ -97,6 +110,9 @@ test(
           [sessionIds.older, owner.id, resourceIds.olderSession, "active", ago(120)],
           [sessionIds.paused, pausedLearner.id, resourceIds.paused, "paused", ago(45)],
           [sessionIds.other, otherLearner.id, resourceIds.other, "active", ago(20)],
+          [sessionIds.abandoned, owner.id, resourceIds.abandoned, "abandoned", ago(80)],
+          [sessionIds.private, owner.id, resourceIds.private, "active", ago(90)],
+          [sessionIds.invalid, owner.id, resourceIds.invalid, "active", ago(180)],
         ] as const;
         for (const [sessionId, userId, resourceId, status, lastActiveAt] of sessions) {
           await tx`
@@ -112,6 +128,9 @@ test(
               (${sessionId}, ${resourceId}, 'preparing', 'primary', 0, 'user')
           `;
         }
+        await tx`UPDATE catalog.video_details SET youtube_id = 'invalid' WHERE resource_id = ${resourceIds.invalid}`;
+        await tx`UPDATE catalog.resources SET owner_user_id = ${otherLearner.id}, visibility = 'private' WHERE id = ${resourceIds.private}`;
+        await tx`UPDATE catalog.resources SET deleted_at = now() WHERE id = ${resourceIds.deleted}`;
 
         const progressRows = [
           [owner.id, resourceIds.anchor, sessionIds.anchor, "active", 64, ago(32), null],
@@ -120,6 +139,10 @@ test(
           [owner.id, resourceIds.paper, null, "active", 40, ago(10), null],
           [pausedLearner.id, resourceIds.paused, sessionIds.paused, "active", 48, ago(45), null],
           [otherLearner.id, resourceIds.other, sessionIds.other, "active", 31, ago(20), null],
+          [owner.id, resourceIds.abandoned, sessionIds.abandoned, "active", 20, ago(80), null],
+          [owner.id, resourceIds.private, sessionIds.private, "active", 20, ago(90), null],
+          [owner.id, resourceIds.deleted, null, "active", 20, ago(100), null],
+          [owner.id, resourceIds.invalid, sessionIds.invalid, "active", 20, ago(180), null],
         ] as const;
         for (const [userId, resourceId, lastSessionId, status, progressPct, lastOpenedAt, completedAt] of progressRows) {
           await tx`
@@ -153,14 +176,46 @@ test(
 
       const otherHome = await getLearnHome(otherLearner.id);
       assert.equal(otherHome.continueWatching?.resourceId, resourceIds.other);
+      const ownerFeed = await getHomeFeed(owner.id);
+      const recommendation = ownerFeed.sections.recommendedVideos[0];
+      assert.ok(recommendation?.runId);
+      const startedRecommendation = await startOrResumeStudySession(owner.id, {
+        resourceId: recommendation.resourceId,
+        origin: "home",
+        recommendationRunId: recommendation.runId,
+        idempotencyKey: `home-recommendation-${randomUUID()}`,
+      });
+      assert.equal(startedRecommendation.resourceType, "video");
+      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${recommendation.resourceId}`;
+      await assert.rejects(
+        () => startOrResumeStudySession(otherLearner.id, {
+          resourceId: recommendation.resourceId,
+          origin: "home",
+          recommendationRunId: recommendation.runId,
+          idempotencyKey: `cross-user-recommendation-${randomUUID()}`,
+        }),
+        (error: unknown) => error instanceof Error && error.name === "AuthError" && "code" in error && error.code === "INVALID_RECOMMENDATION_CONTEXT",
+      );
       await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.anchor}`;
       assert.equal((await getLearnHome(owner.id)).continueWatching?.resourceId, resourceIds.olderSession);
       await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.olderSession}`;
+      const malformed = await getLearnHome(owner.id);
+      assert.equal(malformed.continueWatching?.resourceId, resourceIds.invalid);
+      assert.equal(malformed.continueWatching?.thumbnailUrl, null);
+      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.invalid}`;
       assert.equal((await getLearnHome(owner.id)).continueWatching, null);
     } finally {
+      await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
+      await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
+      await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id IN ${migrator(userIds)}) OR resource_id IN ${migrator(Object.values(resourceIds))}`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id IN ${migrator(userIds)}`;
+      await migrator`DELETE FROM discovery.user_concept_affinity WHERE user_id IN ${migrator(userIds)}`;
+      await migrator`DELETE FROM ops.outbox_events WHERE user_id IN ${migrator(userIds)}`;
+      await migrator`DELETE FROM ops.idempotency_records WHERE user_id IN ${migrator(userIds)}`;
+      await migrator`DELETE FROM activity.activity_events WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN ${migrator(userIds)}`;
-      await migrator`DELETE FROM study.session_resources WHERE study_session_id IN ${migrator(Object.values(sessionIds))}`;
-      await migrator`DELETE FROM study.study_sessions WHERE id IN ${migrator(Object.values(sessionIds))}`;
+      await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(userIds)}) OR study_session_id IN ${migrator(Object.values(sessionIds))}`;
+      await migrator`DELETE FROM study.study_sessions WHERE user_id IN ${migrator(userIds)}`;
       await migrator`DELETE FROM catalog.library_items WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(Object.values(resourceIds))}`;
