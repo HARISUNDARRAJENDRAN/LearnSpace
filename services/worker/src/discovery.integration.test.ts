@@ -252,6 +252,7 @@ test(
       restoreEnv("INTERNAL_SERVICE_TOKEN", previousToken);
       await close(agent);
       await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
+      await migrator`DELETE FROM catalog.resource_concepts WHERE concept_id = ${conceptId}`;
       if (sourceResourceIds.length > 0) {
         await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${migrator(sourceResourceIds)}`;
         await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(sourceResourceIds)}`;
@@ -264,6 +265,9 @@ test(
       await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}, ${`lease-${leaseRunId}`}) OR id IN (${failedJobId}, ${leaseJobId}) OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`}, ${`discovery:source-picker:${leaseRunId}`})`;
       await migrator`DELETE FROM ops.outbox_events WHERE id IN (${outboxId}, ${instantOutboxId})`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
+      await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN (SELECT id FROM catalog.resources WHERE owner_user_id = ${userId})`;
+      await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (SELECT id FROM catalog.resources WHERE owner_user_id = ${userId})`;
+      await migrator`DELETE FROM catalog.resources WHERE owner_user_id = ${userId}`;
       await migrator`DELETE FROM knowledge.concepts WHERE id = ${conceptId}`;
       await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
       await migrator.end({ timeout: 5 });

@@ -1,8 +1,8 @@
-import { NextResponse, type NextRequest } from "next/server";
 import { sourceDiscoverySearchRequestSchema } from "@learnspace/shared";
+import { after, type NextRequest, NextResponse } from "next/server";
 import { authErrorResponse } from "../../../../../lib/auth/errors";
-import { readJson } from "../../../../../lib/auth/request";
 import { enforceRateLimit } from "../../../../../lib/auth/rate-limit";
+import { readJson } from "../../../../../lib/auth/request";
 import { requireCompletedSession } from "../../../../../lib/discovery/access";
 import { resolveSource, searchSources } from "../../../../../lib/source-discovery/service";
 
@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       const preview = await resolveSource(session.user.id, { mode: input.mode, url: input.query.trim(), correlationId: input.correlationId });
       return NextResponse.json({ status: "preview", runId: null, mode: input.mode, query: input.query, candidates: [], preview });
     }
-    const result = await searchSources(session.user.id, input);
+    const result = await searchSources(session.user.id, input, (work) => after(work));
     const response = NextResponse.json(result);
     if (result.timings) {
       response.headers.set("Server-Timing", [

@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { withUserTransaction, type Transaction } from "@learnspace/db";
+import { type Transaction, withUserTransaction } from "@learnspace/db";
 import { conceptAliases, concepts, outboxEvents, paperDetails, recommendationCandidates, recommendationRuns, resources, videoDetails } from "@learnspace/db/schema";
 import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchRequest, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
-import { SOURCE_DISCOVERY_MAX_RESULTS, SOURCE_DISCOVERY_MIN_RESULTS, classifySourceUrl, normalizeQuery, sourceDiscoveryCandidateSchema, sourceDiscoveryInstantBatchSchema, sourceModeForUrl, type SourceDiscoveryResolveRequest } from "@learnspace/shared";
+import { classifySourceUrl, normalizeQuery, SOURCE_DISCOVERY_MAX_RESULTS, SOURCE_DISCOVERY_MIN_RESULTS, type SourceDiscoveryResolveRequest, sourceDiscoveryCandidateSchema, sourceDiscoveryInstantBatchSchema, sourceModeForUrl } from "@learnspace/shared";
 import { and, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
-import { z } from "zod";
+import type { z } from "zod";
 import { AuthError } from "../auth/errors";
+import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, type DiscoveryResource, type RankedResource, rankSourceResources, sourceQuerySignals } from "../discovery/ranker";
 import { loadDiscoveryProfile, loadDiscoveryResources } from "../discovery/service";
-import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type RankedResource } from "../discovery/ranker";
 import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
 
 const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
@@ -56,6 +56,7 @@ function reasonLabel(code: string, mode: SourceDiscoveryMode): string {
 
 type SourceOrigin = "catalog" | "external_refresh" | "direct_url";
 type CandidateDiagnostics = { sourceOrigin: SourceOrigin; queryRelevance?: number; qualificationReason?: string };
+export type SourceDiscoveryDeferredWork = (work: () => Promise<void>) => void;
 
 function sourceCandidate(candidate: RankedResource, runId: string | null, mode: SourceDiscoveryMode, diagnostics?: CandidateDiagnostics): SourceDiscoveryCandidate {
   const resource = candidate.resource;
@@ -122,6 +123,20 @@ function runMode(run: typeof recommendationRuns.$inferSelect): SourceDiscoveryMo
   return run.contextSnapshot?.mode === "research" ? "research" : "learn";
 }
 
+function runStatus(run: typeof recommendationRuns.$inferSelect): "completed" | "searching" | "failed" {
+  if (run.status === "failed") return "failed";
+  return run.status === "running" || run.status === "queued" ? "searching" : "completed";
+}
+
+function runRefreshError(run: typeof recommendationRuns.$inferSelect, mode: SourceDiscoveryMode): { code: string; message: string } | undefined {
+  if (run.status !== "failed") return undefined;
+  const stored = recordValue(run.contextSnapshot, "refreshError");
+  return {
+    code: asString(recordValue(stored, "code")) ?? "DISCOVERY_FAILED",
+    message: asString(recordValue(stored, "message")) ?? (mode === "research" ? "We couldn't finish finding relevant papers." : "We couldn't finish finding strong learning videos."),
+  };
+}
+
 async function resolveConcept(tx: Transaction, query: string): Promise<{ id: string; name: string } | null> {
   const normalized = normalizeQuery(query).toLowerCase();
   const exact = await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(and(
@@ -168,15 +183,17 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
   const refreshedResourceIds = arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string");
   const poolResourceIds = [...new Set([...candidateRows.map((row) => row.resourceId), ...refreshedResourceIds])];
   const mode = runMode(run);
-  if (run.status === "failed") throw sourceError("DISCOVERY_FAILED", mode === "research" ? "We couldn't finish finding relevant papers." : "We couldn't finish finding strong learning videos.", 502);
+  const status = runStatus(run);
+  const refreshError = runRefreshError(run, mode);
   const ephemeral = ephemeralCandidates(run);
   if (poolResourceIds.length === 0) {
     return {
-      status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
+      status,
       runId: run.id,
       mode,
       query: run.queryText ?? "",
       candidates: ephemeral,
+      ...(refreshError ? { refreshError } : {}),
     };
   }
   const profileLoad = await loadDiscoveryProfile(tx, userId);
@@ -202,11 +219,12 @@ async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$i
     )) === index)
     .slice(0, sourceResultLimit);
   return {
-    status: run.status === "running" || run.status === "queued" ? "searching" : "completed",
+    status,
     runId: run.id,
     mode,
     query: run.queryText ?? "",
     candidates,
+    ...(refreshError ? { refreshError } : {}),
   };
 }
 
@@ -233,12 +251,23 @@ async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mo
 }
 
 type InstantAgentBatch = z.infer<typeof sourceDiscoveryInstantBatchSchema>;
-type ExternalPool = { resources: DiscoveryResource[]; cacheHit: boolean; cacheState: "fresh" | "stale" | "miss"; cacheTier: "memory" | "redis" | null; cacheMs: number; exaMs: number };
+type ExternalPool = {
+  resources: DiscoveryResource[];
+  cacheHit: boolean;
+  cacheState: "fresh" | "stale" | "miss";
+  cacheTier: "memory" | "redis" | null;
+  cacheMs: number;
+  exaMs: number;
+  providerFailed: boolean;
+  revalidation?: Promise<ExternalPool>;
+};
 
-const instantRefreshes = new Map<string, Promise<DiscoveryResource[]>>();
+type ExternalFetchResult = { resources: DiscoveryResource[]; exaMs: number; providerFailed: boolean };
+
+const instantRefreshes = new Map<string, Promise<ExternalFetchResult>>();
 
 function emptyExternalPool(): ExternalPool {
-  return { resources: [], cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs: 0, exaMs: 0 };
+  return { resources: [], cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs: 0, exaMs: 0, providerFailed: false };
 }
 
 function deadline(ms: number): Promise<null> {
@@ -259,7 +288,7 @@ function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode):
   if (mode === "learn") {
     return dedupeExternalResources(batch.youtube.flatMap((candidate) => {
       const parsed = classifySourceUrl(candidate.canonical_url);
-      if (!parsed || parsed.provider !== "youtube") return [];
+      if (parsed?.provider !== "youtube") return [];
       const description = candidate.evidence?.join(" ") || null;
       return [{
         id: `external:youtube:${parsed.id}`,
@@ -293,7 +322,7 @@ function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode):
   }
   return dedupeExternalResources(batch.arxiv.flatMap((candidate) => {
     const parsed = classifySourceUrl(candidate.canonical_url);
-    if (!parsed || parsed.provider !== "arxiv") return [];
+    if (parsed?.provider !== "arxiv") return [];
     const description = candidate.abstract || candidate.evidence?.join(" ") || null;
     const publicationDate = parseDateValue(candidate.published_at);
     return [{
@@ -333,11 +362,16 @@ function instantBudgetMs(): number {
   return Number.isFinite(value) ? Math.min(450, Math.max(100, value)) : 450;
 }
 
+function instantProviderTimeoutMs(): number {
+  const value = Number(process.env.SOURCE_DISCOVERY_PROVIDER_TIMEOUT_MS ?? 8_000);
+  return Number.isFinite(value) ? Math.min(15_000, Math.max(1_000, value)) : 8_000;
+}
+
 function instantPoolKey(mode: SourceDiscoveryMode, rankingIntent: SourceRankingIntent, query: string): string {
   return createHash("sha256").update(`${mode}\n${rankingIntent}\n${query}`).digest("hex");
 }
 
-async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number } | null> {
+async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number; providerFailed: boolean } | null> {
   const agentUrl = process.env.SOURCE_DISCOVERY_AGENT_URL ?? process.env.DISCOVERY_AGENT_URL;
   const token = process.env.INTERNAL_SERVICE_TOKEN;
   if (!agentUrl || !token) return null;
@@ -353,7 +387,10 @@ async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankin
         limit: sourceResultLimit,
         trace_id: correlationId,
       }),
-      signal: AbortSignal.timeout(instantBudgetMs()),
+      // The interactive budget bounds the response, not the provider work.
+      // The Python service deliberately keeps this request alive and warms its
+      // cache after the client has received a partial response.
+      signal: AbortSignal.timeout(instantProviderTimeoutMs()),
     });
     if (!response.ok) {
       console.warn("source_discovery_instant_failed", { correlationId, status: response.status });
@@ -364,24 +401,25 @@ async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankin
       console.warn("source_discovery_instant_invalid_response", { correlationId });
       return null;
     }
+    const resources = externalResources(parsed.data, mode);
     if (parsed.data.failures.length > 0) console.warn("source_discovery_instant_provider_failure", { correlationId, failures: parsed.data.failures });
-    return { resources: externalResources(parsed.data, mode), exaMs: performance.now() - started };
+    return { resources, exaMs: performance.now() - started, providerFailed: resources.length === 0 && parsed.data.failures.length > 0 };
   } catch (error) {
     console.warn("source_discovery_instant_unavailable", { correlationId, error: error instanceof Error ? error.name : "unknown" });
     return null;
   }
 }
 
-async function refreshExternalPool(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number }> {
+async function refreshExternalPool(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<ExternalFetchResult> {
   const key = instantPoolKey(mode, rankingIntent, query);
   const existing = instantRefreshes.get(key);
-  if (existing) return { resources: await existing, exaMs: 0 };
+  if (existing) return existing;
   const refresh = callInstantAgent(mode, query, rankingIntent, correlationId).then(async (result) => {
-    if (!result) return { resources: [], exaMs: 0 };
-    void setSourceCandidatePool(mode, rankingIntent, query, result.resources);
+    if (!result) return { resources: [], exaMs: 0, providerFailed: true };
+    if (result.resources.length > 0) void setSourceCandidatePool(mode, rankingIntent, query, result.resources);
     return result;
   }).finally(() => instantRefreshes.delete(key));
-  instantRefreshes.set(key, refresh.then((result) => result.resources));
+  instantRefreshes.set(key, refresh);
   return refresh;
 }
 
@@ -390,8 +428,19 @@ async function loadExternalPool(mode: SourceDiscoveryMode, query: string, rankin
   const cached = await getSourceCandidatePool(mode, rankingIntent, query);
   const cacheMs = performance.now() - cacheStarted;
   if (cached) {
-    if (cached.stale) void refreshExternalPool(mode, query, rankingIntent, correlationId);
-    return { resources: cached.resources, cacheHit: true, cacheState: cached.stale ? "stale" : "fresh", cacheTier: cached.tier, cacheMs, exaMs: 0 };
+    const stale = cached.stale;
+    const pool: ExternalPool = { resources: cached.resources, cacheHit: true, cacheState: stale ? "stale" : "fresh", cacheTier: cached.tier, cacheMs, exaMs: 0, providerFailed: false };
+    if (stale) {
+      pool.revalidation = refreshExternalPool(mode, query, rankingIntent, correlationId).then((result) => ({
+        ...result,
+        cacheHit: false,
+        cacheState: "miss" as const,
+        cacheTier: null,
+        cacheMs: 0,
+        providerFailed: result.providerFailed,
+      }));
+    }
+    return pool;
   }
   const result = await refreshExternalPool(mode, query, rankingIntent, correlationId);
   return { ...result, cacheHit: false, cacheState: "miss", cacheTier: null, cacheMs };
@@ -480,6 +529,90 @@ async function persistInteractiveRun(
   });
 }
 
+async function finalizeInteractiveRun(
+  userId: string,
+  runId: string,
+  mode: SourceDiscoveryMode,
+  query: string,
+  rankingIntent: SourceRankingIntent,
+  profile: Parameters<typeof rankSourceResources>[1],
+  catalogResources: DiscoveryResource[],
+  concept: { id: string; name: string } | null,
+  external: ExternalPool,
+): Promise<void> {
+  if (external.providerFailed) {
+    await withUserTransaction(userId, async (tx) => {
+      const runs = await tx.select().from(recommendationRuns).where(and(
+        eq(recommendationRuns.id, runId),
+        eq(recommendationRuns.userId, userId),
+        eq(recommendationRuns.surface, "source_picker"),
+        sql`${recommendationRuns.status} IN ('queued', 'running')`,
+      )).limit(1);
+      const run = runs[0];
+      if (!run) return;
+      await tx.update(recommendationRuns).set({
+        status: "failed",
+        completedAt: new Date(),
+        contextSnapshot: {
+          ...run.contextSnapshot,
+          refreshStatus: "failed",
+          refreshError: {
+            code: "DISCOVERY_PROVIDER_UNAVAILABLE",
+            message: mode === "research" ? "We couldn't reach paper discovery. Try again." : "We couldn't reach video discovery. Try again.",
+          },
+          lateInteractiveRefresh: true,
+        },
+      }).where(eq(recommendationRuns.id, run.id));
+    });
+    return;
+  }
+  if (external.resources.length === 0) return;
+  const allResources = [
+    ...catalogResources,
+    ...external.resources.filter((resource) => !catalogResources.some((existing) => existing.provider === resource.provider && existing.externalId === resource.externalId)),
+  ];
+  const ranked = selectSourceResults(rankSourceResources(allResources, profile, query, mode, rankingIntent, new Date(), concept?.id));
+  const qualifiedKeys = new Set(allResources
+    .filter((resource) => sourceQuerySignals(resource, query, concept?.id).qualified)
+    .map((resource) => `${resource.provider}:${resource.externalId}`));
+  const enoughCoverage = qualifiedKeys.size >= sourceCoverageMinimum;
+  await withUserTransaction(userId, async (tx) => {
+    const runs = await tx.select().from(recommendationRuns).where(and(
+      eq(recommendationRuns.id, runId),
+      eq(recommendationRuns.userId, userId),
+      eq(recommendationRuns.surface, "source_picker"),
+      sql`${recommendationRuns.status} IN ('queued', 'running')`,
+    )).limit(1);
+    const run = runs[0];
+    if (!run) return;
+    const ephemeral = ranked
+      .filter((candidate) => candidate.resource.id.startsWith("external:"))
+      .slice(0, sourceResultLimit)
+      .map((candidate) => sourceCandidate(candidate, run.id, mode, {
+        sourceOrigin: "external_refresh",
+        ...(typeof candidate.queryRelevance === "number" ? { queryRelevance: candidate.queryRelevance } : {}),
+        ...(candidate.qualificationReason ? { qualificationReason: candidate.qualificationReason } : {}),
+      }));
+    const nextSnapshot = {
+      ...run.contextSnapshot,
+      refreshStatus: enoughCoverage ? "complete" : "requested",
+      candidateDiagnostics: ranked.slice(0, sourceResultLimit).map((candidate) => ({
+        resourceId: candidate.resource.id,
+        sourceOrigin: candidate.resource.id.startsWith("external:") ? "external_refresh" : "catalog",
+        queryRelevance: candidate.queryRelevance ?? candidate.semanticRelevance,
+        qualificationReason: candidate.qualificationReason ?? null,
+      })),
+      ...(ephemeral.length > 0 ? { ephemeralCandidates: ephemeral } : {}),
+      lateInteractiveRefresh: true,
+    };
+    await tx.update(recommendationRuns).set({
+      status: enoughCoverage ? "completed" : "running",
+      completedAt: enoughCoverage ? new Date() : null,
+      contextSnapshot: nextSnapshot,
+    }).where(eq(recommendationRuns.id, run.id));
+  });
+}
+
 function responseFromFastRun(
   run: typeof recommendationRuns.$inferSelect,
   mode: SourceDiscoveryMode,
@@ -508,7 +641,7 @@ function responseFromFastRun(
   };
 }
 
-async function searchSourcesFast(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
+async function searchSourcesFast(userId: string, input: SourceDiscoverySearchRequest, scheduleDeferred: SourceDiscoveryDeferredWork): Promise<SourceDiscoverySearchResponse> {
   const query = normalizeQuery(input.query);
   const reusable = await withUserTransaction(userId, async (tx) => {
     const existing = await findReusableRun(tx, userId, input.mode, query, input.rankingIntent);
@@ -533,9 +666,17 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   const local = await localPromise;
   const catalogQualifiedCount = local.resources.filter((resource) => sourceQuerySignals(resource, query, local.concept?.id).qualified).length;
   let external = emptyExternalPool();
+  let externalReady = false;
   if (catalogQualifiedCount < sourceCoverageMinimum) {
     const remainingBudget = Math.max(0, instantBudgetMs() - (performance.now() - started));
-    external = await Promise.race([externalPromise, deadline(remainingBudget)]) ?? emptyExternalPool();
+    const raced = await Promise.race([
+      externalPromise.then((value) => ({ value })),
+      deadline(remainingBudget).then(() => null),
+    ]);
+    if (raced) {
+      external = raced.value;
+      externalReady = true;
+    }
   } else {
     void externalPromise.catch(() => undefined);
   }
@@ -553,6 +694,19 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
     rankMs: Number(rankMs.toFixed(2)),
   };
   const run = await persistInteractiveRun(userId, input, query, local.concept, ranked, catalogQualifiedCount, external.resources, input.correlationId, baseTimings);
+  const lateExternalPromise = catalogQualifiedCount < sourceCoverageMinimum
+    ? external.revalidation ?? (external.providerFailed ? Promise.resolve(external) : externalReady ? null : externalPromise)
+    : null;
+  if (lateExternalPromise) {
+    scheduleDeferred(async () => {
+      try {
+        const lateExternal = await lateExternalPromise;
+        await finalizeInteractiveRun(userId, run.id, input.mode, query, input.rankingIntent, local.profile, local.resources, local.concept, lateExternal);
+      } catch (error) {
+        console.warn("source_discovery_late_refresh_failed", { runId: run.id, error: error instanceof Error ? error.name : "unknown" });
+      }
+    });
+  }
   const persistMs = Number((performance.now() - persistStarted).toFixed(2));
   const retrieval = external.resources.length > 0
     ? local.resources.length > 0 ? "blended" : external.cacheHit ? external.cacheTier ?? "live_web" : "live_web"
@@ -566,12 +720,12 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
 
 const interactiveSearches = new Map<string, Promise<SourceDiscoverySearchResponse>>();
 
-export async function searchSources(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
+export async function searchSources(userId: string, input: SourceDiscoverySearchRequest, scheduleDeferred: SourceDiscoveryDeferredWork = (work) => { void work(); }): Promise<SourceDiscoverySearchResponse> {
   const query = normalizeQuery(input.query);
   const key = createHash("sha256").update(`${userId}\n${input.mode}\n${input.rankingIntent}\n${query}`).digest("hex");
   const existing = interactiveSearches.get(key);
   if (existing) return existing;
-  const search = searchSourcesFast(userId, { ...input, query }).finally(() => interactiveSearches.delete(key));
+  const search = searchSourcesFast(userId, { ...input, query }, scheduleDeferred).finally(() => interactiveSearches.delete(key));
   interactiveSearches.set(key, search);
   return search;
 }

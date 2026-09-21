@@ -3,8 +3,8 @@
 import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
 import { ArrowRight, FileText, Link2, LoaderCircle, Search, Video, X } from "lucide-react";
 import Image from "next/image";
+import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { StartStudyButton } from "../study/StudyActions";
 
 type ModalState = "idle" | "searching" | "results" | "resolving_url" | "preview" | "mode_mismatch" | "error";
@@ -218,23 +218,42 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
     }
   }
 
-  async function pollRun(run: string, controller: AbortController, version: number) {
+  async function pollRun(run: string, controller: AbortController, version: number, initialCandidates: SourceDiscoveryCandidate[]) {
     const deadline = Date.now() + sourceDiscoveryPollBudgetMs;
     let waitMs = 1_000;
-    while (Date.now() < deadline) {
-      await delay(Math.min(waitMs, Math.max(0, deadline - Date.now())), controller.signal);
-      const response = await fetch(`/api/v1/source-discovery/runs/${run}`, { signal: controller.signal });
-      if (!response.ok) throw new Error(messageFrom(await readError(response)));
-      const result = await response.json() as SourceDiscoverySearchResponse;
-      if (version !== requestVersion.current) return;
-      setCandidates(result.candidates);
-      if (result.status === "completed") {
-        setState("results");
-        return;
+    let latestCandidates = initialCandidates;
+    try {
+      while (Date.now() < deadline) {
+        await delay(Math.min(waitMs, Math.max(0, deadline - Date.now())), controller.signal);
+        const response = await fetch(`/api/v1/source-discovery/runs/${run}`, { signal: controller.signal });
+        if (!response.ok) throw new Error(messageFrom(await readError(response)));
+        const result = await response.json() as SourceDiscoverySearchResponse;
+        if (version !== requestVersion.current) return;
+        latestCandidates = result.candidates;
+        setCandidates(latestCandidates);
+        if (result.status === "failed" || result.refreshError) {
+          setError(result.refreshError?.message ?? (research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again."));
+          setState(latestCandidates.length > 0 ? "results" : "error");
+          return;
+        }
+        if (result.status === "completed") {
+          setError(null);
+          setState("results");
+          return;
+        }
+        waitMs = Math.min(8_000, waitMs * 2);
       }
-      waitMs = Math.min(8_000, waitMs * 2);
+      if (version === requestVersion.current) {
+        setError(research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again.");
+        setState(latestCandidates.length > 0 ? "results" : "error");
+      }
+    } catch (caught) {
+      if (caught instanceof DOMException && caught.name === "AbortError") throw caught;
+      if (version === requestVersion.current) {
+        setError(caught instanceof Error ? caught.message : "We couldn't search right now. Try again.");
+        setState(latestCandidates.length > 0 ? "results" : "error");
+      }
     }
-    throw new Error(research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again.");
   }
 
   async function submitSearch(event?: FormEvent) {
@@ -283,11 +302,17 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       }
       setRunId(result.runId);
       setCandidates(result.candidates);
+      if (result.status === "failed" || result.refreshError) {
+        setError(result.refreshError?.message ?? (research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again."));
+        setState(result.candidates.length > 0 ? "results" : "error");
+        return;
+      }
       if (result.status === "completed") {
+        setError(null);
         setState("results");
         return;
       }
-      if (result.runId) await pollRun(result.runId, controller, version);
+      if (result.runId) await pollRun(result.runId, controller, version, result.candidates);
     } catch (caught) {
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       if (version === requestVersion.current) {
@@ -334,7 +359,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
           <div className={`source-discovery-lower ${state === "results" || state === "searching" ? "is-results" : ""}`}>
             {state === "searching" && candidates.length === 0 ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Finding the strongest videos…"}</p><span>{research ? "Comparing candidate papers…" : "Checking topic relevance and ranking learning resources…"}</span></div> : null}
-            {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />)}{state === "searching" ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}</> : <div className="source-discovery-empty-results"><p>{research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic."}</p><span>Try making the topic more specific.</span></div>}</div> : null}
+            {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />)}{state === "searching" ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}{state === "results" && error ? <div className="source-discovery-more source-discovery-more-error" role="alert"><span>{error}</span><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}</> : <div className="source-discovery-empty-results"><p>{error ?? (research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic.")}</p><span>Try making the topic more specific.</span></div>}</div> : null}
             {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} /> : null}
             {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? "Research" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
             {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}

@@ -226,7 +226,7 @@ export const sourcePreviewSchema = z.object({
 export type SourcePreview = z.infer<typeof sourcePreviewSchema>;
 
 export const sourceDiscoverySearchResponseSchema = z.object({
-  status: z.enum(["completed", "searching", "preview"]),
+  status: z.enum(["completed", "searching", "failed", "preview"]),
   runId: z.string().uuid().nullable(),
   mode: sourceDiscoveryModeSchema,
   query: z.string(),
@@ -234,6 +234,7 @@ export const sourceDiscoverySearchResponseSchema = z.object({
   preview: sourcePreviewSchema.optional(),
   retrieval: z.enum(["memory", "redis", "catalog", "live_web", "blended"]).optional(),
   cacheState: z.enum(["fresh", "stale", "miss"]).optional(),
+  refreshError: z.object({ code: z.string(), message: z.string() }).optional(),
   timings: z.object({
     cacheMs: z.number().nonnegative().optional(),
     catalogMs: z.number().nonnegative().optional(),

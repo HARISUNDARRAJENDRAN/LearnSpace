@@ -508,3 +508,119 @@ test(
     }
   },
 );
+
+test(
+  "a provider result arriving after the response budget completes the existing partial run",
+  { skip: databaseAvailable ? false : "database URLs are required" },
+  async () => {
+    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
+      import("../lib/auth/repository"),
+      import("../lib/source-discovery/service"),
+      import("@learnspace/db"),
+    ]);
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const user = await createEmailUser({ email: `source-late-${randomUUID()}@example.test`, displayName: "Late Source Test", passwordHash: await hashPassword("source-late-password-123") });
+    const originalFetch = globalThis.fetch;
+    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
+    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const query = `Rust ownership for beginners ${randomUUID().slice(0, 8)}`;
+    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
+    process.env.INTERNAL_SERVICE_TOKEN = "instant-source-late-test";
+    globalThis.fetch = (async (input, init) => {
+      const requestUrl = String(input);
+      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      return new Response(JSON.stringify({
+        trace_id: "late-source-test",
+        youtube: [
+          { youtube_id: "dE7fG9hJ1kL", canonical_url: "https://www.youtube.com/watch?v=dE7fG9hJ1kL", title: `${query} — Full Course`, channel: "Late Source Lab", confidence: 0.95, evidence: ["Rust ownership for beginners"] },
+          { youtube_id: "eF8gH0iK2mN", canonical_url: "https://www.youtube.com/watch?v=eF8gH0iK2mN", title: `Learn ${query} step by step`, channel: "Late Source Lab", confidence: 0.92, evidence: ["beginner ownership lesson"] },
+          { youtube_id: "fG9hI1jK3nP", canonical_url: "https://www.youtube.com/watch?v=fG9hI1jK3nP", title: `Practical ${query} projects`, channel: "Late Source Lab", confidence: 0.9, evidence: ["hands-on Rust ownership"] },
+        ],
+        arxiv: [],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    let runId = "";
+    try {
+      const initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
+      runId = initial.runId ?? "";
+      assert.equal(initial.status, "searching");
+      assert.equal(initial.candidates.length, 0);
+      const deadline = Date.now() + 3_000;
+      let completed: Awaited<ReturnType<typeof getSourceDiscoveryRun>> | null = null;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 75));
+        completed = await getSourceDiscoveryRun(user.id, runId);
+        if (completed.status === "completed") break;
+      }
+      assert.equal(completed?.status, "completed");
+      assert.equal(completed?.candidates.length, 3);
+      assert.ok(completed?.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
+      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
+      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
+      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
+      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
+      await migrator.end({ timeout: 5 });
+      await closeDb();
+    }
+  },
+);
+
+test(
+  "a fast provider failure reaches a terminal run instead of polling forever",
+  { skip: databaseAvailable ? false : "database URLs are required" },
+  async () => {
+    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
+      import("../lib/auth/repository"),
+      import("../lib/source-discovery/service"),
+      import("@learnspace/db"),
+    ]);
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const user = await createEmailUser({ email: `source-failure-${randomUUID()}@example.test`, displayName: "Provider Failure Test", passwordHash: await hashPassword("source-failure-password-123") });
+    const originalFetch = globalThis.fetch;
+    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
+    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const query = `Rust error handling ${randomUUID().slice(0, 8)}`;
+    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
+    process.env.INTERNAL_SERVICE_TOKEN = "instant-source-failure-test";
+    globalThis.fetch = (async (input, init) => {
+      const requestUrl = String(input);
+      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
+      assert.equal(JSON.parse(String(init?.body ?? "{}")).query_text, query);
+      return new Response(JSON.stringify({ trace_id: "failure-source-test", youtube: [], arxiv: [], failures: ["instant:ConnectError"] }), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    let runId = "";
+    try {
+      const initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
+      runId = initial.runId ?? "";
+      assert.equal(initial.status, "searching");
+      const deadline = Date.now() + 2_000;
+      let terminal: Awaited<ReturnType<typeof getSourceDiscoveryRun>> | null = null;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        terminal = await getSourceDiscoveryRun(user.id, runId);
+        if (terminal.status === "failed") break;
+      }
+      assert.equal(terminal?.status, "failed");
+      assert.equal(terminal?.refreshError?.code, "DISCOVERY_PROVIDER_UNAVAILABLE");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
+      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
+      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
+      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
+      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
+      await migrator.end({ timeout: 5 });
+      await closeDb();
+    }
+  },
+);

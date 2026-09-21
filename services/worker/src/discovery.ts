@@ -759,6 +759,7 @@ async function markSourcePickerRefresh(sql: SqlClient, job: JobRow, resourceIds:
       UPDATE discovery.recommendation_runs
       SET status = 'completed', completed_at = COALESCE(completed_at, now()), context_snapshot = context_snapshot || ${tx.json({ refreshStatus: "done", refreshedResourceIds: resourceIds })}
       WHERE id = ${runId}
+        AND (status IN ('queued', 'running') OR context_snapshot->>'refreshStatus' = 'pending_persistence')
     `;
   });
 }
@@ -783,7 +784,7 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
     await sql`
       UPDATE discovery.recommendation_runs
       SET status = 'failed', completed_at = now(), context_snapshot = context_snapshot || ${sql.json({ refreshStatus: "failed" })}
-      WHERE id = ${runId}
+      WHERE id = ${runId} AND status IN ('queued', 'running')
     `;
   }
 }
