@@ -19,7 +19,6 @@ function typeLabel(type: string): string {
 export function SessionsPage({ sessions }: { sessions: SessionSummary[] }) {
   return (
     <main className="product-page sessions-page">
-      <div className="product-page-intro"><p className="application-eyebrow">Learning context</p><h1>Sessions</h1><p>What you are actually learning, and what you left in motion.</p></div>
       {sessions.length === 0 ? <div className="product-empty"><p className="product-empty-kicker">A clear desk</p><h2>Your next session is waiting.</h2><p>Start something from Home, Research, or your Library and it will appear here with its place remembered.</p><Link className="product-primary-link" href="/app">Browse Home</Link></div> : <div className="session-list">{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</div>}
     </main>
   );
@@ -44,20 +43,19 @@ export function LibraryPage({ data }: { data: LibraryPageData }) {
   const otherPublic = data.collections.filter((collection) => collection.ownership === "other");
   return (
     <main className="product-page library-page">
-      <div className="product-page-intro"><p className="application-eyebrow">Your chosen material</p><h1>Library</h1><p>Saved resources and collections with a sequence worth returning to.</p></div>
-      <LibraryLane title="Continue a collection" description="Pick up where an ordered path left off." collections={data.continueCollections} />
-      <LibraryLane title="Your playlists" description="The resources you intentionally grouped." collections={playlists} empty="Create a playlist when you have a sequence in mind." />
-      {ownedPaths.length > 0 ? <LibraryLane title="Your learning paths" description="Structured sequences you created." collections={ownedPaths} /> : null}
+      <LibraryLane title="Continue a collection" collections={data.continueCollections} />
+      <LibraryLane title="Your playlists" collections={playlists} empty="Create a playlist when you have a sequence in mind." />
+      {ownedPaths.length > 0 ? <LibraryLane title="Your learning paths" collections={ownedPaths} /> : null}
       <SavedLane resources={data.savedResources} />
-      <LibraryLane title="LearnSpace collections" description="Editorial collections and structured learning paths." collections={curated} empty="Curated collections will appear here as they are published." />
-      {generated.length > 0 ? <LibraryLane title="Made for you" description="Generated from real learning context." collections={generated} /> : null}
-      {otherPublic.length > 0 ? <LibraryLane title="Other public collections" description="Public collections from other learners and sources." collections={otherPublic} /> : null}
+      <LibraryLane title="LearnSpace collections" collections={curated} empty="Curated collections will appear here as they are published." />
+      {generated.length > 0 ? <LibraryLane title="Made for you" collections={generated} /> : null}
+      {otherPublic.length > 0 ? <LibraryLane title="Other public collections" collections={otherPublic} /> : null}
     </main>
   );
 }
 
-function LibraryLane({ title, description, collections, empty = "Nothing here yet." }: { title: string; description: string; collections: LibraryCollectionSummary[]; empty?: string }) {
-  return <section className="product-lane"><div className="product-lane-heading"><div><p className="application-eyebrow">Library</p><h2>{title}</h2></div><p>{description}</p></div>{collections.length > 0 ? <div className="collection-grid">{collections.map((collection) => <CollectionCard key={collection.id} collection={collection} />)}</div> : <div className="lane-empty">{empty}</div>}</section>;
+function LibraryLane({ title, collections, empty = "Nothing here yet." }: { title: string; collections: LibraryCollectionSummary[]; empty?: string }) {
+  return <section className="product-lane"><div className="product-lane-heading"><h2>{title}</h2></div>{collections.length > 0 ? <div className="collection-grid">{collections.map((collection) => <CollectionCard key={collection.id} collection={collection} />)}</div> : <div className="lane-empty">{empty}</div>}</section>;
 }
 
 function CollectionCard({ collection }: { collection: LibraryCollectionSummary }) {
@@ -67,7 +65,7 @@ function CollectionCard({ collection }: { collection: LibraryCollectionSummary }
 }
 
 function SavedLane({ resources: saved }: { resources: SavedLibraryResource[] }) {
-  return <section className="product-lane"><div className="product-lane-heading"><div><p className="application-eyebrow">Library</p><h2>Saved resources</h2></div><p>Individual things you chose to keep. Not playlists.</p></div>{saved.length > 0 ? <div className="saved-resource-list">{saved.map((resource) => <SavedResourceRow key={resource.resourceId} resource={resource} />)}</div> : <div className="lane-empty">Save a video or paper from Home and it will live here.</div>}</section>;
+  return <section className="product-lane"><div className="product-lane-heading"><h2>Saved resources</h2></div>{saved.length > 0 ? <div className="saved-resource-list">{saved.map((resource) => <SavedResourceRow key={resource.resourceId} resource={resource} />)}</div> : <div className="lane-empty">Save a video or paper from Home and it will live here.</div>}</section>;
 }
 
 function SavedResourceRow({ resource }: { resource: SavedLibraryResource }) {
@@ -78,7 +76,6 @@ function SavedResourceRow({ resource }: { resource: SavedLibraryResource }) {
 export function ResearchPage({ data }: { data: ResearchPageData }) {
   return (
     <main className="product-page research-page">
-      <div className="product-page-intro"><p className="application-eyebrow">Scholarly discovery</p><h1>Research</h1><p>Find the papers worth investigating. Full reading happens in Paper Study.</p></div>
       <form className="research-search" action="/app/research"><label htmlFor="paper-search">Search papers</label><div><input id="paper-search" name="q" defaultValue={data.query} placeholder="Search titles, abstracts, or ideas" /><button type="submit">Search</button></div></form>
       <ResearchLane title={data.query ? `Results for “${data.query}”` : "Recommended for you"} papers={data.recommended} empty="No matching papers in the catalogue yet." />
       <ResearchLane title="Foundational papers" papers={data.foundational} empty="Foundational papers will appear as the catalogue grows." />
@@ -95,7 +92,7 @@ export function CollectionDetailPage({ collection }: { collection: LibraryCollec
 }
 
 function ResearchLane({ title, papers, empty }: { title: string; papers: ResearchPaperSummary[]; empty: string }) {
-  return <section className="product-lane research-lane"><div className="product-lane-heading"><div><p className="application-eyebrow">Research</p><h2>{title}</h2></div><p>Real catalogue material, with the source details intact.</p></div>{papers.length > 0 ? <div className="research-list">{papers.map((paper) => <ResearchCard key={paper.resourceId} paper={paper} />)}</div> : <div className="lane-empty">{empty}</div>}</section>;
+  return <section className="product-lane research-lane"><div className="product-lane-heading"><h2>{title}</h2></div>{papers.length > 0 ? <div className="research-list">{papers.map((paper) => <ResearchCard key={paper.resourceId} paper={paper} />)}</div> : <div className="lane-empty">{empty}</div>}</section>;
 }
 
 function ResearchCard({ paper }: { paper: ResearchPaperSummary }) {

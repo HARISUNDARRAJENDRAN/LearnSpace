@@ -44,7 +44,6 @@
   background-size: 120px 120px, auto, auto, auto, auto;
   background-blend-mode: overlay, normal, normal, normal, normal;
   color: #171717;
-  font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -105,7 +104,6 @@
 .onboarding-welcome h1,
 .onboarding-heading h1 {
   margin: 16px 0 0;
-  font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
   font-size: clamp(32px, 4.5vw, 48px);
   font-weight: 700;
   letter-spacing: -0.045em;

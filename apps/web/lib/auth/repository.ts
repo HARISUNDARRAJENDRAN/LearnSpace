@@ -378,7 +378,7 @@ export async function findSessionByToken(
   }
 
   const user = await findUserById(session.userId);
-  if (!user || user.status !== "active") {
+  if (user?.status !== "active") {
     return null;
   }
 

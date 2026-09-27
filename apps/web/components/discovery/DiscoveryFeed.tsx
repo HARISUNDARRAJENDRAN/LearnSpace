@@ -90,18 +90,18 @@ function Section({ title, description, cards, surface, onDismiss }: { title: str
   );
 }
 
-export function DiscoveryFeed({ feed, surface, firstName }: { feed: DiscoveryHomeResponse; surface: DiscoverySurface; firstName: string }) {
+export function DiscoveryFeed({ feed, surface }: { feed: DiscoveryHomeResponse; surface: DiscoverySurface }) {
   const [dismissedResourceIds, setDismissedResourceIds] = useState<Set<string>>(() => new Set());
   const dismiss = (resourceId: string) => setDismissedResourceIds((current) => new Set(current).add(resourceId));
   const visible = (cards: DiscoveryCard[]) => cards.filter((card) => !dismissedResourceIds.has(card.resourceId));
   return (
-    <main className="discovery-page">
-      <div className="discovery-page-intro"><div><p className="application-eyebrow">Your learning space</p><h1>Good to see you, {firstName}.</h1><p>A considered place for the next thing worth learning.</p></div><div className="discovery-feed-status" data-stale={feed.stale ? "true" : "false"}>{feed.stale ? "Showing your last good feed" : "Personalized from your interests"}</div></div>
+    <section className="discover-personalized-feed" aria-labelledby="discover-for-you-heading">
+      <div className="discover-personalized-intro"><div><p className="discover-eyebrow">Your learning space</p><h2 id="discover-for-you-heading">For You</h2><p>A considered place for the next thing worth learning.</p></div><div className="discovery-feed-status" data-stale={feed.stale ? "true" : "false"}>{feed.stale ? Object.values(feed.sections).some((cards) => cards.length > 0) ? "Showing your last good feed" : "Recommendations are temporarily unavailable" : "Personalized from your interests"}</div></div>
       {feed.sections.interests.length > 0 ? <section className="discovery-interests" aria-labelledby="interest-heading"><div><p className="application-eyebrow">Your starting point</p><h2 id="interest-heading">Explore your interests</h2></div><div className="discovery-interest-list">{feed.sections.interests.map((interest) => <span className="discovery-interest-chip" key={interest.id}>{interest.name}</span>)}</div></section> : null}
       <Section title="Continue learning" description="Your active sessions, when you have one in motion." cards={visible(feed.sections.continueLearning)} surface={surface} onDismiss={dismiss} />
       <Section title="Recommended videos" description="A short list shaped by your concepts, level, and learning style." cards={visible(feed.sections.recommendedVideos)} surface={surface} onDismiss={dismiss} />
       <Section title="Research worth reading" description="Current and foundational papers, ranked separately from videos." cards={visible(feed.sections.researchPapers)} surface={surface} onDismiss={dismiss} />
       <Section title="Fresh for you" description="Recently added resources that clear the quality floor." cards={visible(feed.sections.freshForYou)} surface={surface} onDismiss={dismiss} />
-    </main>
+    </section>
   );
 }

@@ -8,6 +8,6 @@ export const dynamic = "force-dynamic";
 export default async function ApplicationPage() {
   const currentSession = await getCurrentSession();
   if (!currentSession) redirect("/login?next=/app");
-  const { home, feed, sessions } = await loadHomeData(currentSession.user.id);
-  return <HomeDashboard home={home} feed={feed} sessions={sessions} />;
+  const data = await loadHomeData(currentSession.user.id);
+  return <HomeDashboard {...data} />;
 }

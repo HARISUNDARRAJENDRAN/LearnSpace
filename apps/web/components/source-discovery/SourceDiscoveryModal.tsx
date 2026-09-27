@@ -83,7 +83,6 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       setDetectedMode(null);
       setRunId(null);
       setRankingIntent("best_match");
-      triggerRef.current?.focus();
       return;
     }
     setState("idle");
@@ -115,6 +114,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
         else background.setAttribute("aria-hidden", previousAriaHidden);
         if (!previousInert) background.removeAttribute("inert");
       }
+      triggerRef.current?.focus();
     };
   }, [isOpen, triggerRef]);
 

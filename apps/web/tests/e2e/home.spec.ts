@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
-import { getHomeFeed } from "../../lib/discovery/service";
 import { sessionCookieName } from "../../lib/auth/cookies";
-import { cleanupHomeFixture, seedHomeFixture, stabilizeHomeRecommendations, type HomeFixture } from "./home-fixture";
+import { cleanupHomeFixture, type HomeFixture, seedHomeFixture } from "./home-fixture";
 
 test.describe.configure({ mode: "serial" });
 
@@ -15,10 +14,6 @@ test.beforeAll(async () => {
   if (!databaseUrl) throw new Error("DATABASE_MIGRATOR_URL is required for Home E2E");
   database = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   fixture = await seedHomeFixture(database);
-  const feed = await getHomeFeed(fixture.userId);
-  if (feed.sections.recommendedVideos.length < 4) throw new Error(`Home E2E fixture produced only ${feed.sections.recommendedVideos.length} recommendations`);
-  if (!feed.runId) throw new Error("Home E2E fixture did not create a recommendation run");
-  await stabilizeHomeRecommendations(database, fixture, feed.runId);
 });
 
 test.afterAll(async () => {
@@ -30,71 +25,126 @@ test.afterAll(async () => {
 
 test.beforeEach(async ({ page }) => {
   await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-home-${randomUUID()}` });
-  await page.context().addCookies([{ name: sessionCookieName, value: fixture.sessionToken, url: "http://localhost:3100", httpOnly: true, sameSite: "Lax" }]);
+  await page.context().addCookies([{ name: sessionCookieName, value: fixture.sessionToken, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
 });
 
-test("populated Home renders continuation, history, and recommendations", async ({ page }) => {
+test("populated Home renders analytics and continues the current video", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  await expect(page.getByRole("heading", { name: "Continue Learning" })).toBeVisible();
-  await expect(page.locator(".home-continue-card")).toContainText("Home E2E Python lesson");
-  await expect(page.locator(".home-progress-gauge")).toHaveAttribute("aria-label", "32% complete");
-  await expect(page.locator(".home-history-item")).toHaveCount(3);
-  await expect(page.locator(".home-history-item").filter({ hasText: "Home E2E research paper" })).toBeVisible();
-  await expect(page.locator(".home-recommendation-card")).toHaveCount(4);
+  await expect(page.getByText("Sample data", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Learning Overview" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Weekly Progress" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start learning" })).not.toBeFocused();
+  await expect(page.locator(".analytics-continue").getByRole("link", { name: "Resume", exact: true })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
+  await expect(page.getByRole("heading", { name: "Learning Activity & Progress Trends" })).toBeVisible();
 });
 
-test("Continue Learning Resume reuses the existing session and preserves progress", async ({ page }) => {
-  if (!database) throw new Error("Home E2E database is unavailable");
-  const before = await database<{ count: number }[]>`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${fixture.userId}`;
+test("Home analytics controls open details and change chart periods", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "Resume" }).click();
-  await expect(page).toHaveURL(`/app/study/video/${fixture.sessions.hero}`);
-  const after = await database<{ count: number }[]>`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${fixture.userId}`;
-  const heroSession = await database<{ status: string }[]>`SELECT status FROM study.study_sessions WHERE id = ${fixture.sessions.hero} AND user_id = ${fixture.userId}`;
-  const progress = await database<{ progress_pct: number }[]>`SELECT progress_pct FROM study.user_resource_progress WHERE user_id = ${fixture.userId} AND resource_id = ${fixture.resources.hero}`;
-  expect(after[0]?.count).toBe(before[0]?.count);
-  expect(heroSession[0]?.status).toBe("active");
-  expect(Number(progress[0]?.progress_pct)).toBe(32);
+  const detailDialog = page.getByRole("dialog", { name: "Study Distribution" });
+  await page.getByRole("button", { name: "View Details" }).click();
+  await expect(detailDialog).toBeVisible();
+  await detailDialog.getByRole("button", { name: "Close details" }).click();
+  await expect(detailDialog).toBeHidden();
+  const progressPeriod = page.getByRole("combobox", { name: "Progress period" });
+  await progressPeriod.selectOption("1");
+  await expect(page.locator(".analytics-ring-value")).toHaveText("69.3%");
+  const periods = page.getByRole("group", { name: "Trend period" });
+  await periods.getByRole("button", { name: "Day" }).click();
+  await expect(periods.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+  const startLearning = page.getByRole("button", { name: "Start learning" });
+  await startLearning.click();
+  const sourceDialog = page.getByRole("dialog", { name: "Learn any topic from the best videos" });
+  await expect(sourceDialog).toBeVisible();
+  await sourceDialog.getByRole("button", { name: "Close source discovery" }).click();
+  await expect(startLearning).toBeFocused();
 });
 
-test("Recent History routes to the existing paper session", async ({ page }) => {
-  if (!database) throw new Error("Home E2E database is unavailable");
-  const before = await database<{ count: number }[]>`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${fixture.userId}`;
+test("Home charts keep donut and bubble focus synchronized without a click outline", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  await page.locator(".home-history-item").filter({ hasText: "Home E2E research paper" }).click();
-  await expect(page).toHaveURL(`/app/study/paper/${fixture.sessions.paper}`);
-  const after = await database<{ count: number }[]>`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${fixture.userId}`;
-  expect(after[0]?.count).toBe(before[0]?.count);
+
+  const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
+  const practiceSegment = page.locator(".analytics-ring-segment.tone-green");
+  const researchSegment = page.locator(".analytics-ring-segment.tone-light-lavender");
+  for (const [label, activeSegment, mutedSegment] of [
+    ["Focus", focusSegment, practiceSegment],
+    ["Practice", practiceSegment, focusSegment],
+    ["Research", researchSegment, practiceSegment],
+  ] as const) {
+    await page.locator(".analytics-ring-legend button").filter({ hasText: label }).hover();
+    await expect(activeSegment).toHaveClass(/is-active/);
+    await expect(mutedSegment).toHaveClass(/is-muted/);
+  }
+
+  const focusPoint = await focusSegment.locator(".analytics-ring-hit-target").evaluate((element) => {
+    const path = element as SVGPathElement;
+    const svg = path.ownerSVGElement;
+    if (!svg) throw new Error("Donut segment is missing its SVG");
+    const point = svg.createSVGPoint();
+    point.x = 95;
+    point.y = 50;
+    const matrix = svg.getScreenCTM();
+    if (!matrix) throw new Error("Donut segment is missing its screen transform");
+    const coordinates = point.matrixTransform(matrix);
+    return { x: coordinates.x, y: coordinates.y };
+  });
+  await page.mouse.move(focusPoint.x, focusPoint.y);
+  await expect(focusSegment).toHaveClass(/is-active/);
+
+  const videos = page.locator('.analytics-bubble[data-category="Videos"]');
+  const research = page.locator('.analytics-bubble[data-category="Research"]');
+  await videos.hover();
+  await expect(videos).toHaveClass(/is-active/);
+  await expect(research).toHaveClass(/is-muted/);
+  await videos.click();
+  await expect(videos).toHaveCSS("outline-style", "none");
+  await page.mouse.move(0, 0);
+  await videos.focus();
+  await page.keyboard.press("Enter");
+  await expect(videos).toHaveClass(/is-active/);
 });
 
-test("You Might Like starts Study with Home recommendation provenance", async ({ page }) => {
-  const db = database;
-  if (!db) throw new Error("Home E2E database is unavailable");
-  await page.goto("/app", { waitUntil: "networkidle" });
-  const card = page.locator(".home-recommendation-card").filter({ hasText: "Home E2E recommendation" }).first();
-  await expect(card).toBeVisible();
-  const startRequest = page.waitForRequest((request) => request.url().endsWith("/api/v1/study-sessions") && request.method() === "POST");
-  await card.getByRole("button", { name: /Play Home E2E recommendation/ }).click();
-  const request = await startRequest;
-  const body = request.postDataJSON() as { resourceId: string; origin: string; recommendationRunId?: string };
-  expect(body.origin).toBe("home");
-  const recommendationRunId = body.recommendationRunId;
-  if (!recommendationRunId) throw new Error("Home recommendation request did not include a run ID");
-  expect(recommendationRunId).toMatch(/^[0-9a-f-]{36}$/);
-  await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
-  const candidate = await db<{ user_id: string; resource_id: string }[]>`
-    SELECT r.user_id, c.resource_id
-    FROM discovery.recommendation_runs AS r
-    INNER JOIN discovery.recommendation_candidates AS c ON c.recommendation_run_id = r.id
-    WHERE r.id = ${recommendationRunId} AND c.resource_id = ${body.resourceId}
-  `;
-  expect(candidate[0]?.user_id).toBe(fixture.userId);
-  const interaction = await db<{ origin: string; recommendation_run_id: string }[]>`
-    SELECT metadata->>'origin' AS origin, metadata->>'recommendationRunId' AS recommendation_run_id
-    FROM discovery.discovery_interactions
-    WHERE user_id = ${fixture.userId} AND resource_id = ${body.resourceId} AND action = 'start_session'
-    ORDER BY occurred_at DESC LIMIT 1
-  `;
-  expect(interaction[0]?.origin).toBe("home");
-  expect(interaction[0]?.recommendation_run_id).toBe(recommendationRunId);
+test("touch taps toggle donut and bubble focus", async ({ browser }) => {
+  const context = await browser.newContext({
+    baseURL: "http://localhost:3101",
+    hasTouch: true,
+    viewport: { width: 390, height: 844 },
+  });
+  try {
+    await context.addCookies([{ name: sessionCookieName, value: fixture.sessionToken, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
+    const page = await context.newPage();
+    await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-home-touch-${randomUUID()}` });
+    await page.goto("/app", { waitUntil: "networkidle" });
+
+    const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
+    const hitTarget = focusSegment.locator(".analytics-ring-hit-target");
+    await hitTarget.scrollIntoViewIfNeeded();
+    const focusPoint = await hitTarget.evaluate((element) => {
+      const path = element as SVGPathElement;
+      const svg = path.ownerSVGElement;
+      if (!svg) throw new Error("Donut segment is missing its SVG");
+      const point = svg.createSVGPoint();
+      point.x = 95;
+      point.y = 50;
+      const matrix = svg.getScreenCTM();
+      if (!matrix) throw new Error("Donut segment is missing its screen transform");
+      const coordinates = point.matrixTransform(matrix);
+      return { x: coordinates.x, y: coordinates.y };
+    });
+    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
+    await expect(focusSegment).toHaveClass(/is-active/);
+    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
+    await expect(focusSegment).not.toHaveClass(/is-active/);
+
+    const videos = page.locator('.analytics-bubble[data-category="Videos"]');
+    await videos.scrollIntoViewIfNeeded();
+    const bubble = await videos.boundingBox();
+    if (!bubble) throw new Error("Videos bubble is not visible");
+    const point = { x: bubble.x + bubble.width / 2, y: bubble.y + bubble.height / 2 };
+    await page.touchscreen.tap(point.x, point.y);
+    await expect(videos).toHaveClass(/is-active/);
+    await page.touchscreen.tap(point.x, point.y);
+    await expect(videos).not.toHaveClass(/is-active/);
+  } finally {
+    await context.close();
+  }
 });

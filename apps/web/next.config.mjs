@@ -4,12 +4,17 @@ import { fileURLToPath } from "node:url";
 const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig = {
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   reactStrictMode: true,
   devIndicators: false,
+  experimental: {
+    useTypeScriptCli: false,
+  },
   output: "standalone",
   outputFileTracingRoot: path.join(appDirectory, "../.."),
   transpilePackages: ["@learnspace/db", "@learnspace/shared"],
   images: {
+    qualities: [75, 100],
     remotePatterns: [
       {
         protocol: "https",

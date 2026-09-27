@@ -1,15 +1,21 @@
 import { randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 import { sessionCookieName } from "../../lib/auth/cookies";
 import { createSession } from "../../lib/auth/repository";
-import { getHomeFeed } from "../../lib/discovery/service";
-import { cleanupHomeFixture, seedHomeFixture, stabilizeHomeRecommendations, type HomeFixture } from "./home-fixture";
+import { cleanupHomeFixture, seedHomeFixture, type HomeFixture } from "./home-fixture";
 
 const desktop = { width: 1440, height: 900 };
+const laptop = { width: 1280, height: 800 };
 const tablet = { width: 1024, height: 768 };
+const narrow = { width: 768, height: 900 };
 const mobile = { width: 390, height: 844 };
 const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
+
+test.beforeEach(async ({ page }) => {
+  await page.route("https://i.ytimg.com/**", (route) => route.fulfill({ path: resolve(process.cwd(), "public/assets/learnspace-monogram.svg") }));
+});
 
 async function stabilize(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
@@ -62,10 +68,6 @@ test.describe("populated Home visual regression", () => {
   test.beforeAll(async () => {
     homeDatabase = postgres(databaseUrl as string, { max: 1, prepare: false });
     homeFixture = await seedHomeFixture(homeDatabase);
-    const feed = await getHomeFeed(homeFixture.userId);
-    if (feed.sections.recommendedVideos.length < 4) throw new Error("Home visual fixture needs four recommendations");
-    if (!feed.runId) throw new Error("Home visual fixture did not create a recommendation run");
-    await stabilizeHomeRecommendations(homeDatabase, homeFixture, feed.runId);
   });
 
   test.afterAll(async () => {
@@ -75,16 +77,19 @@ test.describe("populated Home visual regression", () => {
     homeDatabase = undefined;
   });
 
-  test("populated Home dashboard at desktop, tablet, and mobile breakpoints", async ({ page }) => {
+  test("populated Home dashboard at desktop, laptop, tablet, narrow, and mobile breakpoints", async ({ page }) => {
     await page.context().addCookies([{ name: sessionCookieName, value: homeFixture.sessionToken, url: "http://localhost:3100", httpOnly: true, sameSite: "Lax" }]);
     for (const [name, viewport] of [
       ["desktop", desktop],
+      ["laptop", laptop],
       ["tablet", tablet],
+      ["narrow", narrow],
       ["mobile", mobile],
     ] as const) {
       await page.setViewportSize(viewport);
       await page.goto("/app", { waitUntil: "networkidle" });
       await expect(page.locator(".home-dashboard")).toBeVisible();
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.waitForFunction(() => [...document.images].every((image) => image.complete));
       await stabilize(page);
       await expect(page.locator(".application-main")).toHaveScreenshot(`home-populated-${name}.png`, {

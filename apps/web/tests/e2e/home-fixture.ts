@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { createSession } from "../../lib/auth/repository";
-import { invalidateHomeFeedCache } from "../../lib/discovery/cache";
 
 type Database = ReturnType<typeof postgres>;
 
@@ -9,11 +8,11 @@ export type HomeFixture = {
   userId: string;
   email: string;
   sessionToken: string;
-  resources: { hero: string; olderVideo: string; paper: string; recommendations: string[] };
+  resources: { hero: string; olderVideo: string; paper: string };
   sessions: { hero: string; olderVideo: string; paper: string };
 };
 
-const youtubeIds = ["_uQrJ0TkZlc", "dQw4w9WgXcQ", "9bZkp7q19f0", "M7lc1UVf-VE", "aqz-KE-bpKQ", "ysz5S6PUM-U", "ScMzIvxBSi4"] as const;
+const youtubeIds = ["_uQrJ0TkZlc", "dQw4w9WgXcQ"] as const;
 
 function youtubeIdAt(index: number): string {
   const id = youtubeIds[index];
@@ -27,7 +26,6 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
   const hero = randomUUID();
   const olderVideo = randomUUID();
   const paper = randomUUID();
-  const recommendations = Array.from({ length: 5 }, () => randomUUID());
   const heroSession = randomUUID();
   const olderSession = randomUUID();
   const paperSession = randomUUID();
@@ -51,7 +49,6 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
     const videoRows = [
       [hero, "Home E2E Python lesson", "LearnSpace Home Lab", youtubeIdAt(0), 0.99],
       [olderVideo, "Home E2E history lesson", "LearnSpace History Lab", youtubeIdAt(1), 0.96],
-      ...recommendations.map((id, index) => [id, `Home E2E recommendation ${index + 1}`, "LearnSpace Recommendation Lab", youtubeIdAt(index + 2), 0.95 - index * 0.01]),
     ] as const;
     for (const [resourceId, title, channel, youtubeId, quality] of videoRows) {
       await tx`
@@ -109,15 +106,11 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
   });
 
   const sessionToken = (await createSession(userId, { userAgent: "home-e2e" }, process.env.AUTH_SECRET ?? "")).token;
-  return { userId, email, sessionToken, resources: { hero, olderVideo, paper, recommendations }, sessions: { hero: heroSession, olderVideo: olderSession, paper: paperSession } };
+  return { userId, email, sessionToken, resources: { hero, olderVideo, paper }, sessions: { hero: heroSession, olderVideo: olderSession, paper: paperSession } };
 }
 
 export async function cleanupHomeFixture(database: Database, fixture: HomeFixture): Promise<void> {
-  const resourceIds = [fixture.resources.hero, fixture.resources.olderVideo, fixture.resources.paper, ...fixture.resources.recommendations];
-  await database`DELETE FROM discovery.discovery_interactions WHERE user_id = ${fixture.userId} OR resource_id IN ${database(resourceIds)}`;
-  await database`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${fixture.userId} OR resource_id IN ${database(resourceIds)}`;
-  await database`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id = ${fixture.userId}) OR resource_id IN ${database(resourceIds)}`;
-  await database`DELETE FROM discovery.recommendation_runs WHERE user_id = ${fixture.userId}`;
+  const resourceIds = [fixture.resources.hero, fixture.resources.olderVideo, fixture.resources.paper];
   await database`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM ops.outbox_events WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM ops.idempotency_records WHERE user_id = ${fixture.userId}`;
@@ -132,27 +125,4 @@ export async function cleanupHomeFixture(database: Database, fixture: HomeFixtur
   await database`DELETE FROM catalog.paper_details WHERE resource_id IN ${database(resourceIds)}`;
   await database`DELETE FROM catalog.resources WHERE id IN ${database(resourceIds)}`;
   await database`DELETE FROM identity.users WHERE id = ${fixture.userId}`;
-}
-
-export async function stabilizeHomeRecommendations(database: Database, fixture: HomeFixture, runId: string): Promise<void> {
-  const candidates = await database<{ resource_id: string }[]>`
-    SELECT resource_id FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}
-  `;
-  const candidateIds = new Set(candidates.map((candidate) => candidate.resource_id));
-  for (const resourceId of fixture.resources.recommendations) {
-    if (!candidateIds.has(resourceId)) throw new Error(`Home recommendation fixture is missing candidate ${resourceId}`);
-  }
-  await database`
-    UPDATE discovery.recommendation_candidates
-    SET final_rank = NULL, selected = false
-    WHERE recommendation_run_id = ${runId}
-  `;
-  for (const [index, resourceId] of fixture.resources.recommendations.entries()) {
-    await database`
-      UPDATE discovery.recommendation_candidates
-      SET final_rank = ${index + 1}, selected = true
-      WHERE recommendation_run_id = ${runId} AND resource_id = ${resourceId}
-    `;
-  }
-  await invalidateHomeFeedCache(fixture.userId);
 }

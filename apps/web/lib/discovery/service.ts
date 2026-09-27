@@ -805,7 +805,6 @@ async function enqueueConditionalRefresh(
   userId: string,
   resourceId: string,
   correlationId: string,
-  action: DiscoveryAction,
   conceptsForResource: Array<{ id: string; name: string }>,
   now: Date,
 ): Promise<void> {
@@ -881,7 +880,6 @@ export async function projectStudyBehavior(
       userId,
       resourceId,
       correlationId,
-      action,
       await loadConceptsByIds(tx, projectedConceptIds),
       now,
     );
@@ -936,7 +934,6 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
         userId,
         input.resourceId,
         input.correlationId,
-        input.action,
         await loadConceptsByIds(tx, refreshConceptIds),
         now,
       );

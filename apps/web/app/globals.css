@@ -34,7 +34,6 @@
   --accent-blue-hover: #0e4352;
   --accent-blue-soft: #e0eff0;
   --line-subtle: #dedbd4;
-  font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
   color: var(--ink);
   background: var(--paper);
   font-synthesis: none;
@@ -65,4 +64,10 @@ a {
 
 button {
   font: inherit;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
 }

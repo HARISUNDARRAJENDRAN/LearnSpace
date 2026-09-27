@@ -3,7 +3,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { hasBrowsableResources } from "../lib/discovery/browse";
 import { homeFeedCacheKey } from "../lib/discovery/cache";
+import { getCurriculum, getCurriculumCategoryBySlug } from "../lib/discovery/curriculum";
 import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
 import { scoreYoutubeQuality } from "../lib/discovery/quality";
 import { rankDiscoveryResources, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
@@ -208,6 +210,41 @@ test("dataset duration units and URL hosts are normalized explicitly", () => {
   assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "milliseconds", duration_ms: "600000" })?.durationMs, 600_000);
   assert.equal(normalizeYoutubeRow({ youtube_id: "dQw4w9WgXcQ", title: "seconds", duration_seconds: "600" })?.durationMs, 600_000);
   assert.deepEqual(normalizeYoutubeRow({ video_id: "dQw4w9WgXcQ", title: "genre", genre: "biology" })?.categoryLabels, ["biology"]);
+});
+
+test("curriculum source preserves every item inside its area and category", async () => {
+  const sourceRows = [];
+  for await (const row of datasetRows(join(process.cwd(), "public/data/learnspace_youtube_curriculum_master.csv"))) sourceRows.push(row);
+  const areas = await getCurriculum();
+  const items = areas.flatMap((area) => area.categories.flatMap((category) => category.items));
+  assert.equal(items.length, sourceRows.length);
+  assert.equal(areas.length, 8);
+  assert.ok(items.some((item) => item.resourceType === "dynamic-rule"));
+  assert.ok(items.every((item) => item.title && item.id));
+  const categories = areas.flatMap((area) => area.categories);
+  assert.equal(new Set(categories.map((category) => category.slug)).size, categories.length);
+});
+
+test("curriculum category routes resolve canonical slugs", async () => {
+  const coding = await getCurriculumCategoryBySlug("coding-programming");
+  const dataScience = await getCurriculumCategoryBySlug("data-science-ai");
+  assert.equal(coding?.category.name, "Coding & Programming");
+  assert.equal(dataScience?.category.name, "Data Science & AI/ML");
+  assert.ok((coding?.category.items.length ?? 0) > 0);
+  assert.equal(await getCurriculumCategoryBySlug("not-a-category"), null);
+});
+
+test("dynamic recommendation rules do not create empty category routes", async () => {
+  const areas = await getCurriculum();
+  const categories = areas.flatMap((area) => area.categories);
+  for (const slug of ["trending-now", "recommended-for-you", "based-on-interests"]) {
+    const category = categories.find((item) => item.slug === slug);
+    assert.ok(category);
+    assert.equal(hasBrowsableResources(category), false);
+  }
+  const coding = categories.find((item) => item.slug === "coding-programming");
+  assert.ok(coding);
+  assert.equal(hasBrowsableResources(coding), true);
 });
 
 test("home feed cache keys change with learner and catalogue versions", () => {

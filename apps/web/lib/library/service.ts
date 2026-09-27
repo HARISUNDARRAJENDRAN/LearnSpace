@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { activityEvents, collectionEnrollments, collectionItems, collectionSections, collections, libraryItems, resources, userResourceProgress, videoDetails, paperDetails } from "@learnspace/db/schema";
-import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest, ResearchPaperSummary } from "@learnspace/shared";
+import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest } from "@learnspace/shared";
 import { collectionIdSchema, collectionKindSchema, studyResourceReadinessSchema } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { AuthError } from "../auth/errors";

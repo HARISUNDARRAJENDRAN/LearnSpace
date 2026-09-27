@@ -15,7 +15,6 @@ body:has(.marketing-page) {
 	padding: 16px 0 40px;
 	background: #fff;
 	color: #171717;
-	font-family: "DM Sans", Arial, sans-serif;
 	font-weight: 400;
 	-webkit-font-smoothing: antialiased;
 }
@@ -213,7 +212,6 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 	align-items: center;
 	gap: 9px;
 	color: #101416;
-	font-family: "DM Sans", Arial, sans-serif;
 	font-size: 19px;
 	font-weight: 600;
 	letter-spacing: 1px;
@@ -399,7 +397,6 @@ html.motion-ready .marketing-page [data-reveal].is-visible {
 
 .hero-copy h1 {
 	max-width: 900px;
-	font-family: "DM Sans", Arial, sans-serif;
 	font-size: clamp(64px, 5.6vw, 82px);
 	font-weight: 400;
 	letter-spacing: -0.04em;

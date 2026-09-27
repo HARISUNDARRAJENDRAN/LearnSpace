@@ -13,12 +13,6 @@ export type ResearchPageData = {
   saved: ResearchPaperSummary[];
 };
 
-function iso(value: Date | string | null | undefined): string | null {
-  if (!value) return null;
-  const date = value instanceof Date ? value : new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
 function metadataValue(metadata: Record<string, unknown>, key: string): string | null {
   const value = metadata[key];
   return typeof value === "string" ? value : null;

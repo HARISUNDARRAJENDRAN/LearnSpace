@@ -258,7 +258,7 @@ function paperSourcePrior(resource: DiscoveryResource): number {
   return clamp((sourceAuthority ?? 0.5) * 0.45 + citationPrior * 0.35 + foundational * 0.2);
 }
 
-function reasonCodes(resource: DiscoveryResource, components: {
+function reasonCodes(components: {
   conceptMatch: number;
   learnerAffinity: number;
   levelFit: number;
@@ -365,7 +365,7 @@ function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now
       coverageScore: resourceCoverage(resource),
       freshnessScore: components.freshness,
       diversityPenalty: 0,
-      reasonCodes: reasonCodes(resource, components),
+      reasonCodes: reasonCodes(components),
     } satisfies RankedResource;
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }));
@@ -405,7 +405,7 @@ function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now
       coverageScore: resourceCoverage(resource),
       freshnessScore: components.recency,
       diversityPenalty: 0,
-      reasonCodes: reasonCodes(resource, components),
+      reasonCodes: reasonCodes(components),
     } satisfies RankedResource;
   }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }));

@@ -25,7 +25,6 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { SearchPalette } from "./SearchPalette";
 
 type NavigationMode = "learn" | "research";
 type IconComponent = typeof House;
@@ -50,13 +49,14 @@ type AppSidebarProps = {
   isCollapsed: boolean;
   isLoggingOut: boolean;
   onClose: () => void;
+  onOpenSearch: () => void;
   onLogout: () => void;
   onToggleCollapsed: () => void;
 };
 
 const learnNavigation = [
   { label: "Home", href: "/app", icon: House, tone: "home" },
-  { label: "Discover", href: "/app/discover", icon: Compass, tone: "discover" },
+  { label: "Discover", href: "/app/discover", icon: Compass, tone: "home" },
 ] as const;
 
 const researchNavigation = [
@@ -90,6 +90,7 @@ export function AppSidebar({
   isCollapsed,
   isLoggingOut,
   onClose,
+  onOpenSearch,
   onLogout,
   onToggleCollapsed,
 }: AppSidebarProps) {
@@ -99,7 +100,6 @@ export function AppSidebar({
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
   const visibleRecentSessions = useMemo(
@@ -140,19 +140,18 @@ export function AppSidebar({
     function handleShortcut(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setSearchOpen(true);
+        onOpenSearch();
         return;
       }
       if (event.key === "/" && !isTypingTarget(event.target)) {
         event.preventDefault();
-        setSearchOpen(true);
+        onOpenSearch();
       }
-      if (event.key === "Escape") setSearchOpen(false);
     }
 
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, []);
+  }, [onOpenSearch]);
 
   function selectMode(nextMode: NavigationMode) {
     setMode(nextMode);
@@ -205,7 +204,7 @@ export function AppSidebar({
               <span>{mode === "research" ? "New research" : "New session"}</span>
             </span>
           </Link>
-          <button className="application-search-button" type="button" aria-label="Search LearnSpace" title="Search (⌘K)" onClick={() => setSearchOpen(true)}>
+          <button className="application-search-button" type="button" aria-label="Search LearnSpace" title="Search (⌘K)" onClick={onOpenSearch}>
             <Search aria-hidden="true" />
           </button>
         </div>
@@ -243,12 +242,14 @@ export function AppSidebar({
 
         <div className="application-sidebar-footer">
           <Link className="application-footer-button" href="/app/settings" aria-label="Settings" onClick={onClose}><Settings aria-hidden="true" /></Link>
-          <button className="application-footer-button" type="button" aria-label="Help"><CircleHelp aria-hidden="true" /></button>
+          <Link className="application-footer-button" href="/#how-it-works" aria-label="Help center" onClick={onClose}><CircleHelp aria-hidden="true" /></Link>
           <div className="application-account-control">
             <button className="application-footer-button" type="button" aria-label="Account menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><UserRound aria-hidden="true" /></button>
             {accountMenuOpen ? (
               <div className="application-account-menu" role="menu">
                 <p>{user.email}</p>
+                <Link href="/app/sessions" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Recent activity</Link>
+                <Link href="/#pricing" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Get Premium</Link>
                 <Link href="/app/settings" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Account settings</Link>
                 <button type="button" role="menuitem" disabled={isLoggingOut} onClick={onLogout}><LogOut aria-hidden="true" />{isLoggingOut ? "Signing out…" : "Log out"}</button>
               </div>
@@ -256,7 +257,6 @@ export function AppSidebar({
           </div>
         </div>
       </aside>
-      <SearchPalette isOpen={searchOpen} mode={mode} onClose={() => setSearchOpen(false)} />
     </>
   );
 }

@@ -163,14 +163,13 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(page).toHaveURL(/\/verify-email/);
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeOnboarding(page);
-  await page.goto("/app/discover");
+  await page.goto("/app");
 
-  const card = page.locator("article.discovery-card").filter({ hasText: "A deterministic Study video" });
-  await expect(card).toBeVisible();
-  const startResponse = page.waitForResponse((response) => response.url().endsWith("/api/v1/study-sessions") && response.request().method() === "POST");
-  await card.getByRole("button", { name: "Start learning" }).click();
-  const response = await startResponse;
-  expect(response.status()).toBe(200);
+  await page.getByRole("button", { name: "Start learning" }).click();
+  const learnInput = page.getByLabel("What do you want to learn?");
+  await learnInput.fill(`https://www.youtube.com/watch?v=${youtubeId}`);
+  await learnInput.press("Enter");
+  await page.getByRole("button", { name: "Start learning" }).click();
   await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
   videoSessionId = page.url().split("/").at(-1) ?? null;
   if (!videoSessionId) throw new Error("video Study session ID was not captured");

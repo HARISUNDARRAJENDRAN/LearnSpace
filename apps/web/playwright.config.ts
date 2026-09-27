@@ -2,14 +2,14 @@ import { defineConfig, devices } from "@playwright/test";
 
 const runId = process.env.PLAYWRIGHT_RUN_ID ?? "local";
 const productionServer = process.env.PLAYWRIGHT_E2E_SERVER === "production" || process.env.CI === "true";
-process.env.APP_URL = "http://localhost:3100";
+process.env.APP_URL = "http://localhost:3101";
 process.env.AUTH_SECRET = "playwright-auth-secret-that-is-long-enough";
 process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
 process.env.AUTH_EXPOSE_VERIFICATION_LINK = "true";
 process.env.AUTH_TEST_MODE = "true";
 process.env.GOOGLE_CLIENT_ID = "playwright-client-id";
 process.env.GOOGLE_CLIENT_SECRET = "playwright-client-secret";
-process.env.GOOGLE_REDIRECT_URI = "http://localhost:3100/api/auth/google/callback";
+process.env.GOOGLE_REDIRECT_URI = "http://localhost:3101/api/auth/google/callback";
 process.env.AUTH_TEST_GOOGLE_EMAIL = `google-e2e-${runId}@example.test`;
 process.env.AUTH_TEST_GOOGLE_SUB = `playwright-google-sub-${runId}`;
 process.env.PLAYWRIGHT_E2E_EMAIL = `browser-e2e-${runId}@example.test`;
@@ -27,7 +27,7 @@ export default defineConfig({
   timeout: 120_000,
   expect: { timeout: 30_000 },
   use: {
-    baseURL: "http://localhost:3100",
+    baseURL: "http://localhost:3101",
     trace: "retain-on-failure",
     ...devices["Desktop Chrome"],
   },
@@ -36,13 +36,14 @@ export default defineConfig({
       command: "pnpm exec tsx tests/e2e/mock-google-provider.ts",
       url: "http://127.0.0.1:4010/health",
       timeout: 120_000,
-      reuseExistingServer: false,
+      reuseExistingServer: true,
     },
     {
       command: productionServer
         ? "pnpm run start:standalone"
-        : "pnpm exec next dev --webpack --hostname localhost --port 3100",
-      url: "http://localhost:3100",
+        : "pnpm exec next dev --webpack --hostname localhost --port 3101",
+      url: "http://localhost:3101",
+      env: { PORT: "3101" },
       timeout: 120_000,
       reuseExistingServer: false,
     },

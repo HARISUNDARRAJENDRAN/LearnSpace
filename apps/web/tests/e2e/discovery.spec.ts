@@ -53,10 +53,10 @@ test.beforeAll(async () => {
       INSERT INTO catalog.resources
         (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
       VALUES
-        (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A seeded discovery lesson', 'A deterministic lesson used by browser tests.', 'en', 'public', 'ready', 0.98, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
+        (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A seeded discovery lesson', 'A deterministic lesson used by browser tests.', 'en', 'public', 'ready', 0.98, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb),
         (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A seeded research paper', 'A deterministic paper used by browser tests.', 'en', 'public', 'ready', 0.96, '{"paperClass":"current","test":true}'::jsonb),
-        (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb),
-        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb)
+        (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb),
+        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb)
     `;
     await tx`
       INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
@@ -85,7 +85,7 @@ test.beforeAll(async () => {
         INSERT INTO catalog.resources
           (id, owner_user_id, type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
         VALUES
-          (${decoyResourceId}, NULL, 'video', 'youtube', ${decoyYoutubeId}, ${`https://www.youtube.com/watch?v=${decoyYoutubeId}`}, ${`Core concept decoy ${index + 1}`}, 'A deterministic core-concept decoy used to keep an adjacent resource outside the initial recommendation range.', 'en', 'public', 'ready', ${decoyQuality}, '{"thumbnailUrl":"/learnspace-mark.svg","test":true}'::jsonb)
+          (${decoyResourceId}, NULL, 'video', 'youtube', ${decoyYoutubeId}, ${`https://www.youtube.com/watch?v=${decoyYoutubeId}`}, ${`Core concept decoy ${index + 1}`}, 'A deterministic core-concept decoy used to keep an adjacent resource outside the initial recommendation range.', 'en', 'public', 'ready', ${decoyQuality}, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb)
       `;
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
@@ -200,37 +200,91 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
 
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
-  await expect(page.locator("main.home-canvas")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Continue Learning", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent History", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "You Might Like", exact: true })).toBeVisible();
-  await expect(page.getByText("Your next lesson is waiting.")).toBeVisible();
+  await expect(page.getByRole("main", { name: "Learning analytics dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Learning Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent Activity", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Learning Activity & Progress Trends", exact: true })).toBeVisible();
+  const browserErrors: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("response", (response) => {
+    const expectedNotFound = response.status() === 404 && /\/app\/discover\/(this-does-not-exist|trending-now|recommended-for-you|based-on-interests)$/.test(new URL(response.url()).pathname);
+    if (response.status() >= 400 && response.request().resourceType() !== "image" && !expectedNotFound) {
+      browserErrors.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  page.on("console", (message) => {
+    if (message.type() === "error" && !message.text().startsWith("Failed to load resource: the server responded with a status of 404")) {
+      browserErrors.push(message.text());
+    }
+  });
   await page.goto("/app/discover");
-  await expect(page.getByRole("heading", { name: "Recommended videos" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Research worth reading" })).toBeVisible();
-  await expect(page.getByText("Personalized from your interests")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Discover" })).toBeVisible();
-
-  const seededVideo = page.locator("article.discovery-card").filter({ hasText: "A seeded discovery lesson" });
-  await expect(seededVideo).toBeVisible();
-  await expect(page.locator("article.discovery-card").filter({ hasText: "A seeded research paper" })).toBeVisible();
-  const openLink = seededVideo.getByRole("link", { name: /Open/ });
-  await expect(openLink).toHaveAttribute("href", /youtube\.com\/watch/);
-  const popup = await Promise.all([page.waitForEvent("popup"), openLink.click()]).then(([opened]) => opened);
-  await popup.close();
-  await seededVideo.getByRole("button", { name: "Save" }).click();
-  await expect(seededVideo.locator("[aria-live]")).toHaveText("Saved to your library");
-  await seededVideo.getByRole("button", { name: "Dismiss" }).click();
-  await expect(page.getByText("A seeded discovery lesson")).toHaveCount(0);
+  await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Discover", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "For You", level: 2, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Technology & Computing", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Popular resources", level: 2 })).toBeVisible();
+  await expect(page.locator(".discovery-curriculum-results")).toHaveCount(0);
+  for (const name of ["Trending Now", "Recommended For You", "Based on Your Interests"]) {
+    await expect(page.getByRole("link", { name: new RegExp(name) })).toHaveCount(0);
+  }
+  const codingCategory = page.getByRole("link", { name: /Coding & Programming/ });
+  await expect(codingCategory).toHaveAttribute("href", "/app/discover/coding-programming");
+  await expect(codingCategory.locator(".discover-category-art")).toHaveCount(1);
+  await codingCategory.click();
+  await expect(page).toHaveURL(/\/app\/discover\/coding-programming$/);
+  await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
+  await expect(page.locator(".application-header-view-group")).toHaveCount(0);
+  await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+  await expect(page).toHaveTitle("Coding & Programming | Discover | LearnSpace");
   await page.reload();
-  await expect(page.getByText("A seeded discovery lesson")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/discover$/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/app\/discover\/coding-programming$/);
+  await page.goBack();
+
+  const dataScienceCategory = page.getByRole("link", { name: /Data Science & AI\/ML/ });
+  await dataScienceCategory.focus();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(/\/app\/discover\/data-science-ai$/);
+  await expect(page.getByRole("heading", { name: "Data Science & AI/ML", level: 1 })).toBeVisible();
+  await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+
+  for (const { slug, name } of [
+    { slug: "mathematics", name: "Mathematics" },
+    { slug: "cybersecurity", name: "Cybersecurity & Privacy" },
+  ]) {
+    await page.goto(`/app/discover/${slug}`);
+    await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
+    await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+  }
+  await page.goto("/app/discover/this-does-not-exist");
+  await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
+  for (const slug of ["trending-now", "recommended-for-you", "based-on-interests"]) {
+    await page.goto(`/app/discover/${slug}`);
+    await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
+  }
 
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/app/discover");
+  await page.getByRole("link", { name: /Mathematics/ }).click();
+  await expect(page).toHaveURL(/\/app\/discover\/mathematics$/);
+  await page.goto("/app/discover/cybersecurity");
+  await expect(page.getByRole("heading", { name: "Cybersecurity & Privacy", level: 1 })).toBeVisible();
+  const categoryBackLink = page.locator(".discovery-category-back");
+  await expect(categoryBackLink).toBeVisible();
+  expect(await categoryBackLink.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40);
+  await categoryBackLink.click();
+  await expect(page).toHaveURL(/\/app\/discover$/);
   await page.getByRole("button", { name: "Open navigation" }).click();
   await expect(page.getByRole("navigation")).toBeVisible();
   await page.getByRole("link", { name: "Discover" }).click();
   await expect(page).toHaveURL(/\/app\/discover$/);
-  await expect(page.getByRole("heading", { name: "Recommended videos" })).toBeVisible();
+  await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();
+  expect(pageErrors).toEqual([]);
+  expect(browserErrors).toEqual([]);
 });
 
 test("meaningful learning promotes an adjacent concept and dismissal persists", async ({ page }) => {
@@ -247,12 +301,12 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeDiscoveryOnboarding(page);
   await page.goto("/app/discover");
-
   const coreCard = page.locator("article.discovery-card").filter({ hasText: "A behavior seed lesson" });
   const recommendedSection = page.locator("section[aria-labelledby='section-recommended-videos']");
   const adjacentCard = recommendedSection.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
   await expect(coreCard).toBeVisible();
   await expect(adjacentCard).toHaveCount(0);
+  await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();
 
   const initialHomeResponse = await page.request.get("/api/v1/discovery/home");
   expect(initialHomeResponse.ok()).toBe(true);
