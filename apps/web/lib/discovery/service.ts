@@ -1,8 +1,16 @@
+import { RECOMMENDATION_CONFIG as recommendationConfig, semanticRecommendationsEnabled } from "@learnspace/shared/recommendation-config";
+import { readRecommendationCache, writeRecommendationCache, invalidateRecommendations } from "@learnspace/shared/recommendation-cache";
+import { retrievalVector } from "@learnspace/shared/recommendation-model";
+import { loadCompactProfile } from "./compact-profile";
+import { retrieveRecommendationCandidates } from "./candidates";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import {
   activityEvents,
   concepts,
   conceptRelations,
+  conceptMastery,
+  learningGoals,
+  userResourceProgress,
   discoveryInteractions,
   libraryItems,
   paperDetails,
@@ -19,7 +27,7 @@ import {
   videoDetails,
 } from "@learnspace/db/schema";
 import type { DiscoveryAction, DiscoveryHomeResponse, DiscoveryInteractionRequest, DiscoveryImpressionRequest } from "@learnspace/shared";
-import { and, count, desc, eq, gte, inArray, isNull, max, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, max, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 import { getCachedHomeFeed, invalidateHomeFeedCache, setCachedHomeFeed } from "./cache";
 import { DISCOVERY_CATALOG_VERSION, discoveryFingerprint } from "./fingerprint";
@@ -34,6 +42,10 @@ import {
   type LearnerProfile,
   type RankedResource,
 } from "./ranker";
+
+import { AFFINITY_HALF_LIFE_DAYS, LEARNER_MODEL_VERSION, behaviorSignal, observationFromActivity, observedAffinity, personalizationWeights, updateBehaviorAffinity, type BehaviorSignal, type LearnerObservation } from "./learner-model";
+
+export function adaptiveDiscoveryEnabled(): boolean { return process.env.LEARNSPACE_ADAPTIVE_DISCOVERY_ENABLED !== "false"; }
 
 const durableFeedTtlMs = 6 * 60 * 60 * 1000;
 const staleFeedTtlMs = 24 * 60 * 60 * 1000;
@@ -69,7 +81,9 @@ function asDate(value: unknown): Date | null {
 }
 
 export async function loadDiscoveryProfile(tx: Transaction, userId: string): Promise<ProfileLoad> {
-  const [settingsRows, affinityRows, interestRows, sessions, dismissedRows] = await Promise.all([
+  if (!semanticRecommendationsEnabled()) await projectLearningOutcomes(tx, userId);
+  const now = new Date();
+  const [settingsRows, affinityRows, interestRows, sessions, dismissedRows, masteryRows, goalRows, progressRows, impressionRows] = await Promise.all([
     tx.select().from(userSettings).where(eq(userSettings.userId, userId)).limit(1),
     tx.select().from(userConceptAffinity).where(eq(userConceptAffinity.userId, userId)),
     tx
@@ -80,13 +94,22 @@ export async function loadDiscoveryProfile(tx: Transaction, userId: string): Pro
     tx
       .select({ id: studySessions.id, resourceId: studySessions.activeResourceId, lastActiveAt: studySessions.lastActiveAt, lockVersion: studySessions.lockVersion, contextVersion: studySessions.contextVersion })
       .from(studySessions)
-      .where(and(eq(studySessions.userId, userId), eq(studySessions.status, "active")))
+      .where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), gte(studySessions.lastActiveAt, new Date(now.getTime() - 14 * 86_400_000))))
       .orderBy(desc(studySessions.lastActiveAt))
       .limit(3),
     tx
       .select({ resourceId: libraryItems.resourceId })
       .from(libraryItems)
       .where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "removed"))),
+    tx.select().from(conceptMastery).where(eq(conceptMastery.userId, userId)),
+    tx.select().from(learningGoals).where(and(eq(learningGoals.userId, userId), eq(learningGoals.status, "active"))),
+    tx.select().from(userResourceProgress).where(eq(userResourceProgress.userId, userId)),
+    tx.select({ resourceId: recommendationImpressions.resourceId, count: sql<number>`count(DISTINCT ${recommendationImpressions.recommendationRunId})::int` })
+      .from(recommendationImpressions).where(and(eq(recommendationImpressions.userId, userId),
+        gte(recommendationImpressions.shownAt, new Date(now.getTime() - 30 * 86_400_000)),
+        lt(recommendationImpressions.shownAt, new Date(now.getTime() - 12 * 60 * 60_000)),
+        sql`NOT EXISTS (SELECT 1 FROM activity.activity_events reacted WHERE reacted.user_id = ${userId} AND reacted.resource_id = ${recommendationImpressions.resourceId} AND reacted.occurred_at >= ${recommendationImpressions.shownAt} AND reacted.event_type IN ('resource.opened', 'resource.saved', 'resource.consumed'))`,
+      )).groupBy(recommendationImpressions.resourceId),
   ]);
   const preferences = settingsRows[0]?.learningPreferences ?? {};
   const conceptIds = stringArray(recordValue(preferences, "conceptIds"));
@@ -95,14 +118,19 @@ export async function loadDiscoveryProfile(tx: Transaction, userId: string): Pro
       !conceptIds.includes(affinity.conceptId)
       && affinity.featureVersion !== "onboarding-v1"
       && affinity.featureVersion.includes("behavior")
-      && Number(affinity.positiveWeight ?? 0) - Number(affinity.negativeWeight ?? 0) >= DISCOVERY_EXPLORATION_CONFIG.emergingThreshold
+      && observedAffinity(affinity, now).score >= DISCOVERY_EXPLORATION_CONFIG.emergingThreshold
     ))
     .map((affinity) => affinity.conceptId);
-  const trackedConceptIds = [...new Set([...conceptIds, ...emergingConceptIds])];
+  const sessionConceptRows = sessions.length ? await tx.select({ conceptId: resourceConcepts.conceptId }).from(resourceConcepts)
+    .where(and(inArray(resourceConcepts.resourceId, sessions.flatMap((session) => session.resourceId ? [session.resourceId] : [])), gte(resourceConcepts.relevance, .35))) : [];
+  const sessionConceptIds = [...new Set(sessionConceptRows.map((row) => row.conceptId))];
+  const goalConceptIds = goalRows.flatMap((goal) => goal.primaryConceptId ? [goal.primaryConceptId] : []);
+  const dueConceptIds = masteryRows.filter((row) => row.nextReviewAt && row.nextReviewAt <= now).map((row) => row.conceptId);
+  const trackedConceptIds = [...new Set([...conceptIds, ...emergingConceptIds, ...sessionConceptIds, ...goalConceptIds, ...dueConceptIds])];
   const relationRows = trackedConceptIds.length === 0
     ? []
     : await tx
-      .select({ sourceConceptId: conceptRelations.sourceConceptId, targetConceptId: conceptRelations.targetConceptId })
+      .select({ sourceConceptId: conceptRelations.sourceConceptId, targetConceptId: conceptRelations.targetConceptId, relationType: conceptRelations.relationType })
       .from(conceptRelations)
       .where(and(
         or(
@@ -152,7 +180,7 @@ export async function loadDiscoveryProfile(tx: Transaction, userId: string): Pro
     ...hierarchyRows.map((row) => row.id),
     ...parentRows.map((row) => row.id),
   ])].filter((id) => !trackedConceptSet.has(id));
-  const supplementalConceptIds = [...new Set([...emergingConceptIds, ...adjacentConceptIds])];
+  const supplementalConceptIds = [...new Set([...trackedConceptIds, ...adjacentConceptIds])];
   const supplementalRows = supplementalConceptIds.length === 0
     ? []
     : await tx
@@ -174,6 +202,14 @@ export async function loadDiscoveryProfile(tx: Transaction, userId: string): Pro
     adjacentConceptIds: activeAdjacentConceptIds,
     conceptNames,
     affinities: new Map(affinityRows.map((affinity) => [affinity.conceptId, affinity])),
+    onboardingAt: settingsRows[0]?.onboardingCompletedAt ?? null,
+    preferredLanguages: stringArray(recordValue(preferences, "preferredLanguages")),
+    goalConceptIds, sessionConceptIds,
+    prerequisites: relationRows.filter((row) => row.relationType === "prerequisite"),
+    mastery: new Map(masteryRows.map((row) => [row.conceptId, row])),
+    progress: new Map(progressRows.map((row) => [row.resourceId, { progressPct: row.progressPct ?? 0, completedAt: row.completedAt ?? (row.status === "completed" ? row.updatedAt : null), updatedAt: row.updatedAt }])),
+    ignoredImpressions: new Map(impressionRows.map((row) => [row.resourceId, Number(row.count)])),
+    explorationSeed: userId,
     persona: typeof recordValue(preferences, "persona") === "string" ? recordValue(preferences, "persona") as string : null,
     learningIntents: stringArray(recordValue(preferences, "learningIntents")),
     preferredFormats: stringArray(recordValue(preferences, "preferredFormats")),
@@ -241,7 +277,7 @@ async function catalogFingerprint(tx: Transaction): Promise<string> {
 
 function profileFingerprint(profileLoad: ProfileLoad): string {
   return discoveryFingerprint({
-    version: "profile-v4",
+    version: "profile-v5",
     explorationVersion: DISCOVERY_EXPLORATION_CONFIG.version,
     behaviorVersion: DISCOVERY_BEHAVIOR_CONFIG.version,
     refreshVersion: DISCOVERY_REFRESH_CONFIG.version,
@@ -253,6 +289,14 @@ function profileFingerprint(profileLoad: ProfileLoad): string {
     preferredFormats: [...profileLoad.profile.preferredFormats].sort(),
     preferredDuration: profileLoad.profile.preferredDuration,
     selfReportedLevel: profileLoad.profile.selfReportedLevel,
+    onboardingAt: profileLoad.profile.onboardingAt?.toISOString() ?? null,
+    preferredLanguages: profileLoad.profile.preferredLanguages,
+    mastery: [...(profileLoad.profile.mastery ?? new Map())].sort(),
+    goals: profileLoad.profile.goalConceptIds,
+    sessionConcepts: profileLoad.profile.sessionConceptIds,
+    progress: [...(profileLoad.profile.progress ?? new Map())].map(([id, progress]) => [id, Math.floor(progress.progressPct / 25), progress.completedAt?.toISOString() ?? null]).sort(),
+    ignoredImpressions: [...(profileLoad.profile.ignoredImpressions ?? new Map())].sort(),
+    decayBucket: new Date().toISOString().slice(0, 10),
     affinities: [...profileLoad.profile.affinities.values()]
       .toSorted((left, right) => left.conceptId.localeCompare(right.conceptId))
       .map((affinity) => ({
@@ -266,8 +310,8 @@ function profileFingerprint(profileLoad: ProfileLoad): string {
         updatedAt: affinity.updatedAt?.toISOString() ?? null,
       })),
     activeSessionState: profileLoad.activeSessionState.map((session) => ({
-      ...session,
-      lastActiveAt: session.lastActiveAt.toISOString(),
+      id: session.id, resourceId: session.resourceId, contextVersion: session.contextVersion,
+      lastActiveDay: session.lastActiveAt.toISOString().slice(0, 10),
     })),
     dismissedResourceIds: [...profileLoad.dismissedResourceIds].sort(),
   });
@@ -277,7 +321,7 @@ export async function loadDiscoveryResources(
   tx: Transaction,
   resourceIds?: string[],
   ownerUserId?: string,
-  options: { mode?: "learn" | "research"; query?: string; resolvedConceptId?: string | null; limit?: number } = {},
+  options: { mode?: "learn" | "research"; query?: string; resolvedConceptId?: string | null; limit?: number; conceptIds?: string[] } = {},
 ): Promise<DiscoveryResource[]> {
   if (resourceIds && resourceIds.length === 0) return [];
   const publicResource = and(
@@ -294,6 +338,7 @@ export async function loadDiscoveryResources(
     isNull(resources.deletedAt),
     inArray(resources.type, ["video", "paper"]),
     options.mode ? eq(resources.type, options.mode === "learn" ? "video" : "paper") : undefined,
+    options.conceptIds?.length ? sql`EXISTS (SELECT 1 FROM catalog.resource_concepts personal_concept WHERE personal_concept.resource_id = ${resources.id} AND ${inArray(sql`personal_concept.concept_id`, options.conceptIds)})` : undefined,
     options.query || options.resolvedConceptId ? sql`(
       ${options.query ? sql`${resources.searchTsv} @@ plainto_tsquery('simple', ${options.query}) OR ${resources.title} ILIKE ${`%${options.query}%`}` : sql`FALSE`}
       ${options.resolvedConceptId ? sql`OR EXISTS (
@@ -324,7 +369,7 @@ export async function loadDiscoveryResources(
       .innerJoin(concepts, eq(concepts.id, resourceConcepts.conceptId))
       .where(inArray(resourceConcepts.resourceId, ids)),
     tx
-      .select({ resourceId: resourceQualitySnapshots.resourceId, finalQualityScore: resourceQualitySnapshots.finalQualityScore, freshnessPrior: resourceQualitySnapshots.freshnessPrior, sourceAuthority: resourceQualitySnapshots.sourceAuthority, capturedAt: resourceQualitySnapshots.capturedAt })
+      .select({ resourceId: resourceQualitySnapshots.resourceId, finalQualityScore: resourceQualitySnapshots.finalQualityScore, freshnessPrior: resourceQualitySnapshots.freshnessPrior, sourceAuthority: resourceQualitySnapshots.sourceAuthority, completionRate: resourceQualitySnapshots.completionRate, retentionRate: resourceQualitySnapshots.retentionRate, capturedAt: resourceQualitySnapshots.capturedAt })
       .from(resourceQualitySnapshots)
       .where(and(inArray(resourceQualitySnapshots.resourceId, ids), eq(resourceQualitySnapshots.featureVersion, "youtube-quality-v1")))
       .orderBy(desc(resourceQualitySnapshots.capturedAt)),
@@ -371,6 +416,8 @@ export async function loadDiscoveryResources(
         finalQualityScore: qualityRow.finalQualityScore,
         freshnessPrior: qualityRow.freshnessPrior,
         sourceAuthority: qualityRow.sourceAuthority,
+        completionRate: qualityRow.completionRate,
+        retentionRate: qualityRow.retentionRate,
       } : null,
     } satisfies DiscoveryResource];
   });
@@ -385,22 +432,24 @@ export async function rankPaperResourcesForUser(tx: Transaction, userId: string,
     .map((candidate) => candidate.resource.id);
 }
 
-function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
-  if (candidate.reasonCodes.includes("continue_learning")) return "Continue where you left off";
-  const coreConcept = candidate.resource.concepts.find((concept) => (profile.coreConceptIds ?? profile.conceptIds).includes(concept.id));
-  if ((candidate.reasonCodes.includes("concept_match") || candidate.reasonCodes.includes("adjacent_concept")) && coreConcept) {
-    return `Because you selected ${coreConcept.name}`;
+export function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
+  if (candidate.reasonCodes.includes("playlist_continuation")) return "Continue with the next lesson in your collection";
+  if (candidate.reasonCodes.includes("next_level")) return "Go a little deeper after the foundations";
+  if (candidate.reasonCodes.includes("review_due")) return "Worth revisiting now";
+  if (candidate.reasonCodes.includes("continue_learning")) return "Continue your lesson";
+  if (candidate.reasonCodes.includes("prerequisite_gap")) return "A useful foundation for your next lesson";
+  if (candidate.reasonCodes.includes("recent_learning")) {
+    const concept = candidate.resource.concepts.find((concept) => observedAffinity(profile.affinities.get(concept.id), new Date()).score > .05);
+    if (concept) return `A next step in your ${concept.name} learning`;
   }
-  const emergingConcept = candidate.resource.concepts.find((concept) => profile.emergingConceptIds?.includes(concept.id));
-  if ((candidate.reasonCodes.includes("concept_match") || candidate.reasonCodes.includes("adjacent_concept")) && emergingConcept) {
-    return `Because you've been learning ${emergingConcept.name}`;
-  }
-  const adjacentConcept = candidate.resource.concepts.find((concept) => profile.adjacentConceptIds?.includes(concept.id));
-  if (candidate.reasonCodes.includes("adjacent_concept") && adjacentConcept) return "Related to what you're learning";
-  if (candidate.reasonCodes.includes("level_fit")) return "Fits your starting level";
+  if (candidate.reasonCodes.includes("session_context")) return "Related to your recent sessions";
+  if (candidate.reasonCodes.includes("active_goal")) return "A next step toward your learning goal";
+  if (candidate.reasonCodes.includes("adjacent_concept")) return "Related to what you're learning";
+  const core = candidate.resource.concepts.find((concept) => (profile.coreConceptIds ?? profile.conceptIds).includes(concept.id));
+  if (core && candidate.reasonCodes.includes("concept_match")) return `Build on your interest in ${core.name}`;
+  if (candidate.reasonCodes.includes("semantic_match")) return "Connects with the ideas you've been studying";
   if (candidate.reasonCodes.includes("format_fit")) return "Matches how you like to learn";
-  if (candidate.reasonCodes.includes("research_intent")) return "Matches your research interests";
-  if (candidate.reasonCodes.includes("fresh")) return "Fresh from the LearnSpace catalogue";
+  if (candidate.reasonCodes.includes("level_fit")) return "Fits your learning level";
   return "A useful place to explore";
 }
 
@@ -419,7 +468,6 @@ function toCard(candidate: RankedResource, profile: LearnerProfile, runId: strin
     reasonCodes: candidate.reasonCodes,
     position,
     runId,
-    score: Number(candidate.score.toFixed(6)),
   };
 }
 
@@ -427,25 +475,16 @@ function responseFromRanked(
   runId: string,
   generatedAt: Date,
   profileLoad: ProfileLoad,
-  ranked: { videos: RankedResource[]; papers: RankedResource[] },
+  ranked: { videos: RankedResource[] },
   activeSessionResources: DiscoveryResource[],
   stale: boolean,
+  limit = 6,
 ): DiscoveryHomeResponse {
   const dismissed = new Set(profileLoad.dismissedResourceIds);
-  const activeIds = new Set(profileLoad.activeSessionResourceIds);
   const selectedVideos = ranked.videos
-    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id))
+    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id))
     .toSorted((left, right) => (left.finalRank ?? 999) - (right.finalRank ?? 999));
-  const selectedPapers = ranked.papers
-    .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id) && !activeIds.has(candidate.resource.id))
-    .toSorted((left, right) => (left.finalRank ?? 999) - (right.finalRank ?? 999));
-  const recommendedVideos = selectedVideos.slice(0, 6);
-  const recommendedPapers = selectedPapers.slice(0, 6);
-  const usedInRecommendations = new Set([...recommendedVideos, ...recommendedPapers].map((candidate) => candidate.resource.id));
-  const fresh = [...selectedVideos, ...selectedPapers]
-    .filter((candidate) => !usedInRecommendations.has(candidate.resource.id))
-    .toSorted((left, right) => right.freshnessScore - left.freshnessScore || right.score - left.score)
-    .slice(0, 6);
+  const recommendedVideos = selectedVideos.slice(0, limit);
   const activeResourceById = new Map(activeSessionResources.map((resource) => [resource.id, resource]));
   const active = profileLoad.activeSessionResourceIds.flatMap((resourceId, index) => {
     const resource = activeResourceById.get(resourceId);
@@ -469,11 +508,10 @@ function responseFromRanked(
     runId,
     generatedAt: generatedAt.toISOString(),
     stale,
+    personalization: personalizationWeights(profileLoad.profile.affinities.values(), profileLoad.profile.onboardingAt, generatedAt).behavior >= .5 ? "learning" : profileLoad.interests.length ? "interests" : "explore",
     sections: {
       continueLearning: active.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
-      recommendedVideos: recommendedVideos.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
-      researchPapers: recommendedPapers.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
-      freshForYou: fresh.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, index)),
+      recommendedVideos: recommendedVideos.map((candidate, index) => toCard(candidate, profileLoad.profile, runId, (candidate.finalRank ?? index + 1) - 1)),
       interests: profileLoad.interests,
     },
   };
@@ -544,9 +582,11 @@ async function generateRun(
   resourcesForRanker: DiscoveryResource[],
   surface: "home" | "discover",
   fingerprints: { profileFingerprint: string; catalogFingerprint: string },
-): Promise<{ run: typeof recommendationRuns.$inferSelect; ranked: { videos: RankedResource[]; papers: RankedResource[] } }> {
+): Promise<{ run: typeof recommendationRuns.$inferSelect; ranked: { videos: RankedResource[]; papers: RankedResource[] }; rankingMs: number }> {
   const started = performance.now();
-  const initialRanked = rankDiscoveryResources(resourcesForRanker, profileLoad.profile, now);
+  const initialRanked = rankDiscoveryResources(resourcesForRanker, profileLoad.profile, now, surface === "discover" ? recommendationConfig.resultCount : 6);
+  const rankingMs = performance.now() - started;
+  console.info(JSON.stringify({ metric: "ranking_latency", ms: rankingMs, candidateCount: resourcesForRanker.length }));
   const ranked = {
     videos: initialRanked.videos,
     papers: initialRanked.papers.map((candidate) => ({
@@ -560,7 +600,7 @@ async function generateRun(
   const [run] = await tx.insert(recommendationRuns).values({
     userId,
     surface,
-    strategyVersion: DISCOVERY_STRATEGY_VERSION,
+    strategyVersion: profileLoad.profile.semanticRanking ? recommendationConfig.version : DISCOVERY_STRATEGY_VERSION,
     featureVersion: DISCOVERY_FEATURE_VERSION,
     contextSnapshot: {
       conceptIds: profileLoad.profile.conceptIds,
@@ -574,6 +614,17 @@ async function generateRun(
       profileFingerprint: fingerprints.profileFingerprint,
       catalogFingerprint: fingerprints.catalogFingerprint,
       catalogVersion: DISCOVERY_CATALOG_VERSION,
+      learnerModelVersion: LEARNER_MODEL_VERSION,
+      recommendationConfigVersion: recommendationConfig.version,
+      semanticRanking: profileLoad.profile.semanticRanking === true,
+      recentInterests: profileLoad.profile.recentInterests,
+      longTermInterests: profileLoad.profile.longTermInterests,
+      personalization: personalizationWeights(profileLoad.profile.affinities.values(), profileLoad.profile.onboardingAt, now),
+      preferredLanguages: profileLoad.profile.preferredLanguages,
+      mastery: [...(profileLoad.profile.mastery ?? new Map())],
+      goalConceptIds: profileLoad.profile.goalConceptIds,
+      sessionConceptIds: profileLoad.profile.sessionConceptIds,
+      featureSnapshots: Object.fromEntries([...ranked.videos, ...ranked.papers].map((candidate) => [candidate.resource.id, candidate.features ?? {}])),
     },
     status: "completed",
     latencyMs: Math.round(performance.now() - started),
@@ -599,15 +650,17 @@ async function generateRun(
       selected: candidate.finalRank !== null,
     })));
   }
-  return { run, ranked };
+  return { run, ranked, rankingMs };
 }
 
-export async function getHomeFeed(userId: string, surface: "home" | "discover" = "home"): Promise<DiscoveryHomeResponse> {
+async function getLegacyFeed(userId: string, surface: "home" | "discover" = "home", topicId: string | null = null): Promise<DiscoveryHomeResponse> {
   const result = await withUserTransaction(userId, async (tx) => {
     const now = new Date();
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`discovery-feed:${userId}:${surface}`}, 0))`);
     const profileLoad = await loadDiscoveryProfile(tx, userId);
+    const focusedIds = await focusProfile(tx, profileLoad, topicId);
     const fingerprints = {
-      profileFingerprint: profileFingerprint(profileLoad),
+      profileFingerprint: discoveryFingerprint({ profile: profileFingerprint(profileLoad), topicId, version: recommendationConfig.version }),
       catalogFingerprint: await catalogFingerprint(tx),
     };
     const cached = surface === "home" ? await getCachedHomeFeed(userId, fingerprints) : null;
@@ -617,14 +670,20 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
     if (reusableRun) {
       const ranked = await loadRankedRun(tx, reusableRun);
       return {
-        response: responseFromRanked(reusableRun.id, reusableRun.createdAt, profileLoad, ranked, activeSessionResources, now.getTime() - reusableRun.createdAt.getTime() > durableFeedTtlMs),
+        response: responseFromRanked(reusableRun.id, reusableRun.createdAt, profileLoad, ranked, activeSessionResources, now.getTime() - reusableRun.createdAt.getTime() > durableFeedTtlMs, surface === "discover" ? recommendationConfig.resultCount : 6),
         fingerprints,
       };
     }
-    const resourcesForRanker = (await loadDiscoveryResources(tx)).filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id));
+    const tracked = [...new Set([...profileLoad.profile.conceptIds, ...profileLoad.emergingConceptIds, ...profileLoad.adjacentConceptIds, ...(profileLoad.profile.goalConceptIds ?? []), ...(profileLoad.profile.sessionConceptIds ?? []), ...[...(profileLoad.profile.mastery ?? new Map())].filter(([, state]) => state.nextReviewAt && state.nextReviewAt <= now).map(([id]) => id)])];
+    const pools = await Promise.all([
+      loadDiscoveryResources(tx, undefined, undefined, { limit: 200 }),
+      tracked.length ? loadDiscoveryResources(tx, undefined, undefined, { conceptIds: tracked, limit: 600 }) : Promise.resolve([]),
+      loadDiscoveryResources(tx, [...(profileLoad.profile.progress ?? new Map())].filter(([, progress]) => !progress.completedAt && progress.progressPct > 5).map(([id]) => id).slice(0, 100), userId),
+    ]);
+    const resourcesForRanker = [...new Map([...pools.flat(), ...activeSessionResources].map((resource) => [resource.id, resource])).values()].filter((resource) => !profileLoad.dismissedResourceIds.includes(resource.id) && (!topicId || resource.concepts.some((concept) => focusedIds.includes(concept.id) && concept.relevance >= recommendationConfig.minimumTopicRelevance)));
     const { run, ranked } = await generateRun(tx, userId, profileLoad, now, resourcesForRanker, surface, fingerprints);
     return {
-      response: responseFromRanked(run.id, now, profileLoad, ranked, activeSessionResources, false),
+      response: responseFromRanked(run.id, now, profileLoad, ranked, activeSessionResources, false, surface === "discover" ? recommendationConfig.resultCount : 6),
       fingerprints,
     };
   });
@@ -632,8 +691,95 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
   return result.response;
 }
 
+
+export type RecommendationTiming = Record<string, number | boolean>;
+export type RecommendationFeedOptions = { topicId?: string | null; forceRefresh?: boolean; scheduleRefresh?: (work: () => Promise<void>) => void; onTiming?: (timing: RecommendationTiming) => void };
+
+async function focusProfile(tx: Transaction, profileLoad: ProfileLoad, topicId: string | null): Promise<string[]> {
+  if (!topicId) return [];
+  if (!profileLoad.interests.some((topic) => topic.id === topicId)) throw new AuthError("INVALID_RECOMMENDATION_TOPIC", "Choose one of your learning interests.", 422);
+  const result = await tx.execute(sql`WITH RECURSIVE topics AS (SELECT id, 0 depth FROM knowledge.concepts WHERE id = ${topicId} UNION ALL SELECT c.id, t.depth + 1 FROM knowledge.concepts c JOIN topics t ON c.canonical_parent_id = t.id WHERE t.depth < 2 AND c.status = 'active') SELECT id FROM topics LIMIT 100`);
+  const ids = Array.from(result).map((row) => String(row.id));
+  profileLoad.profile = { ...profileLoad.profile, conceptIds: ids, coreConceptIds: ids, adjacentConceptIds: [], emergingConceptIds: profileLoad.emergingConceptIds.filter((id) => ids.includes(id)) };
+  return ids;
+}
+
+const feedRequests = new Map<string, Promise<DiscoveryHomeResponse>>();
+export async function getHomeFeed(userId: string, surface: "home" | "discover" = "home", options: RecommendationFeedOptions = {}): Promise<DiscoveryHomeResponse> {
+  if (surface !== "discover" || !semanticRecommendationsEnabled()) return getLegacyFeed(userId, surface, options.topicId ?? null);
+  const started = performance.now();
+  const topicId = options.topicId ?? null;
+  const cache = await readRecommendationCache<DiscoveryHomeResponse>(userId, topicId);
+  const timing: RecommendationTiming = { redis: performance.now() - started, cacheHit: Boolean(cache.entry) && !options.forceRefresh, fallback: false };
+  if (cache.entry && !options.forceRefresh) {
+    const stale = cache.entry.freshUntil < Date.now();
+    if (stale && options.scheduleRefresh) options.scheduleRefresh(async () => { await getHomeFeed(userId, surface, { topicId, forceRefresh: true }); });
+    timing.total = performance.now() - started;
+    options.onTiming?.(timing);
+    console.info(JSON.stringify({ metric: "recommendation_request_latency", ...timing }));
+    return { ...cache.entry.value, stale };
+  }
+  const key = `${userId}:${topicId ?? "all"}`;
+  let pending = feedRequests.get(key);
+  if (!pending) {
+    pending = withUserTransaction(userId, async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`discovery-feed:${userId}:discover:${topicId ?? "all"}`}, 0))`);
+      if (options.forceRefresh && cache.entry && cache.entry.freshUntil < Date.now()) {
+        const refreshed = await readRecommendationCache<DiscoveryHomeResponse>(userId, topicId);
+        if (refreshed.entry && refreshed.entry.freshUntil > Date.now()) return refreshed.entry.value;
+      }
+      const profileStart = performance.now();
+      const { profileLoad, learning, revision } = await loadCompactProfile(tx, userId);
+      const focusedIds = await focusProfile(tx, profileLoad, topicId);
+      timing.profile = performance.now() - profileStart;
+      const fingerprints = {
+        profileFingerprint: discoveryFingerprint({ revision, preferences: profileLoad.profile.conceptIds, topicId, generation: cache.generation, version: recommendationConfig.version, decayDay: new Date().toISOString().slice(0, 10) }),
+        catalogFingerprint: discoveryFingerprint({ generation: cache.catalogGeneration, version: recommendationConfig.version }),
+      };
+      const reusable = options.forceRefresh ? null : await findReusableRun(tx, userId, new Date(), "discover", fingerprints);
+      if (reusable) return responseFromRanked(reusable.id, reusable.createdAt, profileLoad, await loadRankedRun(tx, reusable), [], false, recommendationConfig.resultCount);
+      const candidateStart = performance.now();
+      const interestIds = focusedIds.length ? focusedIds : [...new Set([...profileLoad.profile.conceptIds, ...profileLoad.emergingConceptIds, ...profileLoad.adjacentConceptIds, ...(profileLoad.profile.goalConceptIds ?? []), ...(profileLoad.profile.sessionConceptIds ?? [])])];
+      const candidates = await retrieveRecommendationCandidates(tx, userId, learning ? retrievalVector(learning) : null, interestIds, Boolean(topicId));
+      timing.ann = candidates.annMs; timing.retrieval = performance.now() - candidateStart; timing.fallback = candidates.fallback;
+      const candidateResources = await loadDiscoveryResources(tx, candidates.ids, userId);
+      const completedIntro = await tx.execute(sql`SELECT DISTINCT rc.concept_id FROM study.user_resource_progress p JOIN catalog.resources r ON r.id = p.resource_id JOIN catalog.resource_concepts rc ON rc.resource_id = r.id WHERE p.user_id = ${userId} AND p.completed_at IS NOT NULL AND r.metadata->>'estimatedLevel' = 'beginner' AND rc.relevance >= .7 LIMIT 50`);
+      profileLoad.profile.completedIntroConceptIds = Array.from(completedIntro).map((row) => String(row.concept_id));
+      const uniqueResources = [...new Map(candidateResources.map((resource) => [resource.canonicalUrl ?? resource.id, resource])).values()];
+      for (const resource of uniqueResources) {
+        const similarity = candidates.similarities.get(resource.id);
+        if (similarity !== undefined) resource.semanticSimilarity = similarity;
+        resource.playlistContinuation = candidates.continuationIds.includes(resource.id);
+      }
+      const rankStart = performance.now();
+      const { run, ranked, rankingMs } = await generateRun(tx, userId, profileLoad, new Date(), uniqueResources, "discover", fingerprints);
+      timing.ranking = rankingMs; timing.persistence = performance.now() - rankStart - rankingMs; timing.candidates = uniqueResources.length;
+      return responseFromRanked(run.id, run.createdAt, profileLoad, ranked, [], false, recommendationConfig.resultCount);
+    }).then(async (response) => {
+      await writeRecommendationCache({ userId, topicId, generation: cache.generation, catalogGeneration: cache.catalogGeneration, freshUntil: Date.now() + recommendationConfig.cacheFreshSeconds * 1000, value: response });
+      return response;
+    }).finally(() => feedRequests.delete(key));
+    feedRequests.set(key, pending);
+  }
+  const response = await pending;
+  timing.returned = response.sections.recommendedVideos.length; timing.total = performance.now() - started;
+  options.onTiming?.(timing);
+  console.info(JSON.stringify({ metric: "recommendation_request_latency", ...timing }));
+  return response;
+}
+
+async function requireRecommendationContext(tx: Transaction, userId: string, runId: string, resourceId: string) {
+  const [row] = await tx.select({ run: recommendationRuns, candidate: recommendationCandidates }).from(recommendationRuns)
+    .innerJoin(recommendationCandidates, eq(recommendationCandidates.recommendationRunId, recommendationRuns.id))
+    .where(and(eq(recommendationRuns.id, runId), eq(recommendationRuns.userId, userId), eq(recommendationCandidates.resourceId, resourceId), eq(recommendationRuns.status, "completed"))).limit(1);
+  if (!row) throw new AuthError("INVALID_RECOMMENDATION_CONTEXT", "That recommendation is not available.", 422);
+  return row;
+}
+
 export async function recordImpression(userId: string, input: DiscoveryImpressionRequest): Promise<{ id: string | null }> {
   return withUserTransaction(userId, async (tx) => {
+    const { run, candidate } = await requireRecommendationContext(tx, userId, input.runId, input.resourceId);
+    if (run.surface !== input.surface || candidate.finalRank !== input.position + 1) throw new AuthError("INVALID_RECOMMENDATION_POSITION", "That recommendation position is not available.", 422);
     const values = {
       recommendationRunId: input.runId,
       userId,
@@ -644,7 +790,9 @@ export async function recordImpression(userId: string, input: DiscoveryImpressio
       ...(input.traceId === undefined ? {} : { traceId: input.traceId }),
     };
     const [row] = await tx.insert(recommendationImpressions).values(values).onConflictDoNothing().returning({ id: recommendationImpressions.id });
-    return { id: row?.id ?? null };
+    if (row) return { id: row.id };
+    const [existing] = await tx.select({ id: recommendationImpressions.id }).from(recommendationImpressions).where(and(eq(recommendationImpressions.recommendationRunId, input.runId), eq(recommendationImpressions.resourceId, input.resourceId), eq(recommendationImpressions.position, input.position))).limit(1);
+    return { id: existing?.id ?? null };
   });
 }
 
@@ -656,31 +804,9 @@ const activityEventByAction: Record<DiscoveryAction, string> = {
   complete: "resource.completed",
 };
 
-type BehaviorSignal = {
-  positive: number;
-  negative: number;
-  confidence: number;
-  refresh: boolean;
-};
-
 function progressFraction(metadata: Record<string, unknown>): number | null {
   const value = recordValue(metadata, "progressFraction");
-  return typeof value === "number" && Number.isFinite(value)
-    ? Math.min(1, Math.max(0, value))
-    : null;
-}
-
-function behaviorSignal(action: DiscoveryAction, metadata: Record<string, unknown>): BehaviorSignal {
-  const progress = progressFraction(metadata);
-  if (action === "open") {
-    if (progress !== null && progress >= 0.5) return { positive: 0.1, negative: 0, confidence: 0.08, refresh: true };
-    if (progress !== null && progress >= 0.25) return { positive: 0.06, negative: 0, confidence: 0.06, refresh: false };
-    return { positive: 0.03, negative: 0, confidence: 0.03, refresh: false };
-  }
-  if (action === "save") return { positive: 0.18, negative: 0, confidence: 0.12, refresh: true };
-  if (action === "start_session") return { positive: 0.12, negative: 0, confidence: 0.1, refresh: true };
-  if (action === "complete") return { positive: 0.25, negative: 0, confidence: 0.15, refresh: true };
-  return { positive: 0, negative: 0.15, confidence: 0.1, refresh: true };
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
 }
 
 async function loadResourceConcepts(
@@ -756,33 +882,23 @@ async function projectBehaviorAffinity(
     ))),
   ];
   for (const target of targets) {
-    const positive = signal.positive * target.multiplier;
-    const negative = signal.negative * target.multiplier;
-    const confidence = signal.confidence * target.multiplier;
-    await tx
-      .insert(userConceptAffinity)
-      .values({
-        userId,
-        conceptId: target.conceptId,
-        score: positive - negative,
-        confidence: Math.min(1, confidence),
-        positiveWeight: positive,
-        negativeWeight: negative,
-        featureVersion: "discovery-behavior-v1",
-        lastEventAt: now,
-        updatedAt: now,
-      })
+    const weightedSignal = { ...signal, positive: signal.positive * target.multiplier, negative: signal.negative * target.multiplier };
+    const direct = core.has(target.conceptId);
+    const version = direct ? LEARNER_MODEL_VERSION : "discovery-adjacent-v2";
+    const initial = { ...updateBehaviorAffinity(undefined, weightedSignal, now), featureVersion: version };
+    const decay = sql`CASE WHEN ${userConceptAffinity.featureVersion} LIKE ${direct ? "%behavior%" : "%adjacent%"} THEN exp(-greatest(0, extract(epoch FROM (${now.toISOString()}::timestamptz - COALESCE(${userConceptAffinity.lastEventAt}, ${userConceptAffinity.updatedAt})))) * ${Math.LN2 / (AFFINITY_HALF_LIFE_DAYS * 86_400)}) ELSE 0 END`;
+    const positive = sql`(${userConceptAffinity.positiveWeight} * ${decay} + ${weightedSignal.positive})`;
+    const negative = sql`(${userConceptAffinity.negativeWeight} * ${decay} + ${weightedSignal.negative})`;
+    await tx.insert(userConceptAffinity).values({ userId, conceptId: target.conceptId, ...initial })
       .onConflictDoUpdate({
         target: [userConceptAffinity.userId, userConceptAffinity.conceptId],
         set: {
-          score: sql`LEAST(1.0::real, GREATEST(-1.0::real, ${userConceptAffinity.score} + (${positive}::real - ${negative}::real) * (1.0::real - ${userConceptAffinity.confidence})))`,
-          confidence: sql`LEAST(1.0::real, ${userConceptAffinity.confidence} + ${confidence}::real)`,
-          positiveWeight: sql`LEAST(1.0::real, ${userConceptAffinity.positiveWeight} + ${positive}::real)`,
-          negativeWeight: sql`LEAST(1.0::real, ${userConceptAffinity.negativeWeight} + ${negative}::real)`,
-          featureVersion: sql`CASE WHEN ${userConceptAffinity.featureVersion} = 'onboarding-v1' THEN 'discovery-behavior-v1' ELSE ${userConceptAffinity.featureVersion} END`,
-          lastEventAt: now,
-          updatedAt: now,
+          score: sql`(${positive} - ${negative}) / (1 + ${positive} + ${negative})`,
+          confidence: sql`0.95 * (1 - exp(-(${positive} + ${negative}) / 1.5))`,
+          positiveWeight: positive, negativeWeight: negative,
+          featureVersion: version, lastEventAt: now, updatedAt: now,
         },
+        ...(direct ? {} : { setWhere: sql`${userConceptAffinity.featureVersion} NOT LIKE '%behavior%'` }),
       });
   }
   return [...new Set(targets.map((target) => target.conceptId))];
@@ -860,46 +976,57 @@ async function enqueueConditionalRefresh(
   });
 }
 
-export async function projectStudyBehavior(
-  tx: Transaction,
-  userId: string,
-  resourceId: string,
-  eventType: "resource.opened" | "resource.progressed" | "resource.completed",
-  progress: number,
-  correlationId: string,
-  now: Date,
-  intent: "open" | "start" = "open",
-): Promise<void> {
-  const conceptsForResource = await loadResourceConcepts(tx, resourceId);
-  const action = intent === "start" ? "start_session" : eventType === "resource.completed" ? "complete" : "open";
-  const signal = behaviorSignal(action, { progressFraction: progress });
-  const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource, signal, now);
-  if (signal.refresh) {
-    await enqueueConditionalRefresh(
-      tx,
-      userId,
-      resourceId,
-      correlationId,
-      await loadConceptsByIds(tx, projectedConceptIds),
-      now,
-    );
-  }
+type LearningActivity = Pick<typeof activityEvents.$inferSelect, "id" | "userId" | "resourceId" | "studySessionId" | "conceptId" | "eventType" | "payload" | "occurredAt">;
+
+/** Persisted, idempotent learner projection. The Code Observer does not participate. */
+export async function projectStudyBehavior(tx: Transaction, event: LearningActivity): Promise<void> {
+  const observation = observationFromActivity(event.eventType, event.payload);
+  if (!observation) return;
+  const raw = behaviorSignal(observation);
+  if (!raw.positive && !raw.negative) return;
+  const now = new Date();
+  const ageDecay = .5 ** (Math.max(0, now.getTime() - event.occurredAt.getTime()) / (AFFINITY_HALF_LIFE_DAYS * 86_400_000));
+  const signal = { ...raw, positive: raw.positive * ageDecay, negative: raw.negative * ageDecay };
+  const [marker] = await tx.insert(activityEvents).values({
+    schemaVersion: 1, userId: event.userId, resourceId: event.resourceId, studySessionId: event.studySessionId,
+    eventType: "discovery.affinity_projected", actorType: "system", source: "web", occurredAt: now,
+    idempotencyKey: `affinity:${LEARNER_MODEL_VERSION}:${event.id}`,
+    causationId: event.id, payload: { observation, projectorVersion: LEARNER_MODEL_VERSION, sourceEventId: event.id },
+  }).onConflictDoNothing().returning({ id: activityEvents.id });
+  if (!marker) return;
+  const conceptsForResource = event.resourceId ? await loadResourceConcepts(tx, event.resourceId) : event.conceptId ? [{ id: event.conceptId, name: "", relevance: 1, isPrimary: true }] : [];
+  const projected = await projectBehaviorAffinity(tx, event.userId, conceptsForResource, signal, now);
+  if (signal.refresh && event.resourceId) await enqueueConditionalRefresh(tx, event.userId, event.resourceId, event.id, await loadConceptsByIds(tx, projected), now);
+}
+
+async function projectLearningOutcomes(tx: Transaction, userId: string): Promise<void> {
+  // ponytail: catch up at most 100 outcomes per request; move backlog draining to the existing worker if this bound is reached.
+  const pending = await tx.select().from(activityEvents).where(and(eq(activityEvents.userId, userId),
+    inArray(activityEvents.eventType, ["question.asked", "exercise.completed", "review.completed"]),
+    gte(activityEvents.occurredAt, new Date(Date.now() - 90 * 86_400_000)),
+    sql`NOT EXISTS (SELECT 1 FROM activity.activity_events projected WHERE projected.user_id = ${userId} AND projected.idempotency_key = 'affinity:' || ${LEARNER_MODEL_VERSION} || ':' || ${activityEvents.id}::text)`,
+  )).orderBy(asc(activityEvents.occurredAt)).limit(100);
+  for (const event of pending) await projectStudyBehavior(tx, event);
 }
 
 export async function recordInteraction(userId: string, input: DiscoveryInteractionRequest): Promise<{ duplicate: boolean }> {
   const result = await withUserTransaction(userId, async (tx) => {
-    let impressionId = input.impressionId;
+    if (input.runId) await requireRecommendationContext(tx, userId, input.runId, input.resourceId);
+    if (!(await loadDiscoveryResources(tx, [input.resourceId], userId)).length) throw new AuthError("RESOURCE_NOT_AVAILABLE", "That material is not available.", 404);
+    if (input.action === "save" || input.action === "dismiss") {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`library-feedback:${userId}:${input.resourceId}`}, 0))`);
+      const [existing] = await tx.select({ status: libraryItems.status }).from(libraryItems).where(and(eq(libraryItems.userId, userId), eq(libraryItems.resourceId, input.resourceId)));
+      if (existing?.status === (input.action === "save" ? "saved" : "removed")) return { duplicate: true };
+    }
+    const impressionId = input.impressionId;
     if (impressionId) {
-      const impression = await tx.select({ id: recommendationImpressions.id }).from(recommendationImpressions).where(and(eq(recommendationImpressions.id, impressionId), eq(recommendationImpressions.userId, userId), eq(recommendationImpressions.resourceId, input.resourceId))).limit(1);
-      impressionId = impression[0]?.id;
+      const impression = await tx.select({ id: recommendationImpressions.id }).from(recommendationImpressions).where(and(eq(recommendationImpressions.id, impressionId), eq(recommendationImpressions.userId, userId), eq(recommendationImpressions.resourceId, input.resourceId), input.runId ? eq(recommendationImpressions.recommendationRunId, input.runId) : undefined)).limit(1);
+      if (!impression[0]) throw new AuthError("INVALID_IMPRESSION_CONTEXT", "That recommendation impression is not available.", 422);
     }
     const [interaction] = await tx.insert(discoveryInteractions).values({ impressionId, userId, resourceId: input.resourceId, action: input.action, correlationId: input.correlationId, metadata: input.metadata }).onConflictDoNothing().returning({ id: discoveryInteractions.id });
     if (!interaction) return { duplicate: true };
     const now = new Date();
-    const signal = behaviorSignal(input.action, input.metadata);
-    const conceptsForResource = await loadResourceConcepts(tx, input.resourceId);
-    const projectedConceptIds = await projectBehaviorAffinity(tx, userId, conceptsForResource, signal, now);
-    await tx.insert(activityEvents).values({
+    const [event] = await tx.insert(activityEvents).values({
       schemaVersion: 1,
       userId,
       resourceId: input.resourceId,
@@ -912,9 +1039,11 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
       payload: {
         action: input.action,
         runId: input.runId ?? null,
-        progressFraction: progressFraction(input.metadata),
+        // Client-supplied progress is diagnostic, never evidence of consumption.
+        progressFraction: null,
       },
-    }).onConflictDoNothing();
+    }).onConflictDoNothing().returning();
+    if (event) await projectStudyBehavior(tx, event);
     if (input.action === "save") {
       await tx.insert(libraryItems).values({ userId, resourceId: input.resourceId, status: "saved", source: "discovery" }).onConflictDoUpdate({ target: [libraryItems.userId, libraryItems.resourceId], set: { status: "saved", updatedAt: new Date() } });
     }
@@ -927,20 +1056,9 @@ export async function recordInteraction(userId: string, input: DiscoveryInteract
           set: { status: "removed", updatedAt: new Date() },
         });
     }
-    if (signal.refresh) {
-      const refreshConceptIds = projectedConceptIds;
-      await enqueueConditionalRefresh(
-        tx,
-        userId,
-        input.resourceId,
-        input.correlationId,
-        await loadConceptsByIds(tx, refreshConceptIds),
-        now,
-      );
-    }
     return { duplicate: false };
   });
-  if (!result.duplicate) await invalidateHomeFeedCache(userId);
+  if (!result.duplicate && input.action !== "open") { await invalidateHomeFeedCache(userId); await invalidateRecommendations(userId); }
   return result;
 }
 

@@ -1,0 +1,24 @@
+{
+  "measuredAt": "2026-10-03T10:12:12.863790+00:00",
+  "scenario": "after compiling five authentication routes and verifying 15 viewport/page combinations",
+  "beforeMiB": {
+    "web": 726.7,
+    "worker": 93.05,
+    "ai": 520.2,
+    "postgres": 51.39,
+    "redis": 39.29
+  },
+  "after": {
+    "learnspace-web-1": "1.047GiB / 1.5GiB",
+    "learnspace-worker-1": "43.87MiB / 512MiB",
+    "learnspace-ai-1": "57.68MiB / 768MiB",
+    "learnspace-postgres-1": "19.82MiB / 256MiB",
+    "learnspace-redis-1": "23.64MiB / 128MiB"
+  },
+  "notes": [
+    "Before: existing running containers, without a controlled warm-up.",
+    "After: rebuilt AI and restarted development stack; five auth pages tested at three viewport sizes.",
+    "Includes only application containers, not Docker Desktop VM overhead, BuildKit, or the separate CI database.",
+    "All application containers reported OOMKilled=false and RestartCount=0."
+  ]
+}

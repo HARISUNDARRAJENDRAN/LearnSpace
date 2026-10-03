@@ -9,6 +9,13 @@ const nextConfig = {
   devIndicators: false,
   experimental: {
     useTypeScriptCli: false,
+    webpackMemoryOptimizations: true,
+    webpackBuildWorker: true,
+    preloadEntriesOnStart: false,
+  },
+  onDemandEntries: {
+    maxInactiveAge: 30_000,
+    pagesBufferLength: 2,
   },
   output: "standalone",
   outputFileTracingRoot: path.join(appDirectory, "../.."),

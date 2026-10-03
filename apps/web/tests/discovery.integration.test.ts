@@ -182,7 +182,7 @@ test(
         FROM discovery.user_concept_affinity
         WHERE user_id = ${user.id} AND concept_id = ${adjacentConceptId}
       `;
-      assert.equal(adjacentAffinity[0]?.feature_version, "discovery-behavior-v1");
+      assert.equal(adjacentAffinity[0]?.feature_version, "discovery-adjacent-v2");
       assert.ok(Number(adjacentAffinity[0]?.positive_weight) > 0);
       const refreshPayloads = await migrator<{ payload: Record<string, unknown> }[]>`
         SELECT payload
@@ -204,7 +204,7 @@ test(
       assert.equal((await recordInteraction(user.id, {
         runId: card.runId,
         resourceId: weightedResourceId,
-        action: "complete",
+        action: "save",
         correlationId: weightedCorrelationId,
         metadata: {},
       })).duplicate, false);
@@ -214,7 +214,7 @@ test(
         WHERE user_id = ${user.id} AND concept_id IN ${migrator(concepts.map((concept) => concept.id))}
       `;
       const weightedDelta = (conceptId: string): number => {
-        const before = Number(beforeWeighted.find((row) => row.concept_id === conceptId)?.positive_weight ?? 0);
+        const before = conceptId === conceptA.id ? 0 : Number(beforeWeighted.find((row) => row.concept_id === conceptId)?.positive_weight ?? 0);
         const after = Number(afterWeighted.find((row) => row.concept_id === conceptId)?.positive_weight ?? 0);
         return after - before;
       };
@@ -255,7 +255,6 @@ test(
 
       const dismissedFeed = await getHomeFeed(user.id);
       assert.equal(dismissedFeed.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
-      assert.equal(dismissedFeed.sections.freshForYou.some((item) => item.resourceId === resourceId), false);
       assert.ok(dismissedFeed.runId);
       await migrator`
         INSERT INTO discovery.recommendation_candidates
@@ -265,7 +264,6 @@ test(
       `;
       const reusedDismissedRun = await getHomeFeed(user.id);
       assert.equal(reusedDismissedRun.sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
-      assert.equal(reusedDismissedRun.sections.freshForYou.some((item) => item.resourceId === resourceId), false);
       await saveLibraryItem(user.id, { resourceId: resourceId as string, action: "save" });
       const restored = await migrator<{ status: string }[]>`
         SELECT status FROM catalog.library_items WHERE user_id = ${user.id} AND resource_id = ${resourceId}

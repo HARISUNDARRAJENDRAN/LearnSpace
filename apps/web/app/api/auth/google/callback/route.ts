@@ -4,6 +4,7 @@ import {
   getGoogleConfig,
   getGoogleOAuthEndpoints,
   getAuthSecret,
+  getAppBaseUrl,
 } from "../../../../../lib/auth/config";
 import {
   createSession,
@@ -35,7 +36,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function loginRedirect(request: NextRequest, error?: string): NextResponse {
-  const url = new URL("/login", request.url);
+  const url = new URL("/login", getAppBaseUrl(request));
   if (error) {
     url.searchParams.set("error", error);
   }
@@ -137,7 +138,7 @@ export async function GET(request: NextRequest) {
       getAuthSecret(),
     );
     const destination = await getAuthenticatedDestination(user.id, next);
-    const response = NextResponse.redirect(new URL(destination, request.url));
+    const response = NextResponse.redirect(new URL(destination, getAppBaseUrl(request)));
     setSessionCookie(response, session.token, session.maxAge);
     clearOauthStateCookie(response);
     return response;

@@ -98,6 +98,8 @@ test.afterAll(async () => {
     SELECT DISTINCT recommendation_run_id AS id
     FROM discovery.recommendation_candidates
     WHERE resource_id IN ${db(resourceIds)}
+    UNION
+    SELECT id FROM discovery.recommendation_runs WHERE user_id IN ${db(userIds)}
   `;
   if (runRows.length > 0) {
     const runIds = runRows.map((row) => row.id);

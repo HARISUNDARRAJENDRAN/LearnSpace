@@ -33,17 +33,17 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "pnpm exec tsx tests/e2e/mock-google-provider.ts",
+      command: "corepack pnpm exec tsx tests/e2e/mock-google-provider.ts",
       url: "http://127.0.0.1:4010/health",
       timeout: 120_000,
       reuseExistingServer: true,
     },
     {
       command: productionServer
-        ? "pnpm run start:standalone"
-        : "pnpm exec next dev --webpack --hostname localhost --port 3101",
+        ? "corepack pnpm run start:standalone"
+        : "corepack pnpm exec next dev --webpack --hostname 0.0.0.0 --port 3101",
       url: "http://localhost:3101",
-      env: { PORT: "3101" },
+      env: { PORT: "3101", HOSTNAME: "0.0.0.0" },
       timeout: 120_000,
       reuseExistingServer: false,
     },

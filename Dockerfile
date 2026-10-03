@@ -15,6 +15,7 @@ RUN npm install --global pnpm@11.24.0
 FROM base AS dependencies
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json .npmrc ./
+COPY patches ./patches
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
@@ -93,6 +94,7 @@ COPY --from=worker-build /workspace/packages/shared/dist ./packages/shared/dist
 COPY --from=worker-build /workspace/services/worker/package.json ./services/worker/package.json
 COPY --from=worker-build /workspace/services/worker/node_modules ./services/worker/node_modules
 COPY --from=worker-build /workspace/services/worker/dist ./services/worker/dist
+COPY --from=worker-build /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv ./apps/web/public/data/learnspace_youtube_curriculum_master.csv
 
 USER learnspace
 

@@ -1,107 +1,80 @@
 "use client";
 
-import type { DiscoveryAction, DiscoveryCard, DiscoveryHomeResponse, DiscoverySurface } from "@learnspace/shared";
-import { useEffect, useRef, useState } from "react";
+import type { DiscoveryCard, DiscoveryHomeResponse, DiscoverySurface } from "@learnspace/shared";
+import { useEffect, useRef, type ReactNode } from "react";
+import Link from "next/link";
+import { ArrowRight, Bookmark, Play } from "lucide-react";
 import { StartStudyButton } from "../study/StudyActions";
+import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
 
-function formatDuration(durationMs: number | null): string | null {
+function formatDuration(durationMs: number | null) {
   if (durationMs === null) return null;
   const minutes = Math.round(durationMs / 60_000);
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function formatDate(value: string | null): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : new Intl.DateTimeFormat("en", { month: "short", day: "numeric", year: "numeric" }).format(date);
-}
-
-function DiscoveryCardView({ card, surface, onDismiss }: { card: DiscoveryCard; surface: DiscoverySurface; onDismiss: (resourceId: string) => void }) {
+function DiscoveryCardView({ card, surface }: { card: DiscoveryCard; surface: DiscoverySurface }) {
   const ref = useRef<HTMLElement>(null);
-  const [action, setAction] = useState<DiscoveryAction | null>(null);
-  const [message, setMessage] = useState("");
   const isContinue = card.reasonCodes.includes("continue_learning");
 
   useEffect(() => {
-    if (!ref.current || !card.runId || isContinue || typeof IntersectionObserver === "undefined") return;
+    const element = ref.current;
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let visible = false;
     let sent = false;
-    const observer = new IntersectionObserver((entries) => {
-      if (sent || !entries[0]?.isIntersecting) return;
-      sent = true;
-      void fetch("/api/v1/discovery/impressions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ runId: card.runId, resourceId: card.resourceId, position: card.position, surface }),
-      });
-      observer.disconnect();
-    }, { threshold: 0.5 });
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [card.position, card.resourceId, card.runId, isContinue, surface]);
-
-  async function interact(nextAction: DiscoveryAction) {
-    setAction(nextAction);
-    setMessage("");
-    try {
-      const response = await fetch("/api/v1/discovery/interactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resourceId: card.resourceId, runId: card.runId, action: nextAction, correlationId: crypto.randomUUID() }),
-      });
-      if (!response.ok) throw new Error("interaction failed");
-      setMessage(nextAction === "save" ? "Saved to your library" : nextAction === "dismiss" ? "Removed from recommendations" : "Opening resource");
-      if (nextAction === "dismiss") onDismiss(card.resourceId);
-    } catch {
-      setMessage("Could not save that action");
-    } finally {
-      setAction(null);
+    let attempts = 0;
+    const controller = new AbortController();
+    async function send() {
+      if (sent || !visible || document.visibilityState !== "visible") return;
+      attempts += 1;
+      try {
+        const response = await fetch("/api/v1/discovery/impressions", {
+          method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+          body: JSON.stringify({ runId: card.runId, resourceId: card.resourceId, position: card.position, surface, visibleDurationMs: 1000 }),
+        });
+        if (!response.ok) throw new Error("Impression not recorded");
+        sent = true;
+      } catch {
+        if (!controller.signal.aborted && attempts < 2 && visible) timer = setTimeout(() => void send(), 3000);
+      }
     }
-  }
+    function schedule() {
+      clearTimeout(timer);
+      if (visible && !sent && document.visibilityState === "visible") timer = setTimeout(() => void send(), 1000);
+    }
+    const observer = new IntersectionObserver((entries) => { visible = (entries[0]?.intersectionRatio ?? 0) >= .5; schedule(); }, { threshold: .5 });
+    observer.observe(element);
+    document.addEventListener("visibilitychange", schedule);
+    return () => { clearTimeout(timer); controller.abort(); observer.disconnect(); document.removeEventListener("visibilitychange", schedule); };
+  }, [card.position, card.resourceId, card.runId, surface]);
 
-  const date = formatDate(card.publishedAt);
-  const duration = formatDuration(card.durationMs);
   return (
     <article className="discovery-card" ref={ref}>
-      {card.thumbnailUrl ? <img className="discovery-card-image" src={card.thumbnailUrl} alt="" loading="lazy" /> : <div className={`discovery-card-art discovery-card-art-${card.type}`} aria-hidden="true"><span>{card.type === "paper" ? "Research" : "Watch"}</span></div>}
+      {card.thumbnailUrl ? <YouTubeThumbnail className="discovery-card-image" src={card.thumbnailUrl} alt="" width={640} height={400} loading="lazy" /> : <div className="discovery-card-art" aria-hidden="true"><Play /></div>}
       <div className="discovery-card-content">
-        <div className="discovery-card-meta"><span>{card.type === "paper" ? "Paper" : "Video"}</span>{card.author ? <span>{card.author}</span> : null}{duration ? <span>{duration}</span> : null}{date ? <span>{date}</span> : null}</div>
+        <div className="discovery-card-meta">{card.author ? <span>{card.author}</span> : null}{formatDuration(card.durationMs) ? <span>{formatDuration(card.durationMs)}</span> : null}</div>
         <h3>{card.title}</h3>
-        {card.description ? <p>{card.description}</p> : null}
         <p className="discovery-card-reason">{card.reason}</p>
         <div className="discovery-card-actions">
-          <StartStudyButton resourceId={card.resourceId} origin={surface === "home" ? "home" : "discover"} recommendationRunId={card.runId} label={isContinue ? "Continue" : card.type === "video" ? "Start learning" : "Study paper"} className="discovery-start-button" />
-          {card.url ? <a className="discovery-open-link" href={card.url} target="_blank" rel="noreferrer" onClick={() => void interact("open")}>{card.type === "video" ? "Open on YouTube (external)" : "View on arXiv (external)"}</a> : null}
-          <button type="button" onClick={() => void interact("save")} disabled={action !== null}>{action === "save" ? "Saving…" : "Save"}</button>
-          <button type="button" onClick={() => void interact("dismiss")} disabled={action !== null}>{action === "dismiss" ? "Removing…" : "Dismiss"}</button>
+          <StartStudyButton resourceId={card.resourceId} origin="discover" recommendationRunId={card.runId} label={isContinue ? "Continue" : "Start learning"} className="discovery-start-button" />
+          <button className="discovery-bookmark-button" type="button" aria-label={`Bookmark ${card.title} (coming soon)`} title="Bookmarking coming soon" disabled><Bookmark aria-hidden="true" size={18} strokeWidth={1.8} /></button>
         </div>
-        <span className="sr-only" aria-live="polite">{message}</span>
       </div>
     </article>
   );
 }
 
-function Section({ title, description, cards, surface, onDismiss }: { title: string; description: string; cards: DiscoveryCard[]; surface: DiscoverySurface; onDismiss: (resourceId: string) => void }) {
-  const sectionId = `section-${title.toLowerCase().replaceAll(" ", "-")}`;
+export function DiscoveryFeed({ feed, surface = "discover", full = false, topicNavigation }: { feed: DiscoveryHomeResponse | null; surface?: DiscoverySurface; full?: boolean; topicNavigation?: ReactNode }) {
+  const recommendations = feed?.sections.recommendedVideos ?? [];
+  const cards = full ? recommendations : recommendations.slice(0, 6);
+  const Heading = full ? "h1" : "h2";
+  const context = feed?.personalization === "learning" ? "Shaped by what you've been learning" : feed?.personalization === "interests" ? "Selected for your interests" : "Find your next lesson";
   return (
-    <section className="discovery-section" aria-labelledby={sectionId}>
-      <div className="discovery-section-heading"><div><p className="application-eyebrow">LearnSpace</p><h2 id={sectionId}>{title}</h2></div><p>{description}</p></div>
-      {cards.length > 0 ? <div className="discovery-card-grid">{cards.map((card) => <DiscoveryCardView key={`${card.runId}-${card.resourceId}-${card.position}`} card={card} surface={surface} onDismiss={onDismiss} />)}</div> : <div className="discovery-empty"><span className="discovery-empty-mark" aria-hidden="true">○</span><p>Nothing here yet.</p><span>As your library and learning sessions grow, this space will follow along.</span></div>}
-    </section>
-  );
-}
-
-export function DiscoveryFeed({ feed, surface }: { feed: DiscoveryHomeResponse; surface: DiscoverySurface }) {
-  const [dismissedResourceIds, setDismissedResourceIds] = useState<Set<string>>(() => new Set());
-  const dismiss = (resourceId: string) => setDismissedResourceIds((current) => new Set(current).add(resourceId));
-  const visible = (cards: DiscoveryCard[]) => cards.filter((card) => !dismissedResourceIds.has(card.resourceId));
-  return (
-    <section className="discover-personalized-feed" aria-labelledby="discover-for-you-heading">
-      <div className="discover-personalized-intro"><div><p className="discover-eyebrow">Your learning space</p><h2 id="discover-for-you-heading">For You</h2><p>A considered place for the next thing worth learning.</p></div><div className="discovery-feed-status" data-stale={feed.stale ? "true" : "false"}>{feed.stale ? Object.values(feed.sections).some((cards) => cards.length > 0) ? "Showing your last good feed" : "Recommendations are temporarily unavailable" : "Personalized from your interests"}</div></div>
-      {feed.sections.interests.length > 0 ? <section className="discovery-interests" aria-labelledby="interest-heading"><div><p className="application-eyebrow">Your starting point</p><h2 id="interest-heading">Explore your interests</h2></div><div className="discovery-interest-list">{feed.sections.interests.map((interest) => <span className="discovery-interest-chip" key={interest.id}>{interest.name}</span>)}</div></section> : null}
-      <Section title="Continue learning" description="Your active sessions, when you have one in motion." cards={visible(feed.sections.continueLearning)} surface={surface} onDismiss={dismiss} />
-      <Section title="Recommended videos" description="A short list shaped by your concepts, level, and learning style." cards={visible(feed.sections.recommendedVideos)} surface={surface} onDismiss={dismiss} />
-      <Section title="Research worth reading" description="Current and foundational papers, ranked separately from videos." cards={visible(feed.sections.researchPapers)} surface={surface} onDismiss={dismiss} />
-      <Section title="Fresh for you" description="Recently added resources that clear the quality floor." cards={visible(feed.sections.freshForYou)} surface={surface} onDismiss={dismiss} />
+    <section className={`discover-recommended-feed${full ? " discover-recommended-feed--full" : ""}`} aria-labelledby="discover-recommended-heading">
+      <div className="discovery-section-heading"><div><Heading id="discover-recommended-heading">Recommended for you</Heading><p className="discover-recommendation-context">{context}</p></div>{!full ? <Link href="/app/discover/for-you" className="discover-recommendations-link" aria-label="See all recommendations" title="See all recommendations" prefetch={false}><ArrowRight aria-hidden="true" /></Link> : null}</div>
+      {topicNavigation}
+      {cards.length ? <div className={`discovery-card-grid${full ? " discovery-recommendations-full-grid" : " discovery-recommendations-grid"}`}>{cards.map((card) => <DiscoveryCardView key={`${card.runId}-${card.resourceId}-${card.position}`} card={card} surface={surface} />)}</div> : <p className="discover-recommendation-empty">{feed ? "Explore a collection below while we find more lessons that fit you." : "Recommendations are unavailable right now. Explore a collection below."}</p>}
     </section>
   );
 }

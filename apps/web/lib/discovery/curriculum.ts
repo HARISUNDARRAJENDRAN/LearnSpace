@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { canonicalYoutubeId, datasetRows } from "./dataset";
-import { youtubeThumbnailSources } from "../home/thumbnail";
+import { canonicalYoutubeId, datasetRows } from "@learnspace/shared/youtube-dataset";
+import { youtubeThumbnailSources, youtubeThumbnailSourcesFromUrl } from "../home/thumbnail";
 
 const curriculumPath = resolve(process.cwd(), "public/data/learnspace_youtube_curriculum_master.csv");
 
@@ -14,6 +14,8 @@ export type CurriculumItem = {
   learningStage: string | null;
   track: string | null;
   coverageNotes: string | null;
+  publishedOrUpdated?: string | null;
+  language?: string | null;
   thumbnailUrl: string | null;
   thumbnailFallbackUrl: string | null;
 };
@@ -49,7 +51,10 @@ async function loadCurriculum(): Promise<CurriculumArea[]> {
     if (!categorySlug) throw new Error(`Curriculum row ${rowIndex + 2} is missing its canonical category slug`);
     const resourceType = field(row, "resource_type") ?? "resource";
     const videoUrl = field(row, "video_url") ?? (resourceType === "video" ? field(row, "youtube_url") : null);
-    const url = videoUrl ?? field(row, "playlist_url") ?? field(row, "youtube_url");
+    const playlistUrl = field(row, "playlist_url") ?? (resourceType === "playlist" ? field(row, "youtube_url") : null);
+    const url = resourceType === "playlist"
+      ? playlistUrl ?? videoUrl ?? field(row, "youtube_url")
+      : videoUrl ?? field(row, "youtube_url") ?? playlistUrl;
     const thumbnail = youtubeThumbnailSources(canonicalYoutubeId(videoUrl));
     const areaKey = slugify(areaName);
     const area = areas.get(areaKey) ?? { name: areaName, categories: new Map<string, CurriculumCategory>() };
@@ -65,6 +70,8 @@ async function loadCurriculum(): Promise<CurriculumArea[]> {
       learningStage: field(row, "learning_stage"),
       track: field(row, "track"),
       coverageNotes: field(row, "coverage_notes"),
+      publishedOrUpdated: field(row, "published_or_updated"),
+      language: field(row, "language"),
       thumbnailUrl: thumbnail?.primary ?? null,
       thumbnailFallbackUrl: thumbnail?.fallback ?? null,
     });
@@ -96,4 +103,27 @@ export async function getCurriculumCategoryBySlug(slug: string): Promise<{ area:
     if (category) return { area, category };
   }
   return null;
+}
+
+export async function withPlaylistThumbnailFallbacks(category: CurriculumCategory): Promise<CurriculumCategory> {
+  return {
+    ...category,
+    items: await Promise.all(category.items.map(async (item) => {
+      if (item.resourceType !== "playlist" || item.thumbnailUrl || !item.url) return item;
+      try {
+        const playlist = new URL(item.url);
+        const playlistId = playlist.searchParams.get("list");
+        if (playlist.protocol !== "https:" || playlist.hostname !== "www.youtube.com" || playlist.pathname !== "/playlist" || !playlistId) return item;
+        const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/playlist?list=${playlistId}`)}&format=json`;
+        const response = await fetch(oembedUrl, { next: { revalidate: 86_400 }, signal: AbortSignal.timeout(4_000) });
+        if (!response.ok) return item;
+        const thumbnailUrl = (await response.json() as { thumbnail_url?: unknown }).thumbnail_url;
+        if (typeof thumbnailUrl !== "string") return item;
+        const sources = youtubeThumbnailSourcesFromUrl(thumbnailUrl);
+        return { ...item, thumbnailUrl: sources?.primary ?? thumbnailUrl, thumbnailFallbackUrl: sources?.fallback ?? item.thumbnailFallbackUrl };
+      } catch {
+        return item;
+      }
+    })),
+  };
 }

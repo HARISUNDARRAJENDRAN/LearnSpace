@@ -113,7 +113,7 @@ async function completeOnboarding(page: Page, refreshDraft = false) {
   await page.getByRole("button", { name: "It depends on the topic" }).click();
   await page.getByRole("button", { name: "I'm advanced" }).click();
   await page.getByRole("button", { name: "Start learning" }).click();
-  await expect(page).toHaveURL(/\/app/);
+  await expect(page).toHaveURL(/\/app\/discover$/);
 }
 
 async function isolateClientIp(page: Page): Promise<void> {
@@ -157,6 +157,9 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await page.goto("/app");
   await expect(page).toHaveURL(/\/onboarding/);
   await completeOnboarding(page, true);
+  await page.goto("/app");
+  await expect(page).toHaveURL(/\/app$/);
+  await expect(page.getByText("Your learning starts here.")).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
   await page.waitForLoadState("load");
@@ -167,7 +170,7 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await page.getByLabel("Email address").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
-  await expect(page).toHaveURL(/\/app/);
+  await expect(page).toHaveURL(/\/app$/);
 
   await page.goto(verificationHref);
   await expect(page).toHaveURL(/\/verify-email\?status=invalid/);
@@ -201,6 +204,57 @@ test("forgot and reset password revoke the old session", async ({ page }) => {
   await page.getByLabel("Password", { exact: true }).fill("browser-password-456");
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page).toHaveURL(/\/app/);
+});
+
+test("Google registration goes straight to onboarding, then returning login goes Home", async ({ page }) => {
+  await isolateClientIp(page);
+  await clearGoogleTestUser();
+  // Start on an alias: OAuth must move to the public host before setting state.
+  await page.goto("http://127.0.0.1:3101/register");
+  await page.getByRole("link", { name: "Continue with Google" }).click();
+  await expect(page).toHaveURL("http://localhost:3101/onboarding");
+  await page.goto("/login");
+  await expect(page).toHaveURL("http://localhost:3101/onboarding");
+  await completeOnboarding(page);
+  await page.goto("/register");
+  await expect(page).toHaveURL("http://localhost:3101/app");
+  await page.goto("/login?next=/login");
+  await expect(page).toHaveURL("http://localhost:3101/app");
+  await logout(page);
+
+  await page.goto("/login");
+  await page.getByRole("link", { name: "Continue with Google" }).click();
+  await expect(page).toHaveURL("http://localhost:3101/app");
+  const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
+  if (!databaseUrl) throw new Error("DATABASE_MIGRATOR_URL is required for auth verification");
+  const database = postgres(databaseUrl, { max: 1 });
+  try {
+    const rows = await database`
+      SELECT u.email_verified, s.onboarding_completed_at, s.first_application_visit_at,
+        (SELECT count(*)::int FROM identity.auth_accounts a WHERE a.user_id = u.id AND a.provider = 'google') AS google_accounts
+      FROM identity.users u JOIN identity.user_settings s ON s.user_id = u.id
+      WHERE lower(u.email) = lower(${googleEmail})
+    `;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.email_verified).toBe(true);
+    expect(rows[0]?.onboarding_completed_at).toBeTruthy();
+    expect(rows[0]?.first_application_visit_at).toBeTruthy();
+    expect(rows[0]?.google_accounts).toBe(1);
+  } finally {
+    await database.end({ timeout: 5 });
+  }
+});
+
+test("Google rejects invalid state and redirects errors to the public login URL", async ({ request }) => {
+  for (const cookie of ["", "learnspace_oauth_state=expected.%2Fapp"]) {
+    const response = await request.get("/api/auth/google/callback?state=unexpected&code=unused", {
+      headers: { cookie },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(307);
+    expect(response.headers().location).toBe("http://localhost:3101/login?error=google-invalid-callback");
+    expect(response.headers()["set-cookie"]).not.toContain("learnspace_session=");
+  }
 });
 
 test("Google takeover clears the unverified password credential", async ({ page }) => {

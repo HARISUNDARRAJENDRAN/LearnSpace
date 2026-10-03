@@ -141,6 +141,34 @@
       "when": 1789840000000,
       "tag": "0019_source_picker_candidates",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790874369753,
+      "tag": "0020_home_real_activity",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790957182691,
+      "tag": "0021_mixed_eternity",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791017909661,
+      "tag": "0022_recommendation_worker_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791018048695,
+      "tag": "0023_curated_concept_reconciliation",
+      "breakpoints": true
     }
   ]
 }

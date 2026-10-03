@@ -1,5 +1,6 @@
 .application-page {
   --application-sidebar-width: 262px;
+  --font-editorial: var(--font-geist-sans);
   --application-sidebar-surface: #f7f7f5;
   --application-content-surface: #fbfbfa;
   --application-card-surface: #fff;
@@ -13,7 +14,7 @@
   min-height: 100dvh;
   background: #fff;
   color: #262625;
-  font-family: "SF Pro Text", "SF Pro Display", var(--font-app), Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
 }
 
 html:has(.application-page) {
@@ -524,6 +525,7 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 }
 
 .application-nav-link[data-nav-tone="home"] .application-nav-icon { background: #637487; }
+.application-nav-link[data-nav-tone="discover"] .application-nav-icon { background: #398c5c; }
 .application-nav-link[data-nav-tone="research"] .application-nav-icon { background: #4f82d4; }
 .application-nav-link[data-nav-tone="papers"] .application-nav-icon { background: #ff941b; }
 .application-nav-link[data-nav-tone="saved"] .application-nav-icon { background: #18a697; }
@@ -732,6 +734,13 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   background: #fff;
 }
 
+.application-main:has(.home-dashboard) .application-header,
+.application-page--discover .application-header {
+  height: 90px;
+  min-height: 90px;
+  padding-top: 18px;
+}
+
 .application-header-bottom,
 .application-header-actions {
   display: flex;
@@ -751,6 +760,7 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 .application-header-start {
   min-width: 0;
   gap: 18px;
+  font-family: var(--font-app), Inter, system-ui, sans-serif;
 }
 
 .application-header-context {
@@ -764,19 +774,13 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 }
 
 .application-header-context--home .application-header-title {
-  font-size: 24px;
-  letter-spacing: -.025em;
+  font-size: 26px;
+  font-weight: 650;
+  letter-spacing: -.04em;
 }
 
 .application-header-title-row { display: flex; align-items: center; gap: 8px; }
 .application-home-data-note { padding: 3px 6px; border-radius: 5px; background: rgba(0,0,0,.035); color: #77767d; font-size: 9px; font-weight: 500; line-height: 1.2; }
-
-.application-header-subtitle {
-  margin: 0;
-  color: rgba(0,0,0,.48);
-  font-size: 13px;
-  line-height: 1.35;
-}
 
 .application-header-title {
   overflow: hidden;
@@ -1163,6 +1167,8 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   .application-search-results { max-height: calc(100dvh - 86px); }
   .application-menu-button { display: grid; margin-right: 0; }
   .application-header { height: 72px; min-height: 72px; padding: 0 12px; }
+  .application-main:has(.home-dashboard) .application-header,
+  .application-page--discover .application-header { height: 90px; min-height: 90px; padding: 18px 12px 0; }
   .application-header-bottom { gap: 8px; }
   .application-header-start { gap: 8px; }
   .application-header-title { font-size: 20px; }

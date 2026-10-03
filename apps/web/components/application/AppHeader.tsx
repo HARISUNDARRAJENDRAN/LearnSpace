@@ -38,7 +38,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
   const sourceTriggerRef = useRef<HTMLButtonElement>(null);
   const mode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
   const isHome = pathname === "/app";
-  const isDiscover = pathname === "/app/discover";
+  const isDiscover = pathname.startsWith("/app/discover");
   const hasShellHeading = isHome || pathname === "/app/sessions" || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings";
   const showViewControls = pathname === "/app/library";
 
@@ -49,35 +49,15 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
           <button className="application-menu-button" type="button" onClick={onMenu} aria-label="Open navigation">
             <Menu aria-hidden="true" />
           </button>
+          <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
+            <span><Plus aria-hidden="true" /></span>
+          </button>
           {isDiscover ? (
             <div className="discover-page-header">
-              <span className="discover-page-mark" aria-hidden="true">
-                <svg viewBox="0 0 40 40" fill="none" aria-hidden="true">
-                  <defs>
-                    <radialGradient id="discover-compass-surface" cx="30%" cy="22%" r="88%">
-                      <stop stopColor="#2b2d31" />
-                      <stop offset=".58" stopColor="#202124" />
-                      <stop offset="1" stopColor="#111214" />
-                    </radialGradient>
-                  </defs>
-                  <circle cx="20" cy="20" r="17.25" fill="url(#discover-compass-surface)" />
-                  <circle cx="20" cy="20" r="17" stroke="#090a0c" strokeOpacity=".85" strokeWidth=".5" />
-                  <circle cx="20" cy="20" r="11.8" stroke="#f7f7f6" strokeWidth="1.8" />
-                  <path d="M26 14 21.38 21.38 18.62 18.62 26 14Z" fill="#fafaf9" />
-                  <path d="M14 26 18.62 18.62 21.38 21.38 14 26Z" fill="#fafaf9" />
-                </svg>
-              </span>
-              <div>
-                <h1>Discover</h1>
-                <p>Explore new topics, build your skills, and follow your curiosity.</p>
-              </div>
+              {pathname === "/app/discover" ? <h1>Discover</h1> : <span className="application-header-title">Discover</span>}
             </div>
-          ) : <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
-            <span><Plus aria-hidden="true" /></span>
-          </button>}
-          {!isDiscover && <div className={isHome ? "application-header-context application-header-context--home" : "application-header-context"}>
-            {isHome ? <div className="application-header-title-row"><h1 className="application-header-title">Home</h1><span className="application-home-data-note">Sample data</span></div> : hasShellHeading ? <h1 className="application-header-title">{contextLabel(pathname)}</h1> : <span className="application-header-title">{contextLabel(pathname)}</span>}
-            {isHome && <p className="application-header-subtitle">Pick up where you left off.</p>}
+          ) : <div className={isHome ? "application-header-context application-header-context--home" : "application-header-context"}>
+            {isHome ? <div className="application-header-title-row"><h1 className="application-header-title">Home</h1></div> : hasShellHeading ? <h1 className="application-header-title">{contextLabel(pathname)}</h1> : <span className="application-header-title">{contextLabel(pathname)}</span>}
           </div>}
         </div>
 

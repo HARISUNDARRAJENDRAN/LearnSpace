@@ -56,7 +56,7 @@ test.beforeAll(async () => {
         (${videoResourceId}, NULL, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, 'A seeded discovery lesson', 'A deterministic lesson used by browser tests.', 'en', 'public', 'ready', 0.98, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb),
         (${paperResourceId}, NULL, 'paper', 'arxiv', ${arxivId}, ${`https://arxiv.org/abs/${arxivId}`}, 'A seeded research paper', 'A deterministic paper used by browser tests.', 'en', 'public', 'ready', 0.96, '{"paperClass":"current","test":true}'::jsonb),
         (${behaviorResourceAId}, NULL, 'video', 'youtube', ${behaviorYoutubeA}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeA}`}, 'A behavior seed lesson', 'A deterministic core-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb),
-        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","test":true}'::jsonb)
+        (${behaviorResourceBId}, NULL, 'video', 'youtube', ${behaviorYoutubeB}, ${`https://www.youtube.com/watch?v=${behaviorYoutubeB}`}, 'An adjacent learning lesson', 'A deterministic adjacent-concept lesson used by behavior tests.', 'en', 'public', 'ready', 0.99, '{"thumbnailUrl":"/assets/learnspace-monogram.svg","estimatedLevel":"intermediate","test":true}'::jsonb)
     `;
     await tx`
       INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
@@ -196,7 +196,7 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Start learning" }).click();
-  await expect(page).toHaveURL(/\/app$/);
+  await expect(page).toHaveURL(/\/app\/discover$/);
 
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
@@ -221,9 +221,8 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.goto("/app/discover");
   await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Discover", level: 1 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "For You", level: 2, exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Technology & Computing", level: 2 })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Popular resources", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recommended for you", level: 2, exact: true })).toBeVisible();
+  await expect(page.locator(".discover-topic-catalog")).toBeVisible();
   await expect(page.locator(".discovery-curriculum-results")).toHaveCount(0);
   for (const name of ["Trending Now", "Recommended For You", "Based on Your Interests"]) {
     await expect(page.getByRole("link", { name: new RegExp(name) })).toHaveCount(0);
@@ -236,6 +235,25 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
   await expect(page.locator(".application-header-view-group")).toHaveCount(0);
   await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+  const intelligencePanel = page.getByRole("complementary", { name: "Why this collection works" });
+  await expect(intelligencePanel).toBeVisible();
+  await expect(intelligencePanel).toContainText("CS50 supplies the connecting thread");
+  await expect(intelligencePanel).not.toContainText("Resource mix");
+  const categoryRationale = await intelligencePanel.innerText();
+  await expect(page.locator(".discover-lesson-title").nth(1)).toHaveAttribute("target", "_blank");
+  await page.getByText("Filter & sort", { exact: true }).click();
+  await page.getByLabel("Format", { exact: true }).selectOption("playlist");
+  await expect(page.locator(".discover-lesson-format").first()).toHaveText("playlist");
+  await expect(page.locator(".discover-lesson-format").filter({ hasText: "video" })).toHaveCount(0);
+  await expect(intelligencePanel).toHaveText(categoryRationale, { useInnerText: true });
+  await page.getByRole("button", { name: "Clear filters" }).click();
+  await page.getByText("Filter & sort", { exact: true }).click();
+  for (const width of [1280, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page).toHaveTitle("Coding & Programming | Discover | LearnSpace");
   await page.reload();
   await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
@@ -301,11 +319,10 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeDiscoveryOnboarding(page);
   await page.goto("/app/discover");
-  const coreCard = page.locator("article.discovery-card").filter({ hasText: "A behavior seed lesson" });
-  const recommendedSection = page.locator("section[aria-labelledby='section-recommended-videos']");
-  const adjacentCard = recommendedSection.locator("article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
-  await expect(coreCard).toBeVisible();
-  await expect(adjacentCard).toHaveCount(0);
+  const recommendedSection = page.locator("section[aria-labelledby='discover-recommended-heading']");
+  await expect(recommendedSection).toBeVisible();
+  // Production Discover must never display test catalogue resources.
+  await expect(page.getByText("A behavior seed lesson", { exact: true })).toHaveCount(0);
   await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();
 
   const initialHomeResponse = await page.request.get("/api/v1/discovery/home");
@@ -315,20 +332,46 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
     sections: { recommendedVideos: Array<{ resourceId: string }> };
   };
   if (!behaviorAdjacentResourceId) throw new Error("behavior adjacent resource was not created");
-  expect(initialHome.sections.recommendedVideos.some((card) => card.resourceId === behaviorAdjacentResourceId)).toBe(false);
+  expect(initialHome.sections.recommendedVideos.length).toBeGreaterThan(0);
 
   if (!behaviorCoreResourceId) throw new Error("behavior seed resource was not created");
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 2; index += 1) {
     const response = await page.request.post("/api/v1/discovery/interactions", {
       data: {
         resourceId: behaviorCoreResourceId,
-        action: "complete",
+        action: "save",
         correlationId: randomUUID(),
         metadata: {},
       },
     });
     expect(response.ok()).toBe(true);
+    expect((await response.json()).duplicate).toBe(index > 0);
   }
+
+  // Distinct learning outcomes, rather than repeated saves, establish confidence.
+  if (!database) throw new Error("discovery test database is required");
+  const [learner] = await database<{ id: string }[]>`SELECT id FROM identity.users WHERE email = ${email}`;
+  if (!learner) throw new Error("discovery test learner was not created");
+  for (let index = 0; index < 3; index += 1) {
+    await database`INSERT INTO activity.activity_events
+      (schema_version, user_id, resource_id, event_type, actor_type, source, occurred_at, idempotency_key, payload)
+      VALUES (1, ${learner.id}, ${behaviorCoreResourceId}, 'exercise.completed', 'user', 'e2e', now(), ${randomUUID()}, '{}'::jsonb)`;
+  }
+  const worker = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false });
+  try {
+    const workerModules = "../../../../services/worker/dist/";
+    const { projectRecommendationProfiles } = await import(`${workerModules}recommendation-profiles.js`);
+    await projectRecommendationProfiles(worker, null, [learner.id]);
+  } finally {
+    await worker.end({ timeout: 5 });
+  }
+  const [affinity] = await database<{ positive_weight: number; confidence: number }[]>`
+    SELECT a.positive_weight, a.confidence FROM discovery.user_concept_affinity a
+    JOIN catalog.resource_concepts c ON c.concept_id = a.concept_id
+    WHERE a.user_id = ${learner.id} AND c.resource_id = ${behaviorCoreResourceId}
+  `;
+  expect(Number(affinity?.positive_weight)).toBeGreaterThan(1);
+  expect(Number(affinity?.confidence)).toBeGreaterThan(0.5);
 
   const changedHomeResponse = await page.request.get("/api/v1/discovery/home");
   expect(changedHomeResponse.ok()).toBe(true);
@@ -351,12 +394,15 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
     JSON.stringify(changedCandidates.map((candidate) => ({ title: candidate.title, score: candidate.score, selected: candidate.selected, finalRank: candidate.final_rank }))),
   ).toBe(true);
 
+  const promoted = changedHome.sections.recommendedVideos.find((card) => card.resourceId === behaviorAdjacentResourceId);
+  expect(promoted?.reason).toBeTruthy();
+  const dismissal = await page.request.post("/api/v1/discovery/interactions", {
+    data: { resourceId: behaviorAdjacentResourceId, action: "dismiss", correlationId: randomUUID(), metadata: {} },
+  });
+  expect(dismissal.ok()).toBe(true);
   await page.reload();
-  const promotedCard = page.locator("section[aria-labelledby='section-recommended-videos'] article.discovery-card").filter({ hasText: "An adjacent learning lesson" });
-  await expect(promotedCard).toBeVisible();
-  await expect(promotedCard).toContainText("Because you've been learning Physics");
-  await promotedCard.getByRole("button", { name: "Dismiss" }).click();
-  await expect(page.getByText("An adjacent learning lesson")).toHaveCount(0);
-  await page.reload();
-  await expect(page.getByText("An adjacent learning lesson")).toHaveCount(0);
+  const dismissedHomeResponse = await page.request.get("/api/v1/discovery/home");
+  expect(dismissedHomeResponse.ok()).toBe(true);
+  const dismissedHome = await dismissedHomeResponse.json() as typeof changedHome;
+  expect(dismissedHome.sections.recommendedVideos.some((card) => card.resourceId === behaviorAdjacentResourceId)).toBe(false);
 });

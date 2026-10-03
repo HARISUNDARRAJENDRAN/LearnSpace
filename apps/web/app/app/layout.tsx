@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 import { ApplicationShell } from "../../components/application/ApplicationShell";
 import { getCurrentSession, publicUser } from "../../lib/auth/session";
-import { getOnboardingState } from "../../lib/onboarding/service";
+import { getAuthenticatedDestination, getOnboardingState, isApplicationPrefetch, recordFirstApplicationVisit } from "../../lib/onboarding/service";
 import { listStudySessions } from "../../lib/study/service";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +11,16 @@ export default async function ApplicationLayout({ children }: Readonly<{ childre
   const currentSession = await getCurrentSession();
   if (!currentSession) redirect("/login?next=/app");
   if (!(await getOnboardingState(currentSession.user.id)).completed) redirect("/onboarding");
+  const requestHeaders = await headers();
+  const pathname = requestHeaders.get("x-learnspace-pathname") ?? "/app";
+  const prefetch = isApplicationPrefetch(requestHeaders);
+  if (prefetch) {
+    const destination = await getAuthenticatedDestination(currentSession.user.id, pathname);
+    if (destination !== pathname) redirect(destination);
+  }
+  if (!prefetch
+    && await recordFirstApplicationVisit(currentSession.user.id)
+    && pathname !== "/app/discover") redirect("/app/discover");
   const recentSessions = (await listStudySessions(currentSession.user.id)).slice(0, 12).map((session) => ({
     id: session.id,
     title: session.title,

@@ -37,6 +37,9 @@ export const EVENT_SOURCES = ["web", "worker", "tutor", "agent", "runner"] as co
 export const EVENT_TYPES = [
   "resource.opened",
   "resource.progressed",
+  "resource.consumed",
+  "resource.abandoned",
+  "discovery.affinity_projected",
   "resource.completed",
   "resource.saved",
   "resource.unsaved",

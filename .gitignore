@@ -1,7 +1,7 @@
 node_modules/
 dist/
 build/
-.next/
+.next*/
 out/
 .vercel/
 coverage/
@@ -57,3 +57,6 @@ apps/web/CLAUDE.md
 Thumbs.db
 .vscode/
 .idea/
+# Local benchmark and CI scratch output.
+/before
+/after

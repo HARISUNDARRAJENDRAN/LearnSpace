@@ -23,6 +23,7 @@ test(
       import("../lib/onboarding/service"),
     ]);
     const { saveOnboardingDraft } = await import("../lib/onboarding/service");
+    const { recordFirstApplicationVisit } = await import("../lib/onboarding/service");
     const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
     if (!migratorUrl) {
       throw new Error("DATABASE_MIGRATOR_URL is required for onboarding integration tests");
@@ -260,6 +261,9 @@ test(
 
       const duplicate = await completeOnboarding(user.id, completion);
       assert.equal(duplicate.completed, true);
+      const firstVisits = await Promise.all(Array.from({ length: 8 }, () => recordFirstApplicationVisit(user.id)));
+      assert.equal(firstVisits.filter(Boolean).length, 1, "concurrent first visits claim once without blocking");
+      assert.equal(await recordFirstApplicationVisit(user.id), false);
       const duplicateEvents = await migrator<{ count: string }[]>`
         SELECT count(*)::text AS count
         FROM activity.activity_events

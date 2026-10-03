@@ -56,7 +56,7 @@ type AppSidebarProps = {
 
 const learnNavigation = [
   { label: "Home", href: "/app", icon: House, tone: "home" },
-  { label: "Discover", href: "/app/discover", icon: Compass, tone: "home" },
+  { label: "Discover", href: "/app/discover", icon: Compass, tone: "discover" },
 ] as const;
 
 const researchNavigation = [

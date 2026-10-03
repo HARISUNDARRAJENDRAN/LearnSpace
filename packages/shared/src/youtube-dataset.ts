@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { extname } from "node:path";
-import { youtubeIdFromUrl } from "@learnspace/shared";
+import { youtubeIdFromUrl } from "./discovery.js";
 
 export type DatasetRow = Record<string, string>;
 

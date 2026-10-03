@@ -20,7 +20,7 @@ function youtubeIdAt(index: number): string {
   return id;
 }
 
-export async function seedHomeFixture(database: Database): Promise<HomeFixture> {
+export async function seedHomeFixture(database: Database, populated = true): Promise<HomeFixture> {
   const userId = randomUUID();
   const email = `home-populated-${userId}@example.test`;
   const hero = randomUUID();
@@ -43,9 +43,10 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
       VALUES (${userId}, ${email}, true, 'active', 'Home Visual Learner', 'en', 'UTC', 'free')
     `;
     await tx`
-      INSERT INTO identity.user_settings (user_id, onboarding_completed_at, onboarding_version, learning_preferences)
-      VALUES (${userId}, now(), 1, ${JSON.stringify({ conceptIds: [concept.id], selfReportedLevel: "intermediate", preferredFormats: ["clear_explanations"] })}::jsonb)
+      INSERT INTO identity.user_settings (user_id, onboarding_completed_at, onboarding_version, first_application_visit_at, learning_preferences)
+      VALUES (${userId}, now(), 1, ${populated ? new Date() : null}, ${JSON.stringify({ conceptIds: [concept.id], selfReportedLevel: "intermediate", preferredFormats: ["clear_explanations"] })}::jsonb)
     `;
+    if (!populated) return;
     const videoRows = [
       [hero, "Home E2E Python lesson", "LearnSpace Home Lab", youtubeIdAt(0), 0.99],
       [olderVideo, "Home E2E history lesson", "LearnSpace History Lab", youtubeIdAt(1), 0.96],
@@ -79,7 +80,7 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
 
     const sessions = [
       [heroSession, hero, "active", "guided_learning", ago(0.15)],
-      [olderSession, olderVideo, "paused", "guided_learning", ago(3)],
+      [olderSession, olderVideo, "paused", "practice", ago(3)],
       [paperSession, paper, "paused", "research", ago(6)],
     ] as const;
     for (const [sessionId, resourceId, status, mode, lastActiveAt] of sessions) {
@@ -103,6 +104,23 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
         (${userId}, ${olderVideo}, ${olderSession}, 'active', 74, '{"kind":"video","positionMs":444000}'::jsonb, ${ago(8)}, ${ago(3)}, ${ago(3)}),
         (${userId}, ${paper}, ${paperSession}, 'active', 61, '{"kind":"paper","page":4}'::jsonb, ${ago(8)}, ${ago(6)}, ${ago(6)})
     `;
+    const weekStart = new Date(now);
+    weekStart.setUTCHours(0, 0, 0, 0);
+    weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
+    const lastWeek = new Date(weekStart.getTime() - 6 * 86_400_000);
+    for (const [sessionId, resourceId, mode, duration, startedAt] of [
+      [heroSession, hero, "guided_learning", 240, ago(.04)],
+      [olderSession, olderVideo, "practice", 120, ago(.04)],
+      [paperSession, paper, "research", 60, ago(.04)],
+      [heroSession, hero, "guided_learning", 180, ago(1.04)],
+      [heroSession, hero, "guided_learning", 90, lastWeek],
+      [olderSession, olderVideo, "practice", 30, lastWeek],
+      [paperSession, paper, "research", 60, lastWeek],
+      [heroSession, hero, "guided_learning", 3600, ago(35)],
+    ] as const) {
+      await tx`INSERT INTO study.focus_sessions (user_id, study_session_id, resource_id, mode, started_at, ended_at, duration_sec, completed)
+        VALUES (${userId}, ${sessionId}, ${resourceId}, ${mode}, ${startedAt}, ${new Date(startedAt.getTime() + duration * 1000)}, ${duration}, true)`;
+    }
   });
 
   const sessionToken = (await createSession(userId, { userAgent: "home-e2e" }, process.env.AUTH_SECRET ?? "")).token;
@@ -111,6 +129,10 @@ export async function seedHomeFixture(database: Database): Promise<HomeFixture> 
 
 export async function cleanupHomeFixture(database: Database, fixture: HomeFixture): Promise<void> {
   const resourceIds = [fixture.resources.hero, fixture.resources.olderVideo, fixture.resources.paper];
+  await database`DELETE FROM discovery.discovery_interactions WHERE user_id = ${fixture.userId}`;
+  await database`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${fixture.userId}`;
+  await database`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id = ${fixture.userId})`;
+  await database`DELETE FROM discovery.recommendation_runs WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM ops.outbox_events WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM ops.idempotency_records WHERE user_id = ${fixture.userId}`;
@@ -118,6 +140,7 @@ export async function cleanupHomeFixture(database: Database, fixture: HomeFixtur
   await database`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${fixture.userId})`;
   await database`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${fixture.userId})`;
   await database`DELETE FROM study.user_resource_progress WHERE user_id = ${fixture.userId} OR resource_id IN ${database(resourceIds)}`;
+  await database`DELETE FROM study.focus_sessions WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${fixture.userId}) OR resource_id IN ${database(resourceIds)}`;
   await database`DELETE FROM study.study_sessions WHERE user_id = ${fixture.userId}`;
   await database`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${database(resourceIds)}`;

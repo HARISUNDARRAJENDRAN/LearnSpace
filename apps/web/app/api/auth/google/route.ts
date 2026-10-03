@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getGoogleConfig, getGoogleOAuthEndpoints } from "../../../../lib/auth/config";
+import { getAppBaseUrl, getGoogleConfig, getGoogleOAuthEndpoints } from "../../../../lib/auth/config";
 import { createOpaqueToken } from "../../../../lib/auth/crypto";
 import { setOauthStateCookie } from "../../../../lib/auth/cookies";
 import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function redirectToLogin(request: NextRequest, error?: string): NextResponse {
-  const url = new URL("/login", request.url);
+  const url = new URL("/login", getAppBaseUrl(request));
   if (error) {
     url.searchParams.set("error", error);
   }
@@ -19,6 +19,15 @@ function redirectToLogin(request: NextRequest, error?: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
+    const appUrl = getAppBaseUrl(request);
+    const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim()
+      ?? request.headers.get("host") ?? request.nextUrl.host;
+    const protocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim()
+      ?? request.nextUrl.protocol.slice(0, -1);
+    // Start on the callback origin so the browser can return the state cookie.
+    if (`${protocol}://${host}` !== appUrl) {
+      return NextResponse.redirect(new URL(`/api/auth/google${request.nextUrl.search}`, appUrl));
+    }
     await enforceRateLimit({
       request,
       bucket: "google-initiation",

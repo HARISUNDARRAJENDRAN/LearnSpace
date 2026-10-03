@@ -40,6 +40,7 @@ jobs:
       DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@localhost:55432/learnspace
       DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@localhost:55432/learnspace
       DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@localhost:55432/learnspace
+      REDIS_URL: redis://127.0.0.1:56379/0
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -54,11 +55,16 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm run db:check
-      - run: docker compose up -d --wait postgres
+      - run: docker compose up -d --wait postgres redis
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
       - run: pnpm run db:seed:dev
-      - run: pnpm run test
+      # The worker test owns the discovery queue; run it before web tests enqueue jobs.
+      - run: pnpm --filter @learnspace/worker test
+        env:
+          LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED: "false"
+      - run: pnpm --filter @learnspace/shared test
+      - run: pnpm --filter @learnspace/web test
       - run: pnpm run db:test
       - run: pnpm --filter @learnspace/web exec playwright install --with-deps chromium
       - run: pnpm --filter @learnspace/web run test:e2e:production
@@ -222,4 +228,4 @@ jobs:
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: pnpm dlx vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
+        run: pnpm dlx --allow-build=esbuild vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"

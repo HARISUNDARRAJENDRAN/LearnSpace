@@ -6,8 +6,8 @@ import test from "node:test";
 import { hasBrowsableResources } from "../lib/discovery/browse";
 import { homeFeedCacheKey } from "../lib/discovery/cache";
 import { getCurriculum, getCurriculumCategoryBySlug } from "../lib/discovery/curriculum";
-import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "../lib/discovery/dataset";
-import { scoreYoutubeQuality } from "../lib/discovery/quality";
+import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "@learnspace/shared/youtube-dataset";
+import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
 import { rankDiscoveryResources, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
 
 const conceptId = "00000000-0000-0000-0000-000000000001";

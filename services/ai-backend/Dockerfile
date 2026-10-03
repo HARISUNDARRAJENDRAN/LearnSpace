@@ -1,15 +1,20 @@
+# syntax=docker/dockerfile:1
 FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=180 \
+    UV_CONCURRENT_DOWNLOADS=4 \
     PATH=/service/.venv/bin:$PATH
 
 WORKDIR /service
 
 COPY pyproject.toml uv.lock ./
 
-RUN pip install --no-cache-dir uv==0.11.28 \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --timeout 120 uv==0.11.28 \
     && uv sync --frozen --no-dev \
     && groupadd --system --gid 10001 learnspace \
     && useradd --system --uid 10001 --gid learnspace --home-dir /service --shell /usr/sbin/nologin learnspace \

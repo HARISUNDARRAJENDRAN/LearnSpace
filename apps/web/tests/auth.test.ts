@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createOpaqueToken, hashToken, hashPassword, verifyPassword } from "../lib/auth/crypto";
-import { getAppBaseUrl } from "../lib/auth/config";
+import { getAppBaseUrl, getGoogleConfig } from "../lib/auth/config";
 import { AuthError } from "../lib/auth/errors";
 import { enforceRateLimit } from "../lib/auth/rate-limit";
 import { getClientIp, readJson } from "../lib/auth/request";
@@ -32,6 +32,33 @@ test("redirect targets remain local application paths", () => {
   assert.equal(safeRedirectPath("//example.com"), "/app");
   assert.equal(safeRedirectPath("/\\\\example.com"), "/app");
   assert.equal(safeRedirectPath("/api/auth/session"), "/app");
+  assert.equal(safeRedirectPath("/login?next=/register"), "/app");
+  assert.equal(safeRedirectPath("/register"), "/app");
+  assert.equal(safeRedirectPath("/app/../login"), "/app");
+  assert.equal(safeRedirectPath("/\t/example.com/app"), "/app");
+  assert.equal(safeRedirectPath("/app/./discover"), "/app/discover");
+  assert.equal(safeRedirectPath("/onboarding"), "/onboarding");
+});
+
+test("Google's callback must share the public application origin", () => {
+  const keys = ["APP_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"];
+  const previous = keys.map((key) => process.env[key]);
+  try {
+    process.env.APP_URL = "https://learnspace.example";
+    process.env.GOOGLE_CLIENT_ID = "test-client";
+    process.env.GOOGLE_CLIENT_SECRET = "test-secret";
+    process.env.GOOGLE_REDIRECT_URI = "https://learnspace.example/api/auth/google/callback";
+    const request = new Request("http://0.0.0.0:3000/api/auth/google");
+    assert.equal(getGoogleConfig(request).redirectUri, process.env.GOOGLE_REDIRECT_URI);
+    process.env.GOOGLE_REDIRECT_URI = "https://other.example/api/auth/google/callback";
+    assert.throws(() => getGoogleConfig(request), (error: unknown) =>
+      error instanceof AuthError && error.code === "GOOGLE_REDIRECT_URI_INVALID");
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] === undefined) delete process.env[key];
+      else process.env[key] = previous[index];
+    });
+  }
 });
 
 test("malformed JSON is reported as a client error", async () => {

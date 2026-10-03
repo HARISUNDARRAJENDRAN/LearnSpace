@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import {
   activityEvents,
+  focusSessions,
   authors,
   collectionEnrollments,
   collectionItems,
@@ -300,7 +301,8 @@ async function insertStudyEvent(
     .insert(activityEvents)
     .values(values)
     .onConflictDoNothing()
-    .returning({ id: activityEvents.id });
+    .returning();
+  if (rows[0]) await projectStudyBehavior(tx, rows[0]);
   return Boolean(rows[0]);
 }
 
@@ -324,7 +326,7 @@ async function activateResourceInTransaction(
   resource: ResourceRecord,
   role: StudySessionResource["role"] | undefined,
   anchor: StudyAnchor | undefined,
-  eventContext: { origin: string; correlationId: string; intent: "open" | "start"; requestKey: string },
+  eventContext: { origin: string; correlationId: string; intent: "open" | "start"; requestKey: string; recommendationRunId?: string },
 ): Promise<{ session: SessionRow; binding: BindingRow; progress: ProgressRow | null; resourceVersionId: string | null; eventInserted: boolean }> {
   const session = await lockSession(tx, userId, sessionId);
   const type = studyType(resource.type);
@@ -491,20 +493,8 @@ async function activateResourceInTransaction(
     correlationId: eventContext.correlationId,
     idempotencyKey: activationEventKey(sessionId, resource.id, eventContext.intent, eventContext.requestKey),
     occurredAt: now,
-    payload: { origin: eventContext.origin, progressFraction: (previousProgress?.progressPct ?? 0) / 100 },
+    payload: { origin: eventContext.origin, intent: eventContext.intent, runId: eventContext.recommendationRunId ?? null, progressFraction: (previousProgress?.progressPct ?? 0) / 100 },
   });
-  if (eventInserted) {
-    await projectStudyBehavior(
-      tx,
-      userId,
-      resource.id,
-      "resource.opened",
-      (previousProgress?.progressPct ?? 0) / 100,
-      eventContext.correlationId,
-      now,
-      eventContext.intent,
-    );
-  }
   return { session: updatedSession, binding, progress: previousProgress, resourceVersionId: binding.resourceVersionId, eventInserted };
 }
 
@@ -599,8 +589,12 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
     resource,
     resumed ? undefined : "primary",
     undefined,
-    { origin: normalized.origin, correlationId, intent: "start", requestKey: normalized.idempotencyKey },
+    { origin: normalized.origin, correlationId, intent: "start", requestKey: normalized.idempotencyKey, ...(normalized.recommendationRunId ? { recommendationRunId: normalized.recommendationRunId } : {}) },
   );
+  if (normalized.recommendationRunId) {
+    const previousRuns = session.metadata.recommendationRuns;
+    await tx.update(studySessions).set({ metadata: { ...session.metadata, recommendationRuns: { ...(previousRuns && typeof previousRuns === "object" && !Array.isArray(previousRuns) ? previousRuns : {}), [normalized.resourceId]: normalized.recommendationRunId } } }).where(eq(studySessions.id, session.id));
+  }
   if (activated.eventInserted && (normalized.origin === "home" || normalized.origin === "discover" || normalized.origin === "research")) {
     await tx.insert(discoveryInteractions).values({
       userId,
@@ -938,6 +932,10 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
     const eventType = input.event === "complete" ? "resource.completed" : input.event === "play" ? "video.played" : input.event === "pause" ? type === "video" ? "video.paused" : "resource.progressed" : input.event === "seek" ? "video.seeked" : "resource.progressed";
     const milestone = input.event === "complete" ? "completed" : input.event === "checkpoint" ? [90, 75, 50, 25].find((value) => previousPct < value && progressPct >= value)?.toString() ?? null : null;
     const now = new Date();
+    const [time] = await tx.select({ seconds: sql<number>`COALESCE(sum(${focusSessions.durationSec}), 0)::int` }).from(focusSessions)
+      .where(and(eq(focusSessions.userId, userId), eq(focusSessions.studySessionId, normalizedSessionId), eq(focusSessions.resourceId, input.resourceId)));
+    const watchedSeconds = Number(time?.seconds ?? 0);
+    const attribution = session.metadata.recommendationRuns as Record<string, string> | undefined;
     const eventInserted = stale ? false : await insertStudyEvent(tx, {
       schemaVersion: 1,
       userId,
@@ -949,7 +947,7 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
       source: "web",
       idempotencyKey: `study:${milestone ? "milestone" : "progress"}:${normalizedSessionId}:${input.resourceId}:${milestone ?? input.idempotencyKey}`,
       occurredAt: now,
-      payload: { progressPct, anchor: jsonAnchor(input.anchor), event: input.event },
+      payload: { progressPct, watchedSeconds, milestone, runId: attribution?.[input.resourceId] ?? null, anchor: jsonAnchor(input.anchor), event: input.event },
     });
     const shouldPersist = !stale && (eventInserted || input.event === "checkpoint");
     if (shouldPersist) {
@@ -981,8 +979,10 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
         });
       await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
       await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
-      if (eventInserted && milestone) await projectStudyBehavior(tx, userId, input.resourceId, input.event === "complete" ? "resource.completed" : "resource.progressed", progressPct / 100, randomUUID(), now);
       if (eventInserted && input.event === "complete") await advanceCollectionEnrollment(tx, userId, input.resourceId);
+    }
+    if (eventInserted && input.event === "pause" && type === "video" && watchedSeconds < 30 && progressPct < 10 && now.getTime() - session.startedAt.getTime() < 120_000) {
+      await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: input.resourceId, eventType: "resource.abandoned", actorType: "user", source: "web", idempotencyKey: `study:abandon:${normalizedSessionId}:${input.resourceId}`, occurredAt: now, payload: { progressPct, watchedSeconds, runId: attribution?.[input.resourceId] ?? null } });
     }
     const status = input.event === "complete" ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active";
     return { sessionId: normalizedSessionId, resourceId: input.resourceId, progressPct, status };

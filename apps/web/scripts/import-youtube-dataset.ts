@@ -1,8 +1,8 @@
 import postgres from "postgres";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { profileYoutubeDataset, datasetRows, normalizeYoutubeRow, type NormalizedYoutubeRow } from "../lib/discovery/dataset";
-import { scoreYoutubeQuality } from "../lib/discovery/quality";
+import { profileYoutubeDataset, datasetRows, normalizeYoutubeRow, type NormalizedYoutubeRow } from "@learnspace/shared/youtube-dataset";
+import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
 
 const datasetName = "harisundarrajendran/educational-youtube-content";
 const allowedLicences = new Set([

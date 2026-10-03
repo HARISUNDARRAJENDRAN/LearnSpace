@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import test from "node:test";
+import postgres from "postgres";
+import { closeRecommendationRedis } from "@learnspace/shared/recommendation-cache";
+
+test("persistent behavior invalidates stable feeds, projects once and preserves recommendation provenance", { skip: !process.env.DATABASE_MIGRATOR_URL }, async () => {
+  const previousFlag = process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED;
+  process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED = "false";
+  const [{ closeDb }, { createEmailUser }, { completeOnboarding }, { getHomeFeed, recordInteraction }, { recordStudyFocus }] = await Promise.all([
+    import("@learnspace/db"), import("../lib/auth/repository"), import("../lib/onboarding/service"), import("../lib/discovery/service"), import("../lib/study/focus"),
+  ]);
+  const db = postgres(process.env.DATABASE_MIGRATOR_URL ?? "", { max: 1, prepare: false });
+  const user = await createEmailUser({ email: `adaptive-${randomUUID()}@example.test`, displayName: "Adaptive test", passwordHash: "test" });
+  const resourceId = randomUUID(), sessionId = randomUUID();
+  try {
+    const [concept] = await db<{ id: string }[]>`SELECT id FROM knowledge.concepts WHERE slug = 'python'`;
+    assert.ok(concept);
+    await completeOnboarding(user.id, { persona: "student", learningIntents: ["learn_new_skill"], preferredFormats: ["clear_explanations"], preferredDuration: "no_preference", selfReportedLevel: "beginner", conceptIds: (await db<{ id: string }[]>`SELECT id FROM knowledge.concepts WHERE slug IN ('python', 'linear-algebra', 'ai-machine-learning')`).map((row) => row.id) });
+    await db`INSERT INTO catalog.resources (id, type, provider, title, canonical_url, visibility, status, quality_score) VALUES (${resourceId}, 'video', 'youtube', 'Persistent adaptive lesson', 'https://youtube.com/watch?v=abcdefghijk', 'public', 'ready', 0.95)`;
+    await db`INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms) VALUES (${resourceId}, ${randomUUID().replaceAll("-", "").slice(0, 11)}, 'Persistence Lab', 120000)`;
+    await db`INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary) VALUES (${resourceId}, ${concept.id}, 'integration', 1, true)`;
+    const feeds = await Promise.all([getHomeFeed(user.id, "discover"), getHomeFeed(user.id, "discover")]);
+    assert.equal(feeds[0]?.runId, feeds[1]?.runId);
+    const first = feeds[0]!;
+    assert.equal(first.personalization, "interests");
+    const card = first.sections.recommendedVideos.find((item) => item.resourceId === resourceId);
+    assert.ok(card);
+    const [run] = await db<{ context_snapshot: Record<string, unknown>; strategy_version: string }[]>`SELECT context_snapshot, strategy_version FROM discovery.recommendation_runs WHERE id = ${first.runId}`;
+    assert.ok(run?.context_snapshot.featureSnapshots);
+    assert.match(run!.strategy_version, /adaptive/);
+    await recordInteraction(user.id, { runId: first.runId!, resourceId, action: "open", correlationId: randomUUID(), metadata: { progressFraction: 1 } });
+    assert.equal((await getHomeFeed(user.id, "discover")).runId, first.runId, "clicks do not change learner model");
+    await db`INSERT INTO study.study_sessions (id, user_id, title, mode, started_at, metadata) VALUES (${sessionId}, ${user.id}, 'Measured learning', 'guided_learning', now() - interval '5 minutes', ${db.json({ recommendationRuns: { [resourceId]: first.runId } })})`;
+    await db`INSERT INTO study.session_resources (study_session_id, resource_id, role, added_by, binding_status) VALUES (${sessionId}, ${resourceId}, 'primary', 'user', 'preparing')`;
+    const beforeTime = await getHomeFeed(user.id, "discover");
+    const now = Date.now();
+    const intervals = [0, 1, 2].map((index) => ({ id: randomUUID(), resourceId, startedAt: now - 85000 + index * 28000, endedAt: now - 57000 + index * 28000 }));
+    for (const interval of intervals) assert.equal((await recordStudyFocus(user.id, sessionId, interval)).seconds, 28);
+    const afterTime = await getHomeFeed(user.id, "discover");
+    assert.notEqual(afterTime.runId, beforeTime.runId);
+    const [affinity] = await db<{ positive_weight: number; feature_version: string }[]>`SELECT positive_weight, feature_version FROM discovery.user_concept_affinity WHERE user_id = ${user.id} AND concept_id = ${concept.id}`;
+    assert.ok(Number(affinity?.positive_weight) > 0);
+    assert.equal(affinity?.feature_version, "discovery-behavior-v2");
+    await recordStudyFocus(user.id, sessionId, intervals[2]!);
+    assert.equal((await getHomeFeed(user.id, "discover")).runId, afterTime.runId);
+    const events = await db<{ payload: Record<string, unknown> }[]>`SELECT payload FROM activity.activity_events WHERE user_id = ${user.id} AND event_type = 'resource.consumed'`;
+    assert.equal(events.length, 3);
+    assert.equal(events[2]?.payload.runId, first.runId);
+    const [markers] = await db<{ count: number }[]>`SELECT count(*)::int count FROM activity.activity_events WHERE user_id = ${user.id} AND event_type = 'discovery.affinity_projected'`;
+    assert.equal(markers?.count, 1, "only the interval reaching meaningful consumption is projected");
+    await db`INSERT INTO activity.activity_events (schema_version, occurred_at, user_id, resource_id, concept_id, event_type, actor_type, source, idempotency_key, payload) VALUES (1, now(), ${user.id}, ${resourceId}, ${concept.id}, 'exercise.completed', 'user', 'web', ${randomUUID()}, '{}'::jsonb)`;
+    const outcomeFeed = await getHomeFeed(user.id, "discover");
+    assert.notEqual(outcomeFeed.runId, afterTime.runId);
+    assert.equal((await getHomeFeed(user.id, "discover")).runId, outcomeFeed.runId, "outcome replay is idempotent");
+    await recordInteraction(user.id, { runId: outcomeFeed.runId!, resourceId, action: "dismiss", correlationId: randomUUID(), metadata: {} });
+    assert.equal((await getHomeFeed(user.id, "discover")).sections.recommendedVideos.some((item) => item.resourceId === resourceId), false);
+  } finally {
+    await db`DELETE FROM activity.activity_events WHERE user_id = ${user.id}`;
+    await db`DELETE FROM study.focus_sessions WHERE user_id = ${user.id}`;
+    await db`DELETE FROM study.session_resources WHERE study_session_id = ${sessionId}`;
+    await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${user.id}`;
+    await db`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${user.id}`;
+    await db`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id = ${user.id})`;
+    await db`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
+    await db`DELETE FROM activity.activity_events WHERE user_id = ${user.id}`;
+    await db`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
+    await db`DELETE FROM study.study_sessions WHERE user_id = ${user.id}`;
+    await db`DELETE FROM catalog.library_items WHERE user_id = ${user.id}`;
+    await db`DELETE FROM identity.users WHERE id = ${user.id}`;
+    await db`DELETE FROM catalog.resource_concepts WHERE resource_id = ${resourceId}`;
+    await db`DELETE FROM catalog.video_details WHERE resource_id = ${resourceId}`;
+    await db`DELETE FROM catalog.resources WHERE id = ${resourceId}`;
+    await db.end({ timeout: 5 });
+    await closeDb();
+    await closeRecommendationRedis();
+    if (previousFlag === undefined) delete process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED;
+    else process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED = previousFlag;
+  }
+});

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getAuthSecret } from "../../../../lib/auth/config";
+import { getAppBaseUrl, getAuthSecret } from "../../../../lib/auth/config";
 import { setSessionCookie } from "../../../../lib/auth/cookies";
 import {
   consumeEmailVerificationChallenge,
@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function verificationRedirect(request: NextRequest, status: string): NextResponse {
-  const url = new URL("/verify-email", request.url);
+  const url = new URL("/verify-email", getAppBaseUrl(request));
   url.searchParams.set("status", status);
   return NextResponse.redirect(url);
 }
@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
       result.user.id,
       safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined),
     );
-    const destination = new URL(destinationPath, request.url);
+    const destination = new URL(destinationPath, getAppBaseUrl(request));
     const response = NextResponse.redirect(destination);
     setSessionCookie(response, session.token, session.maxAge);
     return response;

@@ -44,7 +44,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "catalog.paper_details": ["paper_details_visible_policy", "paper_details_worker_policy"],
   "catalog.paper_authors": ["paper_authors_visible_policy", "paper_authors_worker_policy"],
   "catalog.paper_references": ["paper_references_visible_policy", "paper_references_worker_policy"],
-  "catalog.resource_concepts": ["resource_concepts_visible_policy", "resource_concepts_worker_policy"],
+  "catalog.resource_concepts": ["resource_concepts_visible_policy", "resource_concepts_worker_policy", "resource_concepts_curated_worker_delete"],
   "study.learning_goals": ["learning_goals_owner_policy"],
   "study.study_sessions": ["study_sessions_owner_policy", "study_sessions_worker_policy"],
   "study.session_resources": ["session_resources_owner_policy", "session_resources_worker_policy"],
@@ -96,6 +96,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "discovery.discovery_interactions": ["discovery_interactions_owner_policy"],
   "discovery.resource_quality_snapshots": ["resource_quality_visible_policy", "resource_quality_worker_policy", "resource_quality_worker_insert_policy", "resource_quality_worker_update_policy"],
   "discovery.user_concept_affinity": ["user_concept_affinity_owner_policy", "user_concept_affinity_owner_insert_policy", "user_concept_affinity_owner_update_policy", "user_concept_affinity_owner_delete_policy", "user_concept_affinity_worker_policy", "user_concept_affinity_worker_insert_policy", "user_concept_affinity_worker_update_policy"],
+  "discovery.resource_embeddings": ["resource_embeddings_visible", "resource_embeddings_worker_select", "resource_embeddings_worker_insert", "resource_embeddings_worker_update", "resource_embeddings_worker_delete"],
+  "discovery.learner_profiles": ["learner_profiles_owner", "learner_profiles_worker_select", "learner_profiles_worker_insert", "learner_profiles_worker_update", "learner_profiles_worker_delete"],
   "projection.dashboard_state": ["dashboard_state_owner_policy", "dashboard_state_worker_policy"],
   "projection.user_learning_daily": ["user_learning_daily_owner_policy", "user_learning_daily_worker_policy"],
   "projection.session_summary": ["session_summary_owner_policy", "session_summary_worker_policy"],
@@ -105,6 +107,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
 };
 
 const requiredConstraints = [
+  "resource_embeddings_nonzero_chk",
   "auth_sessions_rotated_user_fkey",
   "auth_challenges_user_id_users_id_fk",
   "study_sessions_goal_user_fkey",
@@ -217,7 +220,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 80, `expected 80 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 82, `expected 82 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count

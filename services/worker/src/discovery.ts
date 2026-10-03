@@ -1,5 +1,7 @@
+import { redisCommands, recommendationCatalogKey } from "@learnspace/shared/recommendation-cache";
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { recommendationMaintenance } from "./recommendation-maintenance.js";
 import {
   DISCOVERY_LEARNING_FORMATS,
   canonicalYoutubeUrl,
@@ -799,6 +801,7 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
+    await recommendationMaintenance(sql);
     const reclaimedCount = await reclaimExpiredJobs(sql);
     const scheduledCount = await scheduleDueRefreshes(sql);
     const promotedJobId = await promoteOutbox(sql);
@@ -811,7 +814,8 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
         const persisted = await persistBatch(sql, job, parseBatch(candidateBatch));
         const result = { ...persisted };
         await markSourcePickerRefresh(sql, job, persisted.resourceIds);
-        await finishJob(sql, job, result);
+        if (persisted.resourceIds.length) await redisCommands([["INCR", recommendationCatalogKey]]);
+      await finishJob(sql, job, result);
         return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
       }
       const batch = await callAgent(agentUrl, token, job);
@@ -830,6 +834,7 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
         ...persisted,
       };
       await markSourcePickerRefresh(sql, job, persisted.resourceIds);
+      if (persisted.resourceIds.length) await redisCommands([["INCR", recommendationCatalogKey]]);
       await finishJob(sql, job, result);
       return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
     } catch (error) {

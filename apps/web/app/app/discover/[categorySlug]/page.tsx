@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DiscoveryBrowser } from "../../../../components/discovery/DiscoveryBrowser";
+import { CategoryIntelligencePanel } from "../../../../components/discovery/CategoryIntelligencePanel";
+import { getCategoryIntelligence } from "../../../../lib/discovery/category-intelligence";
 import { hasBrowsableResources } from "../../../../lib/discovery/browse";
-import { getCurriculum, getCurriculumCategoryBySlug } from "../../../../lib/discovery/curriculum";
+import { getCurriculum, getCurriculumCategoryBySlug, withPlaylistThumbnailFallbacks } from "../../../../lib/discovery/curriculum";
 
 export const dynamic = "force-dynamic";
 export const dynamicParams = false;
@@ -30,5 +32,5 @@ export default async function DiscoverCategoryPage({ params }: Props) {
   if (!resolved || !hasBrowsableResources(resolved.category)) notFound();
 
   const { area, category } = resolved;
-  return <DiscoveryBrowser key={category.slug} areas={[{ name: area.name, categories: [category] }]} category={category} />;
+  return <DiscoveryBrowser key={category.slug} areas={[{ name: area.name, categories: [category] }]} category={await withPlaylistThumbnailFallbacks(category)} intelligencePanel={<CategoryIntelligencePanel analysis={getCategoryIntelligence(category)} />} />;
 }

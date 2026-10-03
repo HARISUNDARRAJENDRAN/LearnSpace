@@ -1,5 +1,9 @@
-export const DISCOVERY_STRATEGY_VERSION = "cold-start-v3";
-export const DISCOVERY_FEATURE_VERSION = "discovery-v2";
+import { RECOMMENDATION_CONFIG as recommendationConfig } from "@learnspace/shared/recommendation-config";
+import { observedAffinity, personalizationWeights, type LearnerAffinity } from "./learner-model";
+export type { LearnerAffinity } from "./learner-model";
+
+export const DISCOVERY_STRATEGY_VERSION = "adaptive-learning-v1";
+export const DISCOVERY_FEATURE_VERSION = "discovery-v3";
 
 export const DISCOVERY_EXPLORATION_CONFIG = {
   version: "exploration-v1",
@@ -12,7 +16,7 @@ export const DISCOVERY_EXPLORATION_CONFIG = {
 } as const;
 
 export const DISCOVERY_BEHAVIOR_CONFIG = {
-  version: "behavior-v2",
+  version: "behavior-v3",
   minimumRelevance: 0.35,
   strongRelevance: 0.7,
   fullRelevance: 0.9,
@@ -30,14 +34,18 @@ export const SOURCE_QUERY_RELEVANCE_THRESHOLD = 0.5;
 const sourceCandidatePoolLimit = 100;
 
 export const VIDEO_RANKING_WEIGHTS = {
-  conceptMatch: 0.3,
-  learnerAffinity: 0.2,
-  quality: 0.15,
-  levelFit: 0.1,
-  formatFit: 0.1,
+  conceptMatch: 0.24,
+  learnerAffinity: 0.16,
+  quality: 0.18,
+  levelFit: 0.08,
+  formatFit: 0.07,
   durationFit: 0.05,
-  freshness: 0.05,
-  exploration: 0.05,
+  freshness: 0.03,
+  exploration: 0.02,
+  masteryFit: 0.07,
+  continuity: 0.05,
+  goalFit: 0.03,
+  intentFit: 0.02,
 } as const;
 
 export const PAPER_RANKING_WEIGHTS = {
@@ -50,19 +58,14 @@ export const PAPER_RANKING_WEIGHTS = {
   exploration: 0.05,
 } as const;
 
-export type LearnerAffinity = {
-  conceptId: string;
-  score: number;
-  confidence: number;
-  positiveWeight?: number;
-  negativeWeight?: number;
-  featureVersion: string;
-  lastEventAt?: Date | null;
-  updatedAt?: Date | null;
-};
+export type MasteryState = { score: number; uncertainty: number; evidenceCount: number; nextReviewAt: Date | null; updatedAt: Date };
 
 export type LearnerProfile = {
   conceptIds: string[];
+  recentInterests?: Record<string, number>;
+  longTermInterests?: Record<string, number>;
+  semanticRanking?: boolean;
+  completedIntroConceptIds?: string[];
   coreConceptIds?: string[];
   emergingConceptIds?: string[];
   adjacentConceptIds?: string[];
@@ -73,6 +76,15 @@ export type LearnerProfile = {
   preferredFormats: string[];
   preferredDuration: string | null;
   selfReportedLevel: "beginner" | "intermediate" | "advanced" | "mixed" | null;
+  onboardingAt?: Date | null;
+  preferredLanguages?: string[];
+  goalConceptIds?: string[];
+  sessionConceptIds?: string[];
+  prerequisites?: Array<{ sourceConceptId: string; targetConceptId: string }>;
+  mastery?: Map<string, MasteryState>;
+  progress?: Map<string, { progressPct: number; completedAt: Date | null; updatedAt: Date }>;
+  ignoredImpressions?: Map<string, number>;
+  explorationSeed?: string;
 };
 
 export type DiscoveryResource = {
@@ -84,6 +96,8 @@ export type DiscoveryResource = {
   title: string;
   description: string | null;
   language: string | null;
+  semanticSimilarity?: number;
+  playlistContinuation?: boolean;
   qualityScore: number | null;
   thumbnailUrl: string | null;
   channelTitle: string | null;
@@ -100,6 +114,8 @@ export type DiscoveryResource = {
     finalQualityScore: number;
     freshnessPrior: number | null;
     sourceAuthority: number | null;
+    completionRate?: number | null;
+    retentionRate?: number | null;
   } | null;
 };
 
@@ -118,6 +134,7 @@ export type RankedResource = {
   reasonCodes: string[];
   queryRelevance?: number;
   qualificationReason?: string;
+  features?: Record<string, number>;
 };
 
 function clamp(value: number, minimum = 0, maximum = 1): number {
@@ -162,45 +179,41 @@ function emergingConceptIds(profile: LearnerProfile): string[] {
   return profile.emergingConceptIds ?? [];
 }
 
-function conceptMatch(resource: DiscoveryResource, profile: LearnerProfile): number {
+function conceptMatch(resource: DiscoveryResource, profile: LearnerProfile, now = new Date()): number {
+  const weights = personalizationWeights(profile.affinities.values(), profile.onboardingAt, now);
   return resource.concepts.reduce((best, concept) => {
     const relevance = clamp(concept.relevance);
-    if (coreConceptIds(profile).includes(concept.id)) return Math.max(best, relevance);
-    if (emergingConceptIds(profile).includes(concept.id)) {
-      return Math.max(best, relevance * DISCOVERY_EXPLORATION_CONFIG.emergingConceptMatchMultiplier);
-    }
-    if (adjacentConceptIds(profile).includes(concept.id)) {
-      return Math.max(best, relevance * DISCOVERY_EXPLORATION_CONFIG.adjacentConceptMatchMultiplier);
-    }
-    return best;
+    const observed = observedAffinity(profile.affinities.get(concept.id), now);
+    const prior = coreConceptIds(profile).includes(concept.id) ? weights.onboarding : 0;
+    const behavior = weights.behavior * clamp(.5 + observed.score * .5) * observed.confidence;
+    const context = profile.sessionConceptIds?.includes(concept.id) || profile.goalConceptIds?.includes(concept.id) ? .75 : 0;
+    const adjacent = adjacentConceptIds(profile).includes(concept.id) ? .3 : 0;
+    const emerging = emergingConceptIds(profile).includes(concept.id) ? observed.confidence * .4 : 0;
+    return Math.max(best, relevance * clamp(Math.max(prior + behavior, context, adjacent, emerging)));
   }, 0);
 }
 
-function learnerAffinity(resource: DiscoveryResource, profile: LearnerProfile): number {
-  const matches = resource.concepts
-    .filter((concept) => coreConceptIds(profile).includes(concept.id) || emergingConceptIds(profile).includes(concept.id) || adjacentConceptIds(profile).includes(concept.id))
-    .map((concept) => {
-      const affinity = profile.affinities.get(concept.id);
-      if (!affinity) {
-        return adjacentConceptIds(profile).includes(concept.id) ? 0.25 : 0.5;
-      }
-      const value = clamp(((affinity.score + 1) / 2) * affinity.confidence);
-      if (emergingConceptIds(profile).includes(concept.id)) {
-        return value * DISCOVERY_EXPLORATION_CONFIG.emergingAffinityMultiplier;
-      }
-      return adjacentConceptIds(profile).includes(concept.id)
-        ? value * DISCOVERY_EXPLORATION_CONFIG.adjacentAffinityMultiplier
-        : value;
-    });
-  return matches.length === 0 ? 0 : Math.max(...matches);
+function learnerAffinity(resource: DiscoveryResource, profile: LearnerProfile, now = new Date()): number {
+  const weights = personalizationWeights(profile.affinities.values(), profile.onboardingAt, now);
+  return resource.concepts.reduce((best, concept) => {
+    const observed = observedAffinity(profile.affinities.get(concept.id), now);
+    const prior = coreConceptIds(profile).includes(concept.id) ? weights.onboarding * .5 : 0;
+    const blended = profile.semanticRanking ? (Math.min(1, profile.longTermInterests?.[concept.id] ?? 0) * recommendationConfig.longTermShare + Math.min(1, profile.recentInterests?.[concept.id] ?? 0) * recommendationConfig.recentShare) * concept.relevance : 0;
+    return Math.max(best, blended, clamp((prior + observed.confidence * clamp(.5 + observed.score * .5)) * concept.relevance));
+  }, 0);
 }
 
 function levelFit(resource: DiscoveryResource, profile: LearnerProfile): number {
   const estimated = metadataText(resource.metadata, "estimatedLevel");
-  if (!estimated || !profile.selfReportedLevel || profile.selfReportedLevel === "mixed") {
+  const learned = resource.concepts.flatMap((concept) => {
+    const mastery = profile.mastery?.get(concept.id);
+    return mastery && mastery.evidenceCount >= 3 && mastery.uncertainty < .5 ? [mastery.score] : [];
+  });
+  const level = learned.length ? Math.max(...learned) >= .8 ? "advanced" : Math.max(...learned) >= .45 ? "intermediate" : "beginner" : profile.selfReportedLevel;
+  if (!estimated || !level || level === "mixed") {
     return estimated ? 0.75 : 0.5;
   }
-  return estimated === profile.selfReportedLevel ? 1 : 0.35;
+  return estimated === level ? 1 : estimated === "beginner" && level === "intermediate" ? .65 : 0.35;
 }
 
 function formatFit(resource: DiscoveryResource, profile: LearnerProfile): number {
@@ -208,7 +221,9 @@ function formatFit(resource: DiscoveryResource, profile: LearnerProfile): number
     return 0.5;
   }
   const format = metadataText(resource.metadata, "learningFormat");
-  return format ? (profile.preferredFormats.includes(format) ? 1 : 0.25) : 0.5;
+  const formatByPreference: Record<string, string> = { deep_dives: "deep_dive", learn_by_building: "hands_on", conversational_tutor_led: "conversational" };
+  const preferred = profile.preferredFormats.map((value) => formatByPreference[value] ?? value);
+  return format ? (preferred.includes(format) || preferred.includes("mixed") ? 1 : 0.25) : 0.5;
 }
 
 function durationFit(resource: DiscoveryResource, profile: LearnerProfile): number {
@@ -229,7 +244,34 @@ function durationFit(resource: DiscoveryResource, profile: LearnerProfile): numb
 }
 
 function quality(resource: DiscoveryResource): number {
-  return clamp(resource.quality?.finalQualityScore ?? resource.qualityScore ?? 0.5);
+  const base = clamp(resource.quality?.finalQualityScore ?? resource.qualityScore ?? 0.5);
+  const priors = [resource.quality?.completionRate, resource.quality?.retentionRate].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return priors.length ? clamp(base * .7 + priors.reduce((sum, value) => sum + clamp(value), 0) / priors.length * .3) : base;
+}
+
+function reviewDue(resource: DiscoveryResource, profile: LearnerProfile, now: Date): boolean {
+  return resource.concepts.some((concept) => {
+    const mastery = profile.mastery?.get(concept.id);
+    return mastery?.nextReviewAt && mastery.nextReviewAt <= now;
+  });
+}
+
+function pedagogicalFit(resource: DiscoveryResource, profile: LearnerProfile, now: Date): number {
+  const missingPrerequisites = (profile.prerequisites ?? []).filter((edge) => resource.concepts.some((concept) => concept.id === edge.targetConceptId))
+    .filter((edge) => (profile.mastery?.get(edge.sourceConceptId)?.score ?? 0) < .5);
+  if (missingPrerequisites.length) return .15;
+  if (reviewDue(resource, profile, now)) return 1;
+  if ((profile.prerequisites ?? []).some((edge) => resource.concepts.some((concept) => concept.id === edge.sourceConceptId) && (profile.goalConceptIds?.includes(edge.targetConceptId) || coreConceptIds(profile).includes(edge.targetConceptId) || emergingConceptIds(profile).includes(edge.targetConceptId)) && (profile.mastery?.get(edge.sourceConceptId)?.score ?? 0) < .5)) return .9;
+  const mastered = resource.concepts.map((concept) => profile.mastery?.get(concept.id)).filter((state): state is MasteryState => Boolean(state));
+  return mastered.length ? clamp(1 - Math.max(...mastered.map((state) => state.score * (1 - state.uncertainty)))) : .65;
+}
+
+function intentMatch(resource: DiscoveryResource, profile: LearnerProfile): number {
+  const format = metadataText(resource.metadata, "learningFormat");
+  if ((profile.persona === "builder" || profile.learningIntents.some((intent) => ["build_project", "build_something", "reproduce_implementations", "prototype_idea", "upskill_current_role"].includes(intent))) && format === "hands_on") return 1;
+  if ((profile.persona === "researcher" || profile.learningIntents.includes("understand_something_deeply")) && ["research_backed", "deep_dive"].includes(format ?? "")) return 1;
+  if (profile.persona === "student" && format === "clear_explanations") return .85;
+  return .5;
 }
 
 function resourceCoverage(resource: DiscoveryResource): number {
@@ -279,104 +321,113 @@ function reasonCodes(components: {
   return reasons;
 }
 
-function diversify(scored: RankedResource[], limit: number): RankedResource[] {
+function diversify(scored: RankedResource[], limit: number, reserveExploration = false): RankedResource[] {
   const remaining = [...scored];
   const selected: RankedResource[] = [];
-  const channelCounts = new Map<string, number>();
-  const conceptCounts = new Map<string, number>();
-
-  while (remaining.length > 0 && selected.length < limit) {
-    let bestIndex = 0;
-    let bestAdjusted = Number.NEGATIVE_INFINITY;
-    for (let index = 0; index < remaining.length; index += 1) {
-      const candidate = remaining[index];
-      if (!candidate) continue;
-      const channel = candidate.resource.channelTitle ?? "unknown";
-      const duplicateChannelPenalty = (channelCounts.get(channel) ?? 0) * 0.04;
-      const duplicateConceptPenalty = candidate.resource.concepts.reduce(
-        (total, concept) => total + (conceptCounts.get(concept.id) ?? 0) * 0.02,
-        0,
-      );
-      const penalty = clamp(duplicateChannelPenalty + duplicateConceptPenalty, 0, 0.25);
+  const counts = new Map<string, number>();
+  const channelLimit = Math.max(2, Math.ceil(limit * recommendationConfig.creatorShare));
+  const explorationLimit = Math.max(1, Math.floor(limit * recommendationConfig.explorationShare));
+  const keys = (candidate: RankedResource) => [
+    `channel:${candidate.resource.channelTitle ?? candidate.resource.id}`,
+    `playlist:${metadataText(candidate.resource.metadata, "playlistId") ?? candidate.resource.id}`,
+    `concept:${candidate.resource.concepts.toSorted((a, b) => b.relevance - a.relevance)[0]?.id ?? candidate.resource.id}`,
+    `subtopic:${metadataText(candidate.resource.metadata, "subtopic") ?? candidate.resource.concepts[0]?.id ?? candidate.resource.id}`,
+    `level:${metadataText(candidate.resource.metadata, "estimatedLevel") ?? "unknown"}`,
+    `format:${metadataText(candidate.resource.metadata, "learningFormat") ?? "unknown"}`,
+    `duration:${candidate.resource.durationMs === null ? "unknown" : candidate.resource.durationMs < 600_000 ? "short" : candidate.resource.durationMs < 1_800_000 ? "medium" : "long"}`,
+  ] as const;
+  const penalties = [.14, .1, .08, .04, .015, .025, .015];
+  while (remaining.length && selected.length < limit) {
+    const explorationSlot = reserveExploration && selected.length >= Math.min(4, limit - 1) && (selected.length - Math.min(4, limit - 1)) % Math.max(1, Math.floor(limit / explorationLimit)) === 0;
+    const allowed = remaining.filter((candidate) => !reserveExploration || !["review_due", "continue_learning", "adjacent_concept"].some((reason) => candidate.reasonCodes.includes(reason) && selected.filter((item) => item.reasonCodes.includes(reason)).length >= (reason === "adjacent_concept" ? explorationLimit : Math.max(1, Math.floor(limit / 6)))));
+    const exploratory = allowed.filter((candidate) => candidate.reasonCodes.includes("adjacent_concept") && candidate.qualityScore >= recommendationConfig.explorationQualityFloor && (candidate.features?.levelFit ?? 0) >= .65 && (counts.get(keys(candidate)[0]) ?? 0) < channelLimit);
+    const channelEligible = allowed.filter((candidate) => (counts.get(keys(candidate)[0]) ?? 0) < channelLimit);
+    const eligible = explorationSlot && exploratory.length ? exploratory : channelEligible.length ? channelEligible : allowed;
+    let best: RankedResource | null = null;
+    let bestScore = -Infinity;
+    let bestPenalty = 0;
+    for (const candidate of eligible) {
+      const penalty = clamp(keys(candidate).reduce((sum, key, index) => sum + (counts.get(key) ?? 0) * (penalties[index] ?? 0), 0), 0, .6);
       const adjusted = candidate.score - penalty;
-      if (adjusted > bestAdjusted || (adjusted === bestAdjusted && candidate.resource.id < (remaining[bestIndex]?.resource.id ?? ""))) {
-        bestIndex = index;
-        bestAdjusted = adjusted;
-      }
+      if (adjusted > bestScore || adjusted === bestScore && candidate.resource.id < (best?.resource.id ?? "")) { best = candidate; bestScore = adjusted; bestPenalty = penalty; }
     }
-    const candidate = remaining.splice(bestIndex, 1)[0];
-    if (!candidate) break;
-    const channel = candidate.resource.channelTitle ?? "unknown";
-    const duplicateChannelPenalty = (channelCounts.get(channel) ?? 0) * 0.04;
-    const duplicateConceptPenalty = candidate.resource.concepts.reduce(
-      (total, concept) => total + (conceptCounts.get(concept.id) ?? 0) * 0.02,
-      0,
-    );
-    const penalty = clamp(duplicateChannelPenalty + duplicateConceptPenalty, 0, 0.25);
-    selected.push({
-      ...candidate,
-      finalRank: selected.length + 1,
-      diversityPenalty: penalty,
-    });
-    channelCounts.set(channel, (channelCounts.get(channel) ?? 0) + 1);
-    for (const concept of candidate.resource.concepts) {
-      conceptCounts.set(concept.id, (conceptCounts.get(concept.id) ?? 0) + 1);
-    }
+    if (!best) break;
+    remaining.splice(remaining.indexOf(best), 1);
+    selected.push({ ...best, finalRank: selected.length + 1, diversityPenalty: bestPenalty });
+    for (const key of keys(best)) counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-
-  const selectedIds = new Set(selected.map((candidate) => candidate.resource.id));
-  return scored.map((candidate) => selected.find((item) => item.resource.id === candidate.resource.id) ?? {
-    ...candidate,
-    finalRank: null,
-    diversityPenalty: candidate.diversityPenalty,
-  }).map((candidate) => selectedIds.has(candidate.resource.id) ? candidate : { ...candidate, finalRank: null });
+  const selectedById = new Map(selected.map((candidate) => [candidate.resource.id, candidate]));
+  return scored.map((candidate) => selectedById.get(candidate.resource.id) ?? { ...candidate, finalRank: null });
 }
 
-function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, diversityLimit = 24): RankedResource[] {
-  const scored = resources.map((resource, index) => {
+function rankVideos(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, diversityLimit = 6, feed = true): RankedResource[] {
+  const weights = personalizationWeights(profile.affinities.values(), profile.onboardingAt, now);
+  const scored = resources.filter((resource) => {
+    if (!feed) return true;
+    if (quality(resource) < recommendationConfig.qualityFloor || !resource.canonicalUrl) return false;
+    if (profile.preferredLanguages?.length && resource.language && !profile.preferredLanguages.some((language) => language.split("-")[0] === resource.language?.split("-")[0])) return false;
+    const progress = profile.progress?.get(resource.id);
+    return !progress?.completedAt || reviewDue(resource, profile, now) && now.getTime() - progress.completedAt.getTime() >= 7 * 86_400_000;
+  }).map((resource, index) => {
+    const progress = profile.progress?.get(resource.id);
     const components = {
-      conceptMatch: conceptMatch(resource, profile),
-      learnerAffinity: learnerAffinity(resource, profile),
+      semantic: resource.semanticSimilarity ?? 0,
+      recentInterest: Math.max(0, ...resource.concepts.map((concept) => Math.min(1, profile.recentInterests?.[concept.id] ?? 0) * concept.relevance)),
+      conceptMatch: conceptMatch(resource, profile, now),
+      learnerAffinity: learnerAffinity(resource, profile, now),
       quality: quality(resource),
       levelFit: levelFit(resource, profile),
       formatFit: formatFit(resource, profile),
       durationFit: durationFit(resource, profile),
       freshness: freshness(resource.publishedAt, now, 365),
-      exploration: stableExploration(resource.id),
+      exploration: stableExploration(`${profile.explorationSeed ?? ""}:${resource.id}`),
+      masteryFit: pedagogicalFit(resource, profile, now),
+      continuity: resource.playlistContinuation ? 1 : progress && !progress.completedAt && progress.progressPct > 5 && progress.progressPct < 95 ? 1 : resource.concepts.some((concept) => profile.sessionConceptIds?.includes(concept.id)) ? .7 : 0,
+      goalFit: resource.concepts.some((concept) => profile.goalConceptIds?.includes(concept.id)) ? 1 : 0,
+      intentFit: intentMatch(resource, profile),
     };
-    const score =
-      VIDEO_RANKING_WEIGHTS.conceptMatch * components.conceptMatch +
-      VIDEO_RANKING_WEIGHTS.learnerAffinity * components.learnerAffinity +
-      VIDEO_RANKING_WEIGHTS.quality * components.quality +
-      VIDEO_RANKING_WEIGHTS.levelFit * components.levelFit +
-      VIDEO_RANKING_WEIGHTS.formatFit * components.formatFit +
-      VIDEO_RANKING_WEIGHTS.durationFit * components.durationFit +
-      VIDEO_RANKING_WEIGHTS.freshness * components.freshness +
-      VIDEO_RANKING_WEIGHTS.exploration * components.exploration;
+    const reasons = reasonCodes(components).filter((reason) => reason !== "adjacent_concept");
+    const behavioralConcept = resource.concepts.some((concept) => concept.relevance >= recommendationConfig.minimumTopicRelevance && observedAffinity(profile.affinities.get(concept.id), now).score > .05 && observedAffinity(profile.affinities.get(concept.id), now).confidence >= .15);
+    const adjacent = resource.concepts.some((concept) => adjacentConceptIds(profile).includes(concept.id)) && !resource.concepts.some((concept) => coreConceptIds(profile).includes(concept.id) || emergingConceptIds(profile).includes(concept.id) || profile.sessionConceptIds?.includes(concept.id));
+    if (adjacent && !reasons.includes("adjacent_concept")) reasons.push("adjacent_concept");
+    if (resource.concepts.some((concept) => concept.relevance >= .35 && (coreConceptIds(profile).includes(concept.id) || emergingConceptIds(profile).includes(concept.id) || profile.goalConceptIds?.includes(concept.id))) && !reasons.includes("concept_match")) reasons.push("concept_match");
+    if (behavioralConcept) reasons.push("recent_learning");
+    if (resource.semanticSimilarity !== undefined && resource.semanticSimilarity >= recommendationConfig.minimumSemanticSimilarity) reasons.push("semantic_match");
+    if (resource.playlistContinuation) reasons.push("playlist_continuation");
+    if (resource.concepts.some((concept) => profile.completedIntroConceptIds?.includes(concept.id)) && metadataText(resource.metadata, "estimatedLevel") === "intermediate") { components.levelFit = Math.max(components.levelFit, .85); reasons.push("next_level"); }
+    if (components.continuity === 1) reasons.push("continue_learning");
+    else if (components.continuity > 0) reasons.push("session_context");
+    if (components.goalFit) reasons.push("active_goal");
+    if (reviewDue(resource, profile, now)) reasons.push("review_due");
+    if ((profile.prerequisites ?? []).some((edge) => resource.concepts.some((concept) => concept.id === edge.sourceConceptId) && (profile.goalConceptIds?.includes(edge.targetConceptId) || coreConceptIds(profile).includes(edge.targetConceptId) || emergingConceptIds(profile).includes(edge.targetConceptId)) && (profile.mastery?.get(edge.sourceConceptId)?.score ?? 0) < .5)) reasons.push("prerequisite_gap");
+    const ignored = Math.min(.18, (profile.ignoredImpressions?.get(resource.id) ?? 0) * .03);
+    const negative = Math.max(0, ...resource.concepts.map((concept) => -observedAffinity(profile.affinities.get(concept.id), now).score * .2));
+    const rankingWeights = profile.semanticRanking ? recommendationConfig.weights : VIDEO_RANKING_WEIGHTS;
+    const availableWeights = Object.entries(rankingWeights).filter(([key]) => key !== "semantic" || resource.semanticSimilarity !== undefined);
+    const weightTotal = availableWeights.reduce((sum, [, weight]) => sum + weight, 0);
+    const score = availableWeights.reduce((total, [key, weight]) => total + components[key as keyof typeof components] * weight / weightTotal, 0) - ignored - negative;
     return {
-      resource,
-      candidateRank: index + 1,
-      finalRank: null,
-      score,
-      semanticRelevance: components.conceptMatch,
-      qualityScore: components.quality,
-      learnerAffinity: components.learnerAffinity,
-      masteryFit: null,
-      coverageScore: resourceCoverage(resource),
-      freshnessScore: components.freshness,
-      diversityPenalty: 0,
-      reasonCodes: reasonCodes(components),
+      resource, candidateRank: index + 1, finalRank: null, score,
+      semanticRelevance: components.conceptMatch, qualityScore: components.quality,
+      learnerAffinity: components.learnerAffinity, masteryFit: components.masteryFit,
+      coverageScore: resourceCoverage(resource), freshnessScore: components.freshness,
+      diversityPenalty: 0, reasonCodes: reasons,
+      features: { ...components, ignoredImpressionPenalty: ignored, negativeAffinityPenalty: negative, onboardingWeight: weights.onboarding, behaviorWeight: weights.behavior, observedEvidence: weights.evidence },
     } satisfies RankedResource;
-  }).sort((left, right) => right.score - left.score || left.resource.id.localeCompare(right.resource.id))
+  }).filter((candidate) => {
+    if (!feed || !profile.semanticRanking || !(profile.conceptIds.length || profile.emergingConceptIds?.length || profile.sessionConceptIds?.length || profile.goalConceptIds?.length)) return true;
+    return candidate.reasonCodes.some((code) => ["concept_match", "semantic_match", "playlist_continuation", "continue_learning", "session_context", "prerequisite_gap", "review_due", "active_goal", "adjacent_concept", "recent_learning"].includes(code));
+  }).filter((candidate) => !feed || !candidate.reasonCodes.includes("adjacent_concept") || candidate.qualityScore >= .65 && candidate.features.levelFit >= .65)
+    .sort((a, b) => b.score - a.score || a.resource.id.localeCompare(b.resource.id))
     .map((candidate, index) => ({ ...candidate, candidateRank: index + 1 }));
-  return diversify(scored, Math.min(diversityLimit, scored.length));
+  return diversify(scored, Math.min(diversityLimit, scored.length), feed);
 }
 
 function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, diversityLimit = 12): RankedResource[] {
   const scored = resources.map((resource, index) => {
     const components = {
-      conceptMatch: conceptMatch(resource, profile),
-      learnerAffinity: learnerAffinity(resource, profile),
+      conceptMatch: conceptMatch(resource, profile, now),
+      learnerAffinity: learnerAffinity(resource, profile, now),
       researchIntent: paperResearchIntent(profile),
       levelFit: levelFit(resource, profile),
       recency: metadataText(resource.metadata, "paperClass") === "foundational"
@@ -412,12 +463,12 @@ function rankPapers(resources: DiscoveryResource[], profile: LearnerProfile, now
   return diversify(scored, Math.min(diversityLimit, scored.length));
 }
 
-export function rankDiscoveryResources(resources: DiscoveryResource[], profile: LearnerProfile, now: Date): {
+export function rankDiscoveryResources(resources: DiscoveryResource[], profile: LearnerProfile, now: Date, videoLimit = 6): {
   videos: RankedResource[];
   papers: RankedResource[];
 } {
   return {
-    videos: rankVideos(resources.filter((resource) => resource.type === "video"), profile, now),
+    videos: rankVideos(resources.filter((resource) => resource.type === "video"), profile, now, videoLimit),
     papers: rankPapers(resources.filter((resource) => resource.type === "paper"), profile, now),
   };
 }
@@ -661,7 +712,7 @@ export function rankSourceResources(
     .sort((left, right) => (signalsById.get(right.id)?.relevance ?? 0) - (signalsById.get(left.id)?.relevance ?? 0) || left.id.localeCompare(right.id))
     .slice(0, sourceCandidatePoolLimit);
   const base = mode === "learn"
-    ? rankVideos(relevantResources, profile, now, relevantResources.length)
+    ? rankVideos(relevantResources, profile, now, relevantResources.length, false)
     : rankPapers(relevantResources, profile, now, relevantResources.length);
   const ranked = base.map((candidate) => {
     const signals = signalsById.get(candidate.resource.id);

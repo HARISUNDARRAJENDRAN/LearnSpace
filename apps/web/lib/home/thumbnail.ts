@@ -8,8 +8,11 @@ export function youtubeThumbnailSources(youtubeId: string | null | undefined): {
   };
 }
 
+export function youtubeThumbnailSourcesFromUrl(src: string | null | undefined): { primary: string; fallback: string } | null {
+  const match = src?.match(/\/vi\/([A-Za-z0-9_-]{11})\/(?:maxresdefault|hqdefault)\.jpg$/);
+  return youtubeThumbnailSources(match?.[1]);
+}
+
 export function youtubeThumbnailFallback(src: string | null | undefined): string | null {
-  if (!src) return null;
-  const match = src.match(/\/vi\/([A-Za-z0-9_-]{11})\/(?:maxresdefault|hqdefault)\.jpg$/);
-  return match?.[1] ? youtubeThumbnailSources(match[1])?.fallback ?? null : null;
+  return youtubeThumbnailSourcesFromUrl(src)?.fallback ?? null;
 }

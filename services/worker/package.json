@@ -11,7 +11,8 @@
     "start": "node dist/index.js",
     "discovery:once": "tsx src/index.ts",
     "discovery:worker": "tsx src/index.ts --loop",
-    "discovery:smoke": "tsx src/discovery-smoke.ts"
+    "discovery:smoke": "tsx src/discovery-smoke.ts",
+    "recommendations:backfill": "tsx src/recommendation-backfill.ts"
   },
   "dependencies": {
     "@learnspace/shared": "workspace:*",

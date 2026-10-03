@@ -8,3 +8,10 @@ allowBuilds:
   unrs-resolver: true
 minimumReleaseAgeExclude:
   - zod@4.5.2
+patchedDependencies:
+  braces@3.0.3: patches/braces@3.0.3.patch
+# No upstream release fixes this advisory. The checked-in patch bounds both
+# brace and parenthesis nesting; dependency-security.test.ts covers entry points.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-vfj7-8cjw-p6xm

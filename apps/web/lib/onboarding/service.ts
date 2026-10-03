@@ -16,7 +16,7 @@ import {
   type OnboardingDraft,
   type OnboardingDraftRequest,
 } from "@learnspace/shared/onboarding";
-import { and, asc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 
 const conceptSearchLimit = 40;
@@ -291,6 +291,7 @@ export async function completeOnboarding(
       preferredDuration: completion.preferredDuration,
       selfReportedLevel: completion.selfReportedLevel,
       conceptIds: completion.conceptIds,
+      ...(completion.preferredLanguages ? { preferredLanguages: completion.preferredLanguages } : {}),
     } satisfies Record<string, unknown>;
     const updatedRows = await tx
       .update(userSettings)
@@ -387,9 +388,32 @@ export async function getAuthenticatedDestination(
   userId: string,
   requestedPath = "/app",
 ): Promise<string> {
-  const state = await getOnboardingState(userId);
-  if (!state.completed) {
-    return "/onboarding";
-  }
-  return requestedPath === "/onboarding" ? "/app" : requestedPath;
+  return withUserTransaction(userId, async (tx) => {
+    const settings = await loadSettings(tx, userId);
+    if (!settings.onboardingCompletedAt) return "/onboarding";
+    if (!settings.firstApplicationVisitAt) return "/app/discover";
+    return requestedPath === "/onboarding" ? "/app" : requestedPath;
+  });
+}
+
+// Next.js strips Flight headers inside the proxy, but restores them for pages.
+export function isApplicationPrefetch(headers: Pick<Headers, "get">): boolean {
+  return headers.get("next-router-prefetch") !== null || headers.get("purpose") === "prefetch" || headers.get("sec-purpose")?.includes("prefetch") === true;
+}
+
+// The conditional update claims the entry once, including concurrent sessions.
+export async function recordFirstApplicationVisit(userId: string): Promise<boolean> {
+  return withUserTransaction(userId, async (tx) => {
+    const rows = await tx.execute(sql`
+      WITH claim AS (
+        SELECT user_id FROM identity.user_settings
+        WHERE user_id = ${userId} AND onboarding_completed_at IS NOT NULL AND first_application_visit_at IS NULL
+        FOR UPDATE SKIP LOCKED
+      )
+      UPDATE identity.user_settings settings
+      SET first_application_visit_at = now(), updated_at = now()
+      FROM claim WHERE settings.user_id = claim.user_id RETURNING settings.user_id
+    `);
+    return rows.length > 0;
+  });
 }

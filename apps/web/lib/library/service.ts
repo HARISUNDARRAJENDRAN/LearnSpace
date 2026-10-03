@@ -3,8 +3,9 @@ import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { activityEvents, collectionEnrollments, collectionItems, collectionSections, collections, libraryItems, resources, userResourceProgress, videoDetails, paperDetails } from "@learnspace/db/schema";
 import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest } from "@learnspace/shared";
 import { collectionIdSchema, collectionKindSchema, studyResourceReadinessSchema } from "@learnspace/shared";
-import { and, asc, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
+import { projectStudyBehavior } from "../discovery/service";
 import { invalidateHomeFeedCache } from "../discovery/cache";
 import { startCollection } from "../study/service";
 
@@ -105,9 +106,13 @@ export async function saveLibraryItem(userId: string, input: LibraryItemRequest)
     const resource = await visibleResource(tx, userId, input.resourceId);
     if (!resource) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This material is not available.", 404);
     const now = new Date();
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`library-feedback:${userId}:${input.resourceId}`}, 0))`);
     if (input.action === "save") {
+      const [existing] = await tx.select({ status: libraryItems.status }).from(libraryItems).where(and(eq(libraryItems.userId, userId), eq(libraryItems.resourceId, input.resourceId)));
+      if (existing?.status === "saved") return;
       await tx.insert(libraryItems).values({ userId, resourceId: input.resourceId, status: "saved", source: "user", addedAt: now, updatedAt: now }).onConflictDoUpdate({ target: [libraryItems.userId, libraryItems.resourceId], set: { status: "saved", source: "user", updatedAt: now } });
-      await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "resource.saved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing();
+      const [event] = await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "resource.saved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing().returning();
+      if (event) await projectStudyBehavior(tx, event);
     } else {
       await tx.delete(libraryItems).where(and(eq(libraryItems.userId, userId), eq(libraryItems.resourceId, input.resourceId)));
       await tx.insert(activityEvents).values({ schemaVersion: 1, userId, resourceId: input.resourceId, eventType: "resource.unsaved", actorType: "user", source: "web", correlationId: randomUUID(), occurredAt: now, payload: { source: "library" } }).onConflictDoNothing();

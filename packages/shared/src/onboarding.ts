@@ -110,6 +110,7 @@ const onboardingPreferenceFields = {
   preferredFormats: z.array(preferredFormatSchema).min(1).max(6),
   preferredDuration: preferredDurationSchema,
   selfReportedLevel: selfReportedLevelSchema,
+  preferredLanguages: z.array(z.string().regex(/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/)).max(5).optional(),
 };
 
 const onboardingDraftFields = {

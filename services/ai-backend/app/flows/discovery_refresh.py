@@ -6,8 +6,6 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import httpx
-from crewai.flow import Flow
-from pydantic import BaseModel
 
 from app.cache.discovery_cache import (
     ARXIV_TTL,
@@ -52,11 +50,7 @@ class ArxivDiscoverer(Protocol):
     ) -> list[ArxivCandidate]: ...
 
 
-class DiscoveryFlowState(BaseModel):
-    pass
-
-
-class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
+class DiscoveryRefreshFlow:
     def __init__(
         self,
         cache: DiscoveryCache,
@@ -66,7 +60,6 @@ class DiscoveryRefreshFlow(Flow[DiscoveryFlowState]):
         request_timeout_seconds: float = 8.0,
         youtube_enricher: YoutubeEnricher | None = None,
     ) -> None:
-        super().__init__()
         self.cache = cache
         self.youtube = youtube
         self.arxiv = arxiv

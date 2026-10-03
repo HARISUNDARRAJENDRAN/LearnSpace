@@ -1,5 +1,5 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
-import { concepts, libraryItems, resourceConcepts, resources, studySessions, userResourceProgress, videoDetails } from "@learnspace/db/schema";
+import { concepts, libraryItems, resourceConcepts, resources, studySessions, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { youtubeThumbnailSources } from "./thumbnail";
 
@@ -28,10 +28,64 @@ export type HomeVideoItem = HomeVideo & {
 };
 
 export type LearnHomeData = {
+  activity: { today: string; days: HomeActivityDay[] };
   continueWatching: HomeContinueItem | null;
   relatedAnchor: { resourceId: string; title: string } | null;
   relatedVideos: HomeVideoItem[];
 };
+
+export type HomeActivityDay = {
+  day: string;
+  focusSeconds: number;
+  practiceSeconds: number;
+  researchSeconds: number;
+  videoSeconds: number;
+  paperSeconds: number;
+  otherSeconds: number;
+  resources: number;
+  completed: number;
+};
+
+async function loadActivity(tx: Transaction, userId: string): Promise<LearnHomeData["activity"]> {
+  const [user] = await tx.select({ timezone: users.timezone }).from(users).where(eq(users.id, userId));
+  let timezone = user?.timezone ?? "UTC";
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch { timezone = "UTC"; }
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // Read measured intervals directly: the daily projections have no writer yet.
+  const days = await tx.execute<HomeActivityDay>(sql`
+    WITH measured AS (
+      SELECT to_char(f.started_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD') AS day,
+        f.duration_sec AS seconds, f.mode, r.type
+      FROM study.focus_sessions f
+      LEFT JOIN catalog.resources r ON r.id = f.resource_id
+      WHERE f.user_id = ${userId} AND f.ended_at <= now() AND f.duration_sec > 0 AND f.started_at <= now()
+    ), daily AS (
+      SELECT day,
+        sum(CASE WHEN mode NOT IN ('practice', 'research') THEN seconds ELSE 0 END) AS focus_seconds,
+        sum(CASE WHEN mode = 'practice' THEN seconds ELSE 0 END) AS practice_seconds,
+        sum(CASE WHEN mode = 'research' THEN seconds ELSE 0 END) AS research_seconds,
+        sum(CASE WHEN mode <> 'practice' AND type = 'video' THEN seconds ELSE 0 END) AS video_seconds,
+        sum(CASE WHEN mode <> 'practice' AND type IN ('paper', 'pdf') THEN seconds ELSE 0 END) AS paper_seconds,
+        sum(CASE WHEN mode <> 'practice' AND (type IS NULL OR type NOT IN ('video', 'paper', 'pdf')) THEN seconds ELSE 0 END) AS other_seconds,
+        0 AS resources, 0 AS completed
+      FROM measured GROUP BY day
+      UNION ALL
+      SELECT to_char(first_started_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD'), 0, 0, 0, 0, 0, 0, count(*), 0
+      FROM study.user_resource_progress
+      WHERE user_id = ${userId} AND first_started_at <= now() GROUP BY 1
+      UNION ALL
+      SELECT to_char(completed_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD'), 0, 0, 0, 0, 0, 0, 0, count(*)
+      FROM study.user_resource_progress
+      WHERE user_id = ${userId} AND completed_at <= now() GROUP BY 1
+    )
+    SELECT day, sum(focus_seconds)::float8 AS "focusSeconds",
+      sum(practice_seconds)::float8 AS "practiceSeconds", sum(research_seconds)::float8 AS "researchSeconds",
+      sum(video_seconds)::float8 AS "videoSeconds", sum(paper_seconds)::float8 AS "paperSeconds",
+      sum(other_seconds)::float8 AS "otherSeconds", sum(resources)::float8 AS resources, sum(completed)::float8 AS completed
+    FROM daily GROUP BY day ORDER BY day
+  `);
+  return { today, days: [...days] };
+}
 
 function visibleResource(userId: string) {
   return or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"]));
@@ -167,16 +221,18 @@ async function loadRelatedVideos(tx: Transaction, userId: string, anchorResource
 
 export async function getLearnHome(userId: string): Promise<LearnHomeData> {
   return withUserTransaction(userId, async (tx) => {
-    const [active, paused, recentAnchor] = await Promise.all([
+    const [active, paused, recentAnchor, activity] = await Promise.all([
       loadContinueCandidates(tx, userId, "active"),
       loadContinueCandidates(tx, userId, "paused"),
       loadRecentAnchor(tx, userId),
+      loadActivity(tx, userId),
     ]);
     const continueCandidates = active.length > 0 ? active : paused;
     const continueWatching = continueCandidates[0] ?? null;
     const relatedResource = continueWatching ?? recentAnchor;
     const relatedVideos = relatedResource ? await loadRelatedVideos(tx, userId, relatedResource.resourceId) : [];
     return {
+      activity,
       continueWatching,
       relatedAnchor: relatedResource ? { resourceId: relatedResource.resourceId, title: relatedResource.title } : null,
       relatedVideos,

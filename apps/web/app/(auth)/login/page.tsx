@@ -1,7 +1,10 @@
+import { redirect } from "next/navigation";
 import { AuthForm } from "../../../components/auth/AuthForm";
 import { AuthShell } from "../../../components/auth/AuthShell";
 import { safeRedirectPath } from "../../../lib/auth/validation";
 import { first, type SearchParams } from "../../../lib/search-params";
+import { getCurrentSession } from "../../../lib/auth/session";
+import { getAuthenticatedDestination } from "../../../lib/onboarding/service";
 
 function loginError(code: string | undefined): string | undefined {
   const messages: Record<string, string> = {
@@ -22,6 +25,9 @@ export default async function LoginPage({
   searchParams: SearchParams;
 }) {
   const params = await searchParams;
+  const next = safeRedirectPath(first(params.next));
+  const session = await getCurrentSession();
+  if (session) redirect(await getAuthenticatedDestination(session.user.id, next));
   const initialError = loginError(first(params.error));
   return (
     <AuthShell
@@ -30,7 +36,7 @@ export default async function LoginPage({
     >
       <AuthForm
         mode="login"
-        next={safeRedirectPath(first(params.next))}
+        next={next}
         {...(initialError ? { initialError } : {})}
         verified={first(params.verified) === "1"}
         reset={first(params.reset) === "1"}

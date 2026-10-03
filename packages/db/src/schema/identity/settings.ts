@@ -11,5 +11,6 @@ export const userSettings = identitySchema.table("user_settings", {
   accessibility: jsonb("accessibility").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   onboardingCompletedAt: timestamp("onboarding_completed_at", { withTimezone: true }),
   onboardingVersion: smallint("onboarding_version"),
+  firstApplicationVisitAt: timestamp("first_application_visit_at", { withTimezone: true }),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

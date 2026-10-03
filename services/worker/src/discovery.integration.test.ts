@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
-import test from "node:test";
+import test, { after } from "node:test";
+import { closeRecommendationRedis } from "@learnspace/shared/recommendation-cache";
 import postgres from "postgres";
 import { runDiscoveryWorker } from "./discovery.js";
 
 const databaseAvailable = Boolean(process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_WORKER_URL);
+after(closeRecommendationRedis);
 
 function listen(server: Server): Promise<number> {
   return new Promise((resolve, reject) => {

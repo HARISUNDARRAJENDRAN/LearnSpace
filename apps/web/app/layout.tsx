@@ -20,6 +20,14 @@ const appFont = localFont({
   preload: true,
 });
 
+const geistFont = localFont({
+  src: "../public/fonts/Geist-Variable.woff2",
+  weight: "100 900",
+  variable: "--font-geist-sans",
+  display: "optional",
+  preload: false,
+});
+
 const editorialFont = localFont({
   src: "../node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-400-normal.woff2",
   weight: "400",
@@ -39,7 +47,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${appFont.variable} ${editorialFont.variable}`} data-scroll-behavior="smooth">
+    <html lang="en" className={`${appFont.variable} ${geistFont.variable} ${editorialFont.variable}`} data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );

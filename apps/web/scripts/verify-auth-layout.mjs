@@ -6,7 +6,7 @@ try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  for (const width of [390, 1440]) {
+  for (const width of [390, 1280, 1440]) {
     await page.setViewportSize({ width, height: 640 });
     for (const route of ["login", "register", "forgot-password", "reset-password", "verify-email"]) {
       const response = await page.goto(`${process.env.BASE_URL ?? "http://localhost:3000"}/${route}`);
@@ -14,6 +14,9 @@ try {
       await page.locator("#auth-title").waitFor();
       assert.equal(await page.locator(".auth-page-visual").isVisible(), width > 900);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: horizontal overflow`);
+      const home = await page.locator(".auth-page-home").boundingBox();
+      const title = await page.locator("#auth-title").boundingBox();
+      assert.ok(home && title && title.y >= home.y + home.height + 16, `${route}: heading overlaps Home at ${width}px`);
       const submit = page.locator('button[type="submit"]');
       await submit.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
       await expect(submit).toBeInViewport({ ratio: 1 });

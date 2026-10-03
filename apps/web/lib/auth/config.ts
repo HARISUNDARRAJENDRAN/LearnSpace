@@ -70,6 +70,13 @@ export function getGoogleConfig(request: Request): {
 
   try {
     const parsedRedirectUri = new URL(redirectUri);
+    if (parsedRedirectUri.origin !== getAppBaseUrl(request)) {
+      throw new AuthError(
+        "GOOGLE_REDIRECT_URI_INVALID",
+        "The Google redirect URL must use the application URL.",
+        503,
+      );
+    }
     if (process.env.NODE_ENV === "production" && !testMode && parsedRedirectUri.protocol !== "https:") {
       throw new AuthError(
         "GOOGLE_REDIRECT_URI_INVALID",

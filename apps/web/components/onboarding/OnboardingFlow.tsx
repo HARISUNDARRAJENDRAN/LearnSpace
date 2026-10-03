@@ -385,13 +385,13 @@ export function OnboardingFlow({
           conceptIds: selectedConcepts.map((concept) => concept.id),
         }),
       });
-      const data = (await response.json()) as ApiError & { ok?: boolean };
+      const data = (await response.json()) as ApiError & { destination?: string };
       if (!response.ok) {
         setSubmitError(apiErrorMessage(data));
         return;
       }
-      router.replace("/app");
-      router.refresh();
+      if (data.destination !== "/app" && data.destination !== "/app/discover") throw new Error("Application destination missing");
+      router.replace(data.destination);
     } catch {
       setSubmitError("We could not finish setting up your space. Try again.");
     } finally {

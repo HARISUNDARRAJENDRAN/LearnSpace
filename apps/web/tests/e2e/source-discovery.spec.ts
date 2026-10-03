@@ -112,6 +112,7 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   await expect(page).toHaveURL(/\/verify-email/);
   await page.getByRole("link", { name: "Open verification link" }).click();
   await completeOnboarding(page);
+  await page.goto("/app");
 
   await page.getByRole("button", { name: "Start learning" }).click();
   const learnInput = page.getByLabel("What do you want to learn?");

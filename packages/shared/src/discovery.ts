@@ -79,18 +79,16 @@ export type DiscoveryCard = {
   reasonCodes: string[];
   position: number;
   runId: string;
-  score: number;
 };
 
 export type DiscoveryHomeResponse = {
   runId: string | null;
   generatedAt: string;
   stale: boolean;
+  personalization?: "interests" | "learning" | "explore";
   sections: {
     continueLearning: DiscoveryCard[];
     recommendedVideos: DiscoveryCard[];
-    researchPapers: DiscoveryCard[];
-    freshForYou: DiscoveryCard[];
     interests: Array<{ id: string; slug: string; name: string; kind: string }>;
   };
 };

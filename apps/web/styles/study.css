@@ -107,7 +107,7 @@
 
 .paper-outline { position: sticky; top: 95px; padding-top: 4px; }
 .paper-outline ol { display: grid; gap: 13px; margin: 20px 0 0; padding: 0 0 0 17px; color: #687667; font-family: var(--font-editorial), Georgia, serif; font-size: 15px; line-height: 1.05; }
-.paper-outline li::marker { color: #b18467; font-family: var(--font-app), system-ui, sans-serif; font-size: 10px; }
+.paper-outline li::marker { color: #b18467; font-family: var(--font-geist-sans), sans-serif; font-size: 10px; }
 .paper-reader-frame { min-height: 690px; overflow: hidden; border: 1px solid #bcae99; border-radius: 12px; background: #f1e8da; box-shadow: 0 8px 22px #5e4c3814; }
 .paper-reader-frame iframe { display: block; width: 100%; min-height: 690px; border: 0; }
 .paper-reader-frame .study-preparing { min-height: 690px; align-content: center; padding: 45px; border: 0; text-align: center; }

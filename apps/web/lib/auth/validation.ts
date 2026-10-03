@@ -43,5 +43,11 @@ export function safeRedirectPath(value: string | undefined, fallback = "/app"): 
     return fallback;
   }
 
-  return value;
+  const target = new URL(value, "http://localhost");
+  const pathname = target.pathname;
+  if (target.origin !== "http://localhost" || (pathname !== "/onboarding" && pathname !== "/app" && !pathname.startsWith("/app/"))) {
+    return fallback;
+  }
+
+  return target.pathname + target.search + target.hash;
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { StudyAnchor, StudyProgressRequest, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useStudyTime } from "./useStudyTime";
 
 type StudyKind = "video" | "paper";
 type ProgressEvent = StudyProgressRequest["event"];
@@ -112,6 +113,7 @@ function YouTubeLessonPlayer({ sessionId, resource, onProgress }: { sessionId: s
   const syncRef = useRef(sync);
   const [playerState, setPlayerState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [playing, setPlaying] = useState(false);
+  useStudyTime(sessionId, resource.resourceId, playing);
   const [currentMs, setCurrentMs] = useState(resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0);
   const [search, setSearch] = useState("");
   syncRef.current = sync;
@@ -142,14 +144,12 @@ function YouTubeLessonPlayer({ sessionId, resource, onProgress }: { sessionId: s
             if (resumeMs > 0) target.seekTo(resumeMs / 1_000, true);
           },
           onStateChange: ({ data }) => {
+            setPlaying(data === 1);
             if (data === 1) {
-              setPlaying(true);
               void syncRef.current("play", true);
             } else if (data === 2) {
-              setPlaying(false);
               void syncRef.current("pause", true);
             } else if (data === 0) {
-              setPlaying(false);
               void syncRef.current("complete", true);
             }
           },
@@ -204,6 +204,8 @@ function PaperReader({ sessionId, resource, onProgress }: { sessionId: string; r
   const [sectionId, setSectionId] = useState(initialAnchor?.sectionId ?? "");
   const [progress, setProgress] = useState(resource.progress.progressPct);
   const [message, setMessage] = useState("");
+  const [sourceLoaded, setSourceLoaded] = useState(false);
+  useStudyTime(sessionId, resource.resourceId, sourceLoaded && resource.readiness !== "unavailable", true);
   const sections = useMemo(() => [...new Set(resource.chunks.flatMap((chunk) => chunk.headingPath).filter(Boolean))], [resource.chunks]);
   async function save(nextProgress = progress, complete = false) {
     const anchor: StudyAnchor = sectionId ? { kind: "paper", page: Math.max(1, page), sectionId } : { kind: "paper", page: Math.max(1, page) };
@@ -218,7 +220,7 @@ function PaperReader({ sessionId, resource, onProgress }: { sessionId: string; r
       setMessage("Could not sync this reading position");
     }
   }
-  return <div className="paper-reader-stack"><div className="paper-reader-frame">{resource.paper?.pdfSourceUrl ? <iframe title={resource.title} src={resource.paper.pdfSourceUrl} referrerPolicy="no-referrer" /> : <div className="study-preparing"><strong>Paper source unavailable</strong><span>The catalogue has metadata for this paper, but no readable PDF source is attached.</span>{resource.canonicalUrl ? <a href={resource.canonicalUrl} target="_blank" rel="noreferrer">View the paper source</a> : null}</div>}</div><section className="paper-progress-control" aria-labelledby="reading-position-title"><div><p className="study-label">Your place</p><h2 id="reading-position-title">Reading position</h2><p>Save a page or parsed section when you move through the paper.</p></div><div className="paper-progress-fields"><label>Page<input type="number" min="1" value={page} onChange={(event) => setPage(Math.max(1, Number(event.target.value) || 1))} /></label>{sections.length > 0 ? <label>Section<select value={sectionId} onChange={(event) => setSectionId(event.target.value)}><option value="">Choose a section</option>{sections.map((section) => <option key={section} value={section}>{section}</option>)}</select></label> : null}</div><label className="paper-progress-range">Progress <input type="range" min="0" max="100" value={progress} onChange={(event) => setProgress(Number(event.target.value))} /><output>{Math.round(progress)}%</output></label><div className="paper-progress-actions"><button type="button" onClick={() => void save()}>Save position</button><button className="quiet-button" type="button" onClick={() => void save(100, true)}>Mark paper complete</button></div><span className="study-inline-message" aria-live="polite">{message}</span></section></div>;
+  return <div className="paper-reader-stack"><div className="paper-reader-frame">{resource.paper?.pdfSourceUrl ? <iframe onLoad={() => setSourceLoaded(true)} title={resource.title} src={resource.paper.pdfSourceUrl} referrerPolicy="no-referrer" /> : <div className="study-preparing"><strong>Paper source unavailable</strong><span>The catalogue has metadata for this paper, but no readable PDF source is attached.</span>{resource.canonicalUrl ? <a href={resource.canonicalUrl} target="_blank" rel="noreferrer">View the paper source</a> : null}</div>}</div><section className="paper-progress-control" aria-labelledby="reading-position-title"><div><p className="study-label">Your place</p><h2 id="reading-position-title">Reading position</h2><p>Save a page or parsed section when you move through the paper.</p></div><div className="paper-progress-fields"><label>Page<input type="number" min="1" value={page} onChange={(event) => setPage(Math.max(1, Number(event.target.value) || 1))} /></label>{sections.length > 0 ? <label>Section<select value={sectionId} onChange={(event) => setSectionId(event.target.value)}><option value="">Choose a section</option>{sections.map((section) => <option key={section} value={section}>{section}</option>)}</select></label> : null}</div><label className="paper-progress-range">Progress <input type="range" min="0" max="100" value={progress} onChange={(event) => setProgress(Number(event.target.value))} /><output>{Math.round(progress)}%</output></label><div className="paper-progress-actions"><button type="button" onClick={() => void save()}>Save position</button><button className="quiet-button" type="button" onClick={() => void save(100, true)}>Mark paper complete</button></div><span className="study-inline-message" aria-live="polite">{message}</span></section></div>;
 }
 
 function SessionMaterials({ session }: { session: StudySessionView }) {

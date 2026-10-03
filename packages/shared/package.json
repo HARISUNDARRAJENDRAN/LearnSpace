@@ -28,6 +28,31 @@
       "types": "./src/password.ts",
       "import": "./dist/password.js",
       "default": "./dist/password.js"
+    },
+    "./recommendation-config": {
+      "types": "./src/recommendation-config.ts",
+      "import": "./dist/recommendation-config.js",
+      "default": "./dist/recommendation-config.js"
+    },
+    "./recommendation-model": {
+      "types": "./src/recommendation-model.ts",
+      "import": "./dist/recommendation-model.js",
+      "default": "./dist/recommendation-model.js"
+    },
+    "./recommendation-cache": {
+      "types": "./src/recommendation-cache.ts",
+      "import": "./dist/recommendation-cache.js",
+      "default": "./dist/recommendation-cache.js"
+    },
+    "./youtube-dataset": {
+      "types": "./src/youtube-dataset.ts",
+      "import": "./dist/youtube-dataset.js",
+      "default": "./dist/youtube-dataset.js"
+    },
+    "./youtube-quality": {
+      "types": "./src/youtube-quality.ts",
+      "import": "./dist/youtube-quality.js",
+      "default": "./dist/youtube-quality.js"
     }
   },
   "scripts": {
@@ -37,6 +62,7 @@
     "test": "tsx --test src/contracts.test.ts src/source-discovery.test.ts"
   },
   "dependencies": {
+    "ioredis": "^6.0.0",
     "zod": "4.5.2"
   },
   "devDependencies": {
