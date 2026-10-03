@@ -6,7 +6,7 @@ Verified on 2026-10-03 in `us-east-1`, AWS account `934685482023`.
 
 - CloudFormation: `learnspace-discovery-agent-staging`, updated successfully.
 - Existing Lambda retained: `learnspace-discovery-agent-staging`.
-- Image build: `aws-bootstrap-20261003-papers`.
+- Image build: `a8c74e69364007bae0181043512d605f503d0bbc` (verified GitHub OIDC deployment).
 - API Gateway: https://n108t7s9vd.execute-api.us-east-1.amazonaws.com
 - GitHub OIDC role: `LearnSpaceDiscoveryAgentGitHubDeployRole`.
 - Secrets Manager: `learnspace/staging/discovery/exa` and `learnspace/staging/discovery/internal-token`.
@@ -35,10 +35,12 @@ five requests/second with burst ten; agent tool use remains bounded.
 | Durable ingestion | Real AWS response persisted ten resources and ten concept relations |
 | Authenticated ranking | Smoke learner's populated Home feed generated a run containing all ten ingested resources |
 
-The real-provider smoke used **local PostgreSQL, Redis, and the production
-Next.js build** with the live AWS agent. It did not verify the production Neon
-database. None of its ten resources were selected into the Home top six:
-ingestion makes resources eligible; it does not override relevance or diversity.
+The real-provider smoke passed both with **local PostgreSQL/Redis and the
+production Next.js build**, and subsequently with **the hosted staging database
+and Vercel application**. Both runs persisted ten real resources and evaluated
+all ten in an authenticated Home ranking run. None were selected into the Home
+top six: ingestion makes resources eligible; it does not override relevance or
+diversity.
 
 ## Fixes discovered through verification
 
@@ -75,23 +77,41 @@ container using verified DNS results; subsequent direct requests succeeded.
 - Both deployment workflows: Actionlint passed.
 - Every deployment shell script: Bash syntax passed.
 - Worker TypeScript check: passed; twelve unit/integration tests passed.
+- GitHub CI: 93 web tests and four shared-package tests passed.
 - Production-build browser E2E: 20 tests passed against local PostgreSQL/Redis.
 - Live AWS → durable worker → PostgreSQL → authenticated Home ranking smoke: passed,
   with three real provider calls, no fallback calls, ten ranked resources.
 - Docker Compose configuration: passed. Migration container exited successfully;
   five long-running services were healthy/running at approximately 846 MiB total.
 
-## Remaining rollout checks
+## Completed rollout
 
-GitHub CLI authentication is still required to upload the three Actions ARN
-secrets using `infra/aws/discovery-agent/configure-github-secrets.sh` and verify
-an actual GitHub OIDC deployment. Selecting “I'll authenticate GitHub CLI” does
-not grant access until login completes.
+- All three GitHub Actions ARN secrets were uploaded and verified by name:
+  `AWS_DISCOVERY_AGENT_ROLE_ARN`, `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`,
+  and `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`.
+- The staging agent URL and matching internal token secrets were updated for
+  the hosted smoke workflow. Provider keys remain in AWS Secrets Manager.
+- [Main CI](https://github.com/HARISUNDARRAJENDRAN/LearnSpace/actions/runs/37132755848)
+  passed. Its AWS step skipped because the secrets were added after that run
+  was queued; the subsequent deployment below verified the real OIDC path.
+- [GitHub OIDC agent deployment](https://github.com/HARISUNDARRAJENDRAN/LearnSpace/actions/runs/37133121763)
+  passed, including the scoped-role CloudFormation update and exact build,
+  protocol, and schema checks.
+- [Hosted staging discovery smoke](https://github.com/HARISUNDARRAJENDRAN/LearnSpace/actions/runs/37133194047)
+  passed with three live provider calls, ten persisted resources, ten concept
+  links, and ten ranked resources in the authenticated Vercel Home response.
+- Vercel deployment `dpl_CEYW5CFJ7W1nYNtMeZLhCGQX8KrL` is `READY`, serving
+  https://learnspace-staging.vercel.app with the AWS URL and matching token.
+- Hosted health and login returned HTTP 200; unauthenticated Home and Discover
+  APIs returned HTTP 401.
 
-Vercel's production environment now contains `DISCOVERY_AGENT_URL` and the
-matching sensitive `INTERNAL_SERVICE_TOKEN`. Those values require a new
-deployment before they take effect. Production database credentials are
-sensitive and were not available through environment pull. The staging smoke
-workflow needs its database/test-learner secrets for production persistence
-verification. No permanently hosted durable worker was found in this AWS
-account; its deployment remains separate from Lambda.
+## Remaining operational scope
+
+No permanently hosted durable worker was found in this AWS account. The
+existing scheduled staging smoke runs a transient worker, and the local
+Compose worker remains running. Continuous cloud worker hosting is a separate
+deployment from the Lambda agent; the verified hosted smoke demonstrates the
+existing worker/database/web contract, not a newly deployed always-on worker.
+The browser suite ran against the production build locally; hosted verification
+covered authenticated API/database/provider boundaries rather than every
+browser journey against the public deployment.
