@@ -10,6 +10,7 @@ image_tag="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 
 command -v aws >/dev/null || { echo "aws CLI is required" >&2; exit 1; }
 command -v docker >/dev/null || { echo "Docker is required to build the Lambda image" >&2; exit 1; }
+command -v python3 >/dev/null || { echo "python3 is required for existing-function adoption" >&2; exit 1; }
 
 : "${EXA_API_KEY_SECRET_ARN:?Set EXA_API_KEY_SECRET_ARN before deploying}"
 : "${INTERNAL_SERVICE_TOKEN_SECRET_ARN:?Set INTERNAL_SERVICE_TOKEN_SECRET_ARN before deploying}"
@@ -39,20 +40,24 @@ aws ecr get-login-password --region "$region" \
 
 docker build \
   --platform linux/amd64 \
+  --provenance=false \
   -f services/ai-backend/Dockerfile.lambda \
   -t "$image_uri" \
   services/ai-backend
 docker push "$image_uri" >/dev/null
 
+python3 infra/aws/discovery-agent/adopt-existing-function.py
+
 aws cloudformation deploy \
   --template-file infra/aws/discovery-agent/template.yaml \
   --stack-name "$stack_name" \
   --region "$region" \
-  --capabilities CAPABILITY_IAM \
+  --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
     "FunctionName=${function_name}" \
     "ImageUri=${image_uri}" \
     "EnvironmentName=${stage}" \
+    "ReservedConcurrency=${AWS_RESERVED_CONCURRENCY:--1}" \
     "BuildSha=${image_tag}" \
     "ExaApiKeySecretArn=${EXA_API_KEY_SECRET_ARN}" \
     "InternalServiceTokenSecretArn=${INTERNAL_SERVICE_TOKEN_SECRET_ARN}" \

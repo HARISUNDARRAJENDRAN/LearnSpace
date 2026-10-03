@@ -43,6 +43,8 @@ jobs:
         env:
           EXPECTED_BUILD_SHA: ${{ inputs.image_tag || github.sha }}
         run: |
+          # AgentUrl is a literal in the JMESPath expression.
+          # shellcheck disable=SC2016
           agent_url="$(aws cloudformation describe-stacks --stack-name "$AWS_STACK_NAME" --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`AgentUrl`].OutputValue | [0]' --output text)"
           token="$(aws secretsmanager get-secret-value --secret-id "$INTERNAL_SERVICE_TOKEN_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text | jq -r '.INTERNAL_SERVICE_TOKEN')"
           version="$(curl --fail --silent --show-error --max-time 10 -H "x-internal-service-token: $token" "${agent_url%/}/internal/v1/discovery/version")"

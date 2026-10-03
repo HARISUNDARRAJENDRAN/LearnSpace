@@ -1,5 +1,4 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
 Description: LearnSpace bounded discovery agent backed by a Lambda container image.
 
 Parameters:
@@ -32,26 +31,61 @@ Parameters:
     Default: 180
     MinValue: 1
     MaxValue: 900
+  ReservedConcurrency:
+    Type: Number
+    Default: -1
+    MinValue: -1
+    Description: '-1 uses the account quota; set a reservation only when the account has capacity.'
   BuildSha:
     Type: String
     Default: unknown
     AllowedPattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
 
+Conditions:
+  HasReservedConcurrency: !Not [!Equals [!Ref ReservedConcurrency, -1]]
+
 Resources:
+  DiscoveryAgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${FunctionName}-execution'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+      Policies:
+        - PolicyName: DiscoverySecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref ExaApiKeySecretArn
+                  - !Ref InternalServiceTokenSecretArn
+
   DiscoveryAgent:
-    Type: AWS::Serverless::Function
+    Type: AWS::Lambda::Function
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       FunctionName: !Ref FunctionName
       PackageType: Image
-      ImageUri: !Ref ImageUri
+      Code:
+        ImageUri: !Ref ImageUri
+      Role: !GetAtt DiscoveryAgentRole.Arn
       Architectures:
         - x86_64
       MemorySize: !Ref MemorySize
       Timeout: !Ref Timeout
       EphemeralStorage:
         Size: 1024
-      ReservedConcurrentExecutions: 2
-      AutoPublishAlias: live
+      ReservedConcurrentExecutions: !If [HasReservedConcurrency, !Ref ReservedConcurrency, !Ref 'AWS::NoValue']
       Environment:
         Variables:
           DISCOVERY_AGENTS_ENABLED: 'true'
@@ -66,19 +100,11 @@ Resources:
           CREWAI_DISABLE_TELEMETRY: 'true'
           EXA_API_KEY_SECRET_ARN: !Ref ExaApiKeySecretArn
           INTERNAL_SERVICE_TOKEN_SECRET_ARN: !Ref InternalServiceTokenSecretArn
-      Policies:
-        - AWSLambdaBasicExecutionRole
-        - Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource:
-                - !Ref ExaApiKeySecretArn
-                - !Ref InternalServiceTokenSecretArn
       Tags:
-        Service: learnspace-discovery-agent
-        Environment: !Ref EnvironmentName
+        - Key: Service
+          Value: learnspace-discovery-agent
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
   DiscoveryApi:
     Type: AWS::ApiGatewayV2::Api

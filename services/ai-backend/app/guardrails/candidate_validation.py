@@ -34,6 +34,7 @@ def is_allowed_arxiv_url(value: str) -> bool:
     return (
         parsed.scheme == "https"
         and parsed.hostname == "arxiv.org"
+        and parsed.path.startswith("/abs/")
         and not parsed.username
         and not parsed.password
         and not parsed.port
@@ -42,8 +43,33 @@ def is_allowed_arxiv_url(value: str) -> bool:
         and re.fullmatch(
             r"(?:[A-Za-z][A-Za-z0-9.-]{1,31}/\d{7}|\d{4}\.\d{4,5}(?:v\d+)?)",
             arxiv_id,
-        ) is not None
+        )
+        is not None
     )
+
+
+def canonical_arxiv_url(value: str) -> str | None:
+    """Normalize verified arXiv document links to a version-independent identity."""
+    try:
+        parsed = urlparse(value)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "arxiv.org"
+            or parsed.username
+            or parsed.password
+            or parsed.port
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+    except ValueError:
+        return None
+    if not any(parsed.path.startswith(prefix) for prefix in ("/abs/", "/pdf/", "/html/")):
+        return None
+    identifier = parsed.path.split("/", 2)[2].removesuffix(".pdf")
+    identifier = re.sub(r"v\d+$", "", identifier, flags=re.IGNORECASE)
+    canonical = f"https://arxiv.org/abs/{identifier}"
+    return canonical if is_allowed_arxiv_url(canonical) else None
 
 
 def validate_youtube_candidate(candidate: YoutubeCandidate) -> YoutubeCandidate | None:

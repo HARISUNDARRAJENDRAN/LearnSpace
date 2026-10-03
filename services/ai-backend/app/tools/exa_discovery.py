@@ -5,7 +5,7 @@ from urllib.parse import urlparse
 import httpx
 
 from app.contracts.discovery import ResourceKind
-from app.guardrails.candidate_validation import is_allowed_arxiv_url, youtube_id_from_url
+from app.guardrails.candidate_validation import canonical_arxiv_url, youtube_id_from_url
 from app.tools.budget import ToolBudget
 
 
@@ -104,13 +104,16 @@ class ExaDiscoveryTool:
                 if candidate_id is None or candidate_id in seen:
                     continue
                 seen.add(candidate_id)
-            elif not is_allowed_arxiv_url(url) or url in seen:
-                continue
             else:
+                normalized = canonical_arxiv_url(url)
+                if normalized is None or normalized in seen:
+                    continue
+                url = normalized
                 seen.add(url)
             candidates.append(
                 {
                     **item,
+                    "url": url,
                     "retrieval_strategy": paper_strategy if resource_kind == "paper" else "video",
                 }
             )

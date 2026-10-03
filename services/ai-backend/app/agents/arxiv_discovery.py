@@ -1,10 +1,9 @@
-import re
 from datetime import UTC, datetime
 from typing import Any, cast
 from urllib.parse import urlparse
 
 from app.contracts.discovery import ArxivCandidate, DiscoveryRefreshRequest
-from app.guardrails.candidate_validation import validate_arxiv_candidate
+from app.guardrails.candidate_validation import canonical_arxiv_url, validate_arxiv_candidate
 from app.tools.arxiv_search import ArxivPaperTool
 from app.tools.budget import ToolBudget, ToolBudgetExceeded
 from app.tools.exa_discovery import ExaDiscoveryTool
@@ -92,20 +91,16 @@ class ArxivDiscoveryAgent:
         for item in raw_results:
             url = item.get("url")
             title = item.get("title")
-            if (
-                not isinstance(url, str)
-                or not isinstance(title, str)
-                or not url.startswith("https://arxiv.org/abs/")
-            ):
+            if not isinstance(url, str) or not isinstance(title, str):
+                continue
+            url = canonical_arxiv_url(url)
+            if url is None:
                 continue
             evidence_text = self._evidence(item)
             foundational = (
-                request.paper_strategy == "foundational"
-                or request.ranking_intent == "foundational"
+                request.paper_strategy == "foundational" or request.ranking_intent == "foundational"
             )
-            if foundational and not has_foundational_evidence(
-                title, evidence_text
-            ):
+            if foundational and not has_foundational_evidence(title, evidence_text):
                 continue
             published_at = self._date(item.get("publishedDate"))
             if request.ranking_intent == "recent" and published_at is not None:
@@ -116,12 +111,7 @@ class ArxivDiscoveryAgent:
                 age_days = (now - published_at).total_seconds() / 86_400
                 if age_days > request.window_days:
                     continue
-            arxiv_id = re.sub(
-                r"v\d+$",
-                "",
-                urlparse(url).path.removeprefix("/abs/"),
-                flags=re.IGNORECASE,
-            )
+            arxiv_id = urlparse(url).path.removeprefix("/abs/")
             if not arxiv_id or arxiv_id in seen:
                 continue
             seen.add(arxiv_id)

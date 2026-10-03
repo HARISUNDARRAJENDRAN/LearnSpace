@@ -73,7 +73,7 @@ jobs:
           PORT=3200 pnpm --filter @learnspace/web run start:standalone > /tmp/learnspace-next.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
-          for attempt in {1..30}; do
+          for _attempt in {1..30}; do
             if curl --fail --silent http://localhost:3200/login > /dev/null; then break; fi
             sleep 1
           done
@@ -114,6 +114,9 @@ jobs:
       - run: uv run ruff check app tests
       - run: uv run pyright
       - run: uv run pytest
+      - run: uv run ruff check ../../infra/aws/discovery-agent
+      - run: uv run python -m unittest discover -s ../../infra/aws/discovery-agent -p 'test_*.py'
+      - run: for script in ../../infra/aws/discovery-agent/*.sh; do bash -n "$script"; done
 
   deploy-agent:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
@@ -166,6 +169,8 @@ jobs:
       - name: Verify the instant discovery route
         if: steps.aws_config.outputs.ready == 'true'
         run: |
+          # AgentUrl is a literal in the JMESPath expression.
+          # shellcheck disable=SC2016
           agent_url="$(aws cloudformation describe-stacks --stack-name "$AWS_STACK_NAME" --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`AgentUrl`].OutputValue | [0]' --output text)"
           token="$(aws secretsmanager get-secret-value --secret-id "$INTERNAL_SERVICE_TOKEN_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text | jq -r '.INTERNAL_SERVICE_TOKEN')"
           curl --fail --silent --show-error --max-time 30 \

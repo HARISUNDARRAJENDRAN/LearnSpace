@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { closeRecommendationRedis } from "@learnspace/shared/recommendation-cache";
 import postgres from "postgres";
 import { resourceIdsFromJobResult, runDiscoveryWorker } from "./discovery.js";
 import { provisionSmokeLearner } from "./discovery-smoke-provision.js";
@@ -66,7 +67,7 @@ async function stagingHomeContainsResource(
   email: string,
   password: string,
   resourceIds: Set<string>,
-): Promise<{ contains: boolean; runId: string | null }> {
+): Promise<{ contains: boolean; runId: string | null; hasRecommendations: boolean }> {
   const baseUrl = webUrl.replace(/\/$/, "");
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
@@ -92,6 +93,8 @@ async function stagingHomeContainsResource(
   return {
     contains: feedContainsResource(body, resourceIds),
     runId: isObject(body) && typeof body.runId === "string" ? body.runId : null,
+    hasRecommendations: isObject(body) && isObject(body.sections)
+      && Array.isArray(body.sections.recommendedVideos) && body.sections.recommendedVideos.length > 0,
   };
 }
 
@@ -193,7 +196,14 @@ async function main(): Promise<void> {
           learnerPassword,
           resourceIds,
         );
-        if (home.contains) {
+        // Ingestion makes a resource eligible; it should not force it above
+        // stronger existing lessons or bypass the ranker's diversity rules.
+        const ranked = home.runId ? await migrator<{ resource_id: string }[]>`
+          SELECT resource_id FROM discovery.recommendation_candidates
+          WHERE recommendation_run_id = ${home.runId}
+            AND resource_id IN ${migrator([...resourceIds])}
+        ` : [];
+        if (home.hasRecommendations && (home.contains || ranked.length > 0)) {
           process.stdout.write(JSON.stringify({
             status: "passed",
             traceId,
@@ -206,10 +216,12 @@ async function main(): Promise<void> {
             liveToolCalls: providerCalls + fallbackCalls + enrichmentCalls,
             cacheHit: status.result?.cacheHit === true,
             homeRunId: home.runId,
+            homeSelectedCandidate: home.contains,
+            homeRankedResources: ranked.length,
           }) + "\n");
           return;
         }
-        throw new Error("staging discovery smoke completed but the test learner Home feed did not contain the persisted candidate");
+        throw new Error("staging discovery smoke completed but the authenticated Home feed did not rank any persisted candidate");
       }
       await sleep(2_000);
     }
@@ -221,6 +233,7 @@ async function main(): Promise<void> {
       await Promise.all([
         worker.end({ timeout: 5 }),
         migrator.end({ timeout: 5 }),
+        closeRecommendationRedis(),
       ]);
     }
   }
