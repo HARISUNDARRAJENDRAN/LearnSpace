@@ -200,7 +200,6 @@
         "ecs:DescribeServices",
         "ecs:UpdateService",
         "ecs:DeleteService",
-        "ecs:DescribeTaskDefinition",
         "ecs:DeregisterTaskDefinition",
         "ecs:TagResource",
         "ecs:UntagResource",
@@ -246,6 +245,7 @@
       "Sid": "WorkerInfrastructureInventory",
       "Effect": "Allow",
       "Action": [
+        "ecs:DescribeTaskDefinition",
         "ec2:DescribeVpcs",
         "ec2:DescribeSubnets",
         "ec2:DescribeSecurityGroups",
