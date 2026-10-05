@@ -254,6 +254,12 @@
       "Resource": "*"
     },
     {
+      "Sid": "CreateWorkerSecurityGroupInVpc",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSecurityGroup",
+      "Resource": "arn:aws:ec2:us-east-1:934685482023:vpc/vpc-02c4dca1203de4511"
+    },
+    {
       "Sid": "WorkerNetwork",
       "Effect": "Allow",
       "Action": [
@@ -263,10 +269,7 @@
         "ec2:RevokeSecurityGroupEgress",
         "ec2:RevokeSecurityGroupIngress"
       ],
-      "Resource": [
-        "arn:aws:ec2:us-east-1:934685482023:security-group/*",
-        "arn:aws:ec2:us-east-1:934685482023:vpc/vpc-02c4dca1203de4511"
-      ],
+      "Resource": "arn:aws:ec2:us-east-1:934685482023:security-group/*",
       "Condition": {
         "ArnEquals": {
           "ec2:Vpc": "arn:aws:ec2:us-east-1:934685482023:vpc/vpc-02c4dca1203de4511"
