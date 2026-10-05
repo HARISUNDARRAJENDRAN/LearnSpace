@@ -49,3 +49,13 @@ test("scoring weights normalize and cache scopes cannot collide across users or 
   assert.notEqual(recommendationCacheKey("a"), recommendationCacheKey("a", "topic"));
   assert.notEqual(recommendationProfileKey("a"), recommendationProfileKey("b"));
 });
+
+test("explicit vector can be removed without deleting learned durable evidence", () => {
+  const explicit = { ...state(), longTermInterests: {}, longTermVector: null, onboardingVector: axis(0) };
+  assert.deepEqual(retrievalVector(explicit), axis(0));
+  const learned = updateLearningState(explicit, { kind: "save" }, { ai: 1 }, axis(1), now);
+  assert.equal(learned.longTermInterests.programming, undefined);
+  assert.ok(learned.longTermInterests.ai! > 0);
+  assert.deepEqual(learned.onboardingVector, axis(0));
+  assert.deepEqual(retrievalVector({ ...learned, onboardingVector: null }), axis(1));
+});

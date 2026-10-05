@@ -1,10 +1,12 @@
 export const RECOMMENDATION_CONFIG = {
-  version: "semantic-learning-v1",
+  version: "semantic-learning-v2",
   embeddingModel: "text-embedding-3-small",
   embeddingDimensions: 1536,
   embeddingInputCharacters: 12000,
   embeddingBatchSize: 16,
   embeddingRetryLimit: 5,
+  embeddingLeaseSeconds: 60,
+  maintenanceIntervalMs: 60000,
   candidateCount: 100, annEfSearch: 100,
   semanticCandidates: 60,
   topicCandidates: 25,

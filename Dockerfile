@@ -46,9 +46,19 @@ ENV DATABASE_URL=postgres://build:build@localhost:5432/build \
 
 RUN pnpm --filter "@learnspace/web..." run build
 
-FROM source AS worker-build
+FROM base AS worker-build
 
-RUN pnpm --filter "@learnspace/worker..." run build
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .npmrc ./
+COPY patches ./patches
+COPY packages/shared/package.json packages/shared/package.json
+COPY services/worker/package.json services/worker/package.json
+RUN pnpm install --frozen-lockfile --filter @learnspace/worker... --filter learnspace
+COPY packages/shared ./packages/shared
+COPY services/worker ./services/worker
+COPY apps/web/public/data/learnspace_youtube_curriculum_master.csv ./apps/web/public/data/learnspace_youtube_curriculum_master.csv
+
+RUN pnpm --filter "@learnspace/worker..." run build \
+    && pnpm --filter @learnspace/worker deploy --prod --legacy --config.allowUnusedPatches=true /worker-runtime
 
 FROM node:${NODE_VERSION}-bookworm-slim AS web
 
@@ -84,21 +94,14 @@ WORKDIR /app
 RUN groupadd --system --gid 1001 learnspace \
     && useradd --system --uid 1001 --gid learnspace --create-home learnspace
 
-# pnpm's workspace links are retained; the linked shared package is copied to
-# the matching location below and its runtime export points at dist/.
-COPY --from=worker-build /workspace/node_modules ./node_modules
-COPY --from=worker-build /workspace/package.json ./package.json
-COPY --from=worker-build /workspace/packages/shared/package.json ./packages/shared/package.json
-COPY --from=worker-build /workspace/packages/shared/node_modules ./packages/shared/node_modules
-COPY --from=worker-build /workspace/packages/shared/dist ./packages/shared/dist
-COPY --from=worker-build /workspace/services/worker/package.json ./services/worker/package.json
-COPY --from=worker-build /workspace/services/worker/node_modules ./services/worker/node_modules
-COPY --from=worker-build /workspace/services/worker/dist ./services/worker/dist
-COPY --from=worker-build /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv ./apps/web/public/data/learnspace_youtube_curriculum_master.csv
+COPY --from=worker-build --chown=learnspace:learnspace /worker-runtime ./
+COPY --from=worker-build /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv ./data/curriculum.csv
+
+ENV CURRICULUM_PATH=/app/data/curriculum.csv
 
 USER learnspace
 
-CMD ["node", "services/worker/dist/index.js", "--loop"]
+CMD ["node", "dist/index.js", "--loop"]
 
 # Compose uses this target for the local development containers. It keeps the
 # source tree available for Next.js and the worker while the production targets

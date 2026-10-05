@@ -1,14 +1,14 @@
 import type postgres from "postgres";
 import { RECOMMENDATION_CONFIG as config } from "@learnspace/shared/recommendation-config";
-import { behaviorSignal, observationFromActivity, updateLearningState, updateBehaviorAffinity, LEARNER_MODEL_VERSION, AFFINITY_HALF_LIFE_DAYS, type CompactLearningState } from "@learnspace/shared/recommendation-model";
+import { behaviorSignal, observationFromActivity, updateLearningState, updateBehaviorAffinity, validVector, LEARNER_MODEL_VERSION, AFFINITY_HALF_LIFE_DAYS, type CompactLearningState } from "@learnspace/shared/recommendation-model";
 import { invalidateRecommendations, recommendationProfileKey, redisCommands } from "@learnspace/shared/recommendation-cache";
 import type { EmbeddingProvider } from "./embeddings.js";
 
 type Sql = ReturnType<typeof postgres>;
-export async function projectRecommendationProfiles(db: Sql, provider: EmbeddingProvider | null, userIds: string[] = []): Promise<number> {
+export async function projectRecommendationProfiles(db: Sql, provider: EmbeddingProvider | null, userIds: string[] = [], signal?: AbortSignal): Promise<number> {
   const users = await db<{ user_id: string }[]>`
     SELECT s.user_id FROM identity.user_settings s LEFT JOIN discovery.learner_profiles p ON p.user_id = s.user_id
-    WHERE s.onboarding_completed_at IS NOT NULL AND (${userIds.length === 0} OR s.user_id = ANY(${userIds}::uuid[])) AND (p.user_id IS NULL OR s.updated_at > p.updated_at OR p.updated_at < now() - interval '1 hour' OR EXISTS (SELECT 1 FROM catalog.collection_enrollments x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.user_resource_progress x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.study_sessions x WHERE x.user_id = s.user_id AND x.last_active_at > p.updated_at) OR EXISTS (SELECT 1 FROM knowledge.concept_mastery x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.learning_goals x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (
+    WHERE s.onboarding_completed_at IS NOT NULL AND (${userIds.length === 0} OR s.user_id = ANY(${userIds}::uuid[])) AND (p.user_id IS NULL OR p.state->>'version' IS DISTINCT FROM ${config.version} OR (${provider !== null} AND jsonb_array_length(COALESCE(s.learning_preferences->'conceptIds', '[]'::jsonb)) > 0 AND p.state->'learning'->>'onboardingVector' IS NULL) OR s.updated_at > p.updated_at OR p.updated_at < now() - interval '1 hour' OR EXISTS (SELECT 1 FROM knowledge.concept_relations x WHERE x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM discovery.recommendation_impressions x WHERE x.user_id = s.user_id AND x.shown_at + interval '12 hours' BETWEEN p.updated_at AND now()) OR EXISTS (SELECT 1 FROM catalog.collection_enrollments x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.user_resource_progress x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.study_sessions x WHERE x.user_id = s.user_id AND x.last_active_at > p.updated_at) OR EXISTS (SELECT 1 FROM knowledge.concept_mastery x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (SELECT 1 FROM study.learning_goals x WHERE x.user_id = s.user_id AND x.updated_at > p.updated_at) OR EXISTS (
       SELECT 1 FROM activity.activity_events a WHERE a.user_id = s.user_id
         AND a.event_type IN ('resource.opened','session.started','resource.saved','discovery.dismissed','question.asked','exercise.completed','review.completed','resource.consumed','resource.progressed','resource.completed','resource.abandoned')
         AND a.occurred_at > now() - interval '90 days'
@@ -17,29 +17,43 @@ export async function projectRecommendationProfiles(db: Sql, provider: Embedding
   `;
   let projected = 0;
   for (const { user_id: userId } of users) {
+    if (signal?.aborted) break;
     const started = performance.now();
+    // Network work uses no transaction or reserved connection. Re-check preferences
+    // under the projection lock before accepting this onboarding vector.
+    const [input] = await db<{ preferences: Record<string, unknown>; state: Record<string, unknown> | null }[]>`
+      SELECT s.learning_preferences preferences, p.state FROM identity.user_settings s
+      LEFT JOIN discovery.learner_profiles p ON p.user_id = s.user_id WHERE s.user_id = ${userId}`;
+    const inputIds = Array.isArray(input?.preferences.conceptIds) ? input.preferences.conceptIds as string[] : [];
+    const inputKey = JSON.stringify(inputIds.slice().sort());
+    const priorIds = (input?.state?.preferences as { conceptIds?: string[] } | undefined)?.conceptIds ?? [];
+    const priorLearning = input?.state?.version === config.version ? input.state.learning as CompactLearningState : undefined;
+    let onboardingVector = JSON.stringify(priorIds.slice().sort()) === inputKey ? priorLearning?.onboardingVector ?? null : null;
+    if (!onboardingVector && inputIds.length && provider) {
+      const topics = await db<{ name: string }[]>`SELECT name FROM knowledge.concepts WHERE id = ANY(${inputIds}) AND status = 'active' ORDER BY id`;
+      if (topics.length) try {
+        const vector = await provider.embedQuery(topics.map((topic) => topic.name).join(", "));
+        if (!validVector(vector)) throw new Error("Invalid embedding provider response");
+        onboardingVector = vector;
+      }
+      catch { console.warn(JSON.stringify({ metric: "embedding_failure_count", count: 1, stage: "onboarding-profile" })); }
+    }
     const result = await db.begin(async (tx) => {
       const [lock] = await tx<{ locked: boolean }[]>`SELECT pg_try_advisory_xact_lock(hashtextextended(${`learner-profile:${userId}`}, 0)) locked`;
       if (!lock?.locked) return null;
       const [settings] = await tx<{ learning_preferences: Record<string, unknown>; onboarding_completed_at: Date }[]>`SELECT learning_preferences, onboarding_completed_at FROM identity.user_settings WHERE user_id = ${userId}`;
       if (!settings) return null;
-      const [previous] = await tx<{ state: Record<string, unknown>; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${userId}`;
+      const [previous] = await tx<{ state: Record<string, unknown>; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${userId} AND state->>'version' = ${config.version}`;
       const preferences = settings.learning_preferences;
       const coreIds = Array.isArray(preferences.conceptIds) ? preferences.conceptIds as string[] : [];
       let learning = previous?.state.learning as CompactLearningState | undefined;
-      learning ??= { longTermInterests: Object.fromEntries(coreIds.map((id) => [id, 1])), recentInterests: {}, longTermVector: null, recentVector: null, evidence: 0, updatedAt: new Date().toISOString() };
+      // Explicit interests live in preferences. These weights contain behaviour only.
+      learning ??= { longTermInterests: {}, recentInterests: {}, onboardingVector: null, longTermVector: null, recentVector: null, evidence: 0, updatedAt: new Date().toISOString() };
+      const currentKey = JSON.stringify(coreIds.slice().sort());
       const previousIds = (previous?.state.preferences as { conceptIds?: string[] } | undefined)?.conceptIds ?? [];
-      const interestsChanged = Boolean(previous) && JSON.stringify(previousIds.slice().sort()) !== JSON.stringify(coreIds.slice().sort());
-      if (interestsChanged) {
-        for (const id of coreIds) if (!previousIds.includes(id)) learning.longTermInterests[id] = Math.max(1, learning.longTermInterests[id] ?? 0);
-        // Preserve learned interests, but rebuild the onboarding vector after an explicit profile edit.
-        learning.longTermVector = null;
-      }
-      const coreTopics = await tx<{ id: string; name: string; slug: string; kind: string }[]>`SELECT id, name, slug, kind FROM knowledge.concepts WHERE id = ANY(${coreIds}) AND status = 'active'`;
-      if (!learning.longTermVector && coreTopics.length && provider) {
-        try { learning.longTermVector = await provider.embedQuery(coreTopics.map((topic) => topic.name).join(", ")); }
-        catch { console.warn(JSON.stringify({ metric: "embedding_failure_count", count: 1, stage: "onboarding-profile" })); }
-      }
+      const previousVector = learning.onboardingVector;
+      if (JSON.stringify(previousIds.slice().sort()) !== currentKey) learning.onboardingVector = null;
+      if (currentKey === inputKey) learning.onboardingVector = onboardingVector;
       const events = await tx<{ id: string; resource_id: string | null; concept_id: string | null; event_type: string; payload: Record<string, unknown>; occurred_at: Date; embedding: string | null; duration_ms: number | null; metadata: Record<string, unknown>; concept_weights: Record<string, number> }[]>`
         SELECT a.id, a.resource_id, a.concept_id, a.event_type, a.payload, a.occurred_at, e.embedding, v.duration_ms, r.metadata,
           COALESCE((SELECT jsonb_object_agg(rc.concept_id::text, rc.relevance) FROM (SELECT concept_id, max(relevance) relevance FROM catalog.resource_concepts WHERE resource_id = a.resource_id AND relevance >= ${config.minimumTopicRelevance} GROUP BY concept_id) rc), '{}'::jsonb) concept_weights
@@ -83,20 +97,20 @@ export async function projectRecommendationProfiles(db: Sql, provider: Embedding
       }
       const tracked = [...new Set([...coreIds, ...Object.keys(learning.recentInterests), ...Object.keys(learning.longTermInterests)])].slice(0, config.profileTopicLimit);
       const [affinities, topics, mastery, goals, sessions, progress, dismissed, relations, ignoredImpressions, enrollments] = await Promise.all([
-        tx`SELECT * FROM discovery.user_concept_affinity WHERE user_id = ${userId} ORDER BY confidence DESC LIMIT 100`,
-        tx`SELECT id, name, slug, kind, canonical_parent_id FROM knowledge.concepts WHERE id = ANY(${tracked}) AND status = 'active'`,
-        tx`SELECT concept_id, score, uncertainty, evidence_count, next_review_at, updated_at FROM knowledge.concept_mastery WHERE user_id = ${userId} ORDER BY updated_at DESC LIMIT 100`,
-        tx`SELECT primary_concept_id FROM study.learning_goals WHERE user_id = ${userId} AND status = 'active' LIMIT 10`,
-        tx`SELECT s.active_resource_id, ARRAY(SELECT concept_id FROM catalog.resource_concepts WHERE resource_id = s.active_resource_id AND relevance >= .35) concept_ids FROM study.study_sessions s WHERE s.user_id = ${userId} AND s.status IN ('active','paused') ORDER BY s.last_active_at DESC LIMIT 3`,
-        tx`SELECT resource_id, progress_pct, completed_at, updated_at FROM study.user_resource_progress WHERE user_id = ${userId} ORDER BY updated_at DESC LIMIT 100`,
-        tx`SELECT resource_id FROM catalog.library_items WHERE user_id = ${userId} AND status = 'removed' ORDER BY updated_at DESC LIMIT 100`,
-        tx`SELECT source_concept_id, target_concept_id, relation_type FROM knowledge.concept_relations WHERE status = 'accepted' AND weight * confidence >= .5 AND (source_concept_id = ANY(${tracked}) OR target_concept_id = ANY(${tracked})) LIMIT 50`,
-        tx`SELECT i.resource_id, count(DISTINCT i.recommendation_run_id)::int count FROM discovery.recommendation_impressions i WHERE i.user_id = ${userId} AND i.shown_at > now() - interval '30 days' AND i.shown_at < now() - interval '12 hours' AND NOT EXISTS (SELECT 1 FROM discovery.discovery_interactions a WHERE a.user_id = ${userId} AND a.resource_id = i.resource_id AND a.occurred_at >= i.shown_at) GROUP BY i.resource_id HAVING count(*) > 1 LIMIT 100`,
-        tx`SELECT collection_id, current_item_id, status, progress_pct FROM catalog.collection_enrollments WHERE user_id = ${userId} ORDER BY updated_at DESC LIMIT 20`,
+        tx`SELECT * FROM discovery.user_concept_affinity WHERE user_id = ${userId} ORDER BY confidence DESC, concept_id LIMIT 100`,
+        tx`SELECT id, name, slug, kind, canonical_parent_id FROM knowledge.concepts WHERE id = ANY(${tracked}) AND status = 'active' ORDER BY id`,
+        tx`SELECT concept_id, score, uncertainty, evidence_count, next_review_at, updated_at FROM knowledge.concept_mastery WHERE user_id = ${userId} ORDER BY updated_at DESC, concept_id LIMIT 100`,
+        tx`SELECT primary_concept_id FROM study.learning_goals WHERE user_id = ${userId} AND status = 'active' ORDER BY id LIMIT 10`,
+        tx`SELECT s.active_resource_id, ARRAY(SELECT concept_id FROM catalog.resource_concepts WHERE resource_id = s.active_resource_id AND relevance >= .35 ORDER BY concept_id) concept_ids FROM study.study_sessions s WHERE s.user_id = ${userId} AND s.status IN ('active','paused') ORDER BY s.last_active_at DESC, s.id LIMIT 3`,
+        tx`SELECT resource_id, progress_pct, completed_at, updated_at FROM study.user_resource_progress WHERE user_id = ${userId} ORDER BY updated_at DESC, resource_id LIMIT 100`,
+        tx`SELECT resource_id FROM catalog.library_items WHERE user_id = ${userId} AND status = 'removed' ORDER BY updated_at DESC, resource_id LIMIT 100`,
+        tx`SELECT source_concept_id, target_concept_id, relation_type FROM knowledge.concept_relations WHERE status = 'accepted' AND weight * confidence >= .5 AND (source_concept_id = ANY(${tracked}) OR target_concept_id = ANY(${tracked})) ORDER BY source_concept_id, target_concept_id, relation_type LIMIT 50`,
+        tx`SELECT i.resource_id, count(DISTINCT i.recommendation_run_id)::int count FROM discovery.recommendation_impressions i WHERE i.user_id = ${userId} AND i.shown_at > now() - interval '30 days' AND i.shown_at < now() - interval '12 hours' AND NOT EXISTS (SELECT 1 FROM discovery.discovery_interactions a WHERE a.user_id = ${userId} AND a.resource_id = i.resource_id AND a.occurred_at >= i.shown_at) GROUP BY i.resource_id HAVING count(*) > 1 ORDER BY i.resource_id LIMIT 100`,
+        tx`SELECT collection_id, current_item_id, status, progress_pct FROM catalog.collection_enrollments WHERE user_id = ${userId} ORDER BY updated_at DESC, collection_id LIMIT 20`,
       ]);
-      const context = { mastery, goals, sessions, progress, dismissed, enrollments };
+      const context = { mastery, goals, sessions, progress, dismissed, enrollments, relations, ignoredImpressions };
       const previousContext = previous ? Object.fromEntries(Object.keys(context).map((key) => [key, previous.state[key]])) : null;
-      const meaningful = !previous || JSON.stringify(previousContext) !== JSON.stringify(context) || JSON.stringify(previous.state.preferences) !== JSON.stringify(preferences) || totalEvidence - Number(previous.state.publishedEvidence ?? 0) >= config.significantEvidence || events.some((event) => event.event_type === "discovery.dismissed");
+      const meaningful = !previous || JSON.stringify(previousVector) !== JSON.stringify(learning.onboardingVector) || JSON.stringify(previousContext) !== JSON.stringify(context) || JSON.stringify(previous.state.preferences) !== JSON.stringify(preferences) || totalEvidence - Number(previous.state.publishedEvidence ?? 0) >= config.significantEvidence || events.some((event) => event.event_type === "discovery.dismissed");
       const state = { observedPreferences, totalEvidence, publishedEvidence: meaningful ? totalEvidence : previous?.state.publishedEvidence ?? 0, version: config.version, learning, preferences, onboardingAt: settings.onboarding_completed_at.toISOString(), topics, affinities, mastery, goals, sessions, progress, dismissed, relations, ignoredImpressions, enrollments };
       const [row] = await tx<{ revision: number }[]>`INSERT INTO discovery.learner_profiles (user_id, state) VALUES (${userId}, ${tx.json(state as unknown as postgres.JSONValue)}) ON CONFLICT (user_id) DO UPDATE SET state = EXCLUDED.state, revision = discovery.learner_profiles.revision + ${meaningful ? 1 : 0}, updated_at = now() RETURNING revision`;
       return { state, revision: row!.revision, meaningful };

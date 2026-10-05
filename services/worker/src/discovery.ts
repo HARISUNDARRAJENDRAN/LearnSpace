@@ -1,3 +1,6 @@
+import { writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import { RECOMMENDATION_CONFIG as recommendationConfig, semanticRecommendationsEnabled } from "@learnspace/shared/recommendation-config";
 import { redisCommands, recommendationCatalogKey } from "@learnspace/shared/recommendation-cache";
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -791,7 +794,7 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
   }
 }
 
-export async function runDiscoveryWorker(): Promise<JsonObject> {
+export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}): Promise<JsonObject> {
   const databaseUrl = process.env.DATABASE_WORKER_URL;
   const agentUrl = process.env.DISCOVERY_AGENT_URL;
   const token = process.env.INTERNAL_SERVICE_TOKEN;
@@ -801,12 +804,14 @@ export async function runDiscoveryWorker(): Promise<JsonObject> {
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
-    await recommendationMaintenance(sql);
     const reclaimedCount = await reclaimExpiredJobs(sql);
     const scheduledCount = await scheduleDueRefreshes(sql);
     const promotedJobId = await promoteOutbox(sql);
     const job = await claimJob(sql, workerId);
-    if (!job) return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
+    if (!job) {
+      if (options.maintenance !== false) await recommendationMaintenance(sql);
+      return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
+    }
     try {
       if (job.job_type === "discovery.persist_candidates") {
         const candidateBatch = objectValue(job.payload.candidate_batch);
@@ -851,21 +856,37 @@ export async function runDiscoveryWorkerLoop(options: { maxJobs?: number; interv
   const intervalMs = options.intervalMs ?? configuredNumber("DISCOVERY_WORKER_INTERVAL_MS", 30_000, 1_000, 300_000);
   let processed = 0;
   let scheduled = 0;
-  while (!options.signal?.aborted && (maxJobs <= 0 || processed < maxJobs)) {
-    let result: JsonObject;
-    try {
-      result = await runDiscoveryWorker();
-    } catch {
-      if (maxJobs > 0) processed += 1;
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      continue;
+  let maintenance: Promise<void> | null = null;
+  let nextMaintenance = 0;
+  const pause = () => delay(intervalMs, undefined, { signal: options.signal }).catch((error) => {
+    if (!options.signal?.aborted) throw error;
+  });
+  try {
+    while (!options.signal?.aborted && (maxJobs <= 0 || processed < maxJobs)) {
+      let result: JsonObject;
+      try {
+        result = await runDiscoveryWorker({ maintenance: false });
+      } catch (error) {
+        console.warn(JSON.stringify({ metric: "discovery_worker_failure", error: error instanceof Error ? error.message : "job failed" }));
+        if (maxJobs > 0) processed += 1;
+        await pause();
+        continue;
+      }
+      if (process.env.WORKER_HEARTBEAT_PATH) await writeFile(process.env.WORKER_HEARTBEAT_PATH, String(Date.now()));
+      console.info(JSON.stringify({ metric: "discovery_worker_tick", status: result.status, jobId: result.jobId }));
+      scheduled += typeof result.scheduledCount === "number" ? result.scheduledCount : 0;
+      // One maintenance batch may run beside queue processing. It owns one small
+      // pool; provider latency cannot monopolize the discovery queue connection.
+      if (!maintenance && semanticRecommendationsEnabled() && Date.now() >= nextMaintenance) {
+        nextMaintenance = Date.now() + recommendationConfig.maintenanceIntervalMs;
+        const db = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false, connect_timeout: 10 });
+        maintenance = recommendationMaintenance(db, options.signal)
+          .catch((error) => console.warn(JSON.stringify({ metric: "recommendation_maintenance_failure", error: error instanceof Error ? error.message : "maintenance failed" })))
+          .finally(async () => { await db.end({ timeout: 5 }); maintenance = null; });
+      }
+      if (result.status === "done") { processed += 1; continue; }
+      await pause();
     }
-    scheduled += typeof result.scheduledCount === "number" ? result.scheduledCount : 0;
-    if (result.status === "done") {
-      processed += 1;
-      continue;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
+  } finally { await maintenance; }
   return { status: options.signal?.aborted ? "stopped" : "complete", processed, scheduled };
 }

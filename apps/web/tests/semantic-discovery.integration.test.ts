@@ -20,8 +20,9 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
   const { backfillResourceEmbeddings } = await import(`${workerModules}recommendation-embeddings.js`);
   const { syncCuratedCatalog } = await import(`${workerModules}curated-catalog.js`);
   const db = postgres(process.env.DATABASE_MIGRATOR_URL!, { max: 2, prepare: false });
+  const singleWorker = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false });
   const worker = postgres(process.env.DATABASE_WORKER_URL!, { max: 2, prepare: false });
-  const users: string[] = [], resources: string[] = [], collections: string[] = [];
+  const users: string[] = [], resources: string[] = [], collections: string[] = [], relationIds: string[] = [];
   const metrics: Record<string, unknown> = {};
   const provider = { async embedQuery() { return axis(0); }, async embedDocuments(texts: string[]) { return texts.map(() => axis(0)); } };
   const profile = async (id: string) => (await db<{ state: any; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${id}`)[0]!;
@@ -59,16 +60,47 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.deepEqual(await backfillResourceEmbeddings(worker, provider, [last]), { embedded: 0, failed: 0 });
     await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = '[1,2]'::vector WHERE resource_id = ${last}`, /dimensions/);
     await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = ${JSON.stringify(Array(config.embeddingDimensions).fill(0))}::vector WHERE resource_id = ${last}`, /nonzero/);
+    // A slow external provider neither reserves the only connection nor locks
+    // resources, and a second worker cannot claim the same batch.
+    await db`DELETE FROM discovery.resource_embeddings WHERE resource_id = ${last}`;
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const providerEntered = new Promise<void>((resolve) => { entered = resolve; });
+    const slowBackfill = backfillResourceEmbeddings(singleWorker, { ...provider, async embedDocuments(texts: string[]) { entered(); await gate; return texts.map(() => axis(0)); } }, [last]);
+    await providerEntered;
+    try {
+      await singleWorker`SELECT 1`;
+      assert.deepEqual(await backfillResourceEmbeddings(worker, provider, [last]), { embedded: 0, failed: 0 }, "a concurrent worker respects the embedding lease");
+      await db.begin(async (tx) => {
+        await tx`SET LOCAL lock_timeout = '500ms'`;
+        await tx`UPDATE catalog.resources SET title = 'Updated while embedding', updated_at = now() WHERE id = ${last}`;
+      });
+    } finally { release(); }
+    assert.deepEqual(await slowBackfill, { embedded: 0, failed: 0 }, "changed content rejects an obsolete vector");
+    assert.deepEqual(await backfillResourceEmbeddings(worker, provider, [last]), { embedded: 1, failed: 0 });
     const immediate = await getHomeFeed(userId, "discover");
     assert.ok(immediate.sections.recommendedVideos.length > 0, "onboarding works before the background profile exists");
+    assert.equal(await projectRecommendationProfiles(worker, null, [userId]), 1);
+    const metadataOnly = await profile(userId);
+    assert.equal(metadataOnly.state.learning.onboardingVector, null);
+    assert.equal(await projectRecommendationProfiles(worker, { ...provider, async embedQuery() { return [NaN]; } }, [userId]), 1);
+    assert.equal((await profile(userId)).state.learning.onboardingVector, null, "invalid query vectors never enter learner state");
+    assert.equal((await profile(userId)).revision, metadataOnly.revision, "failed provider retries do not invalidate the feed");
+    const beforeRecovery = await getHomeFeed(userId, "discover");
     const started = performance.now();
-    assert.equal(await projectRecommendationProfiles(worker, provider, users), 2);
+    assert.equal(await projectRecommendationProfiles(singleWorker, {
+      ...provider,
+      async embedQuery() { await singleWorker`SELECT 1`; return axis(0); },
+    }, users), 2, "query embeddings run without reserving the only database connection");
     metrics.profileUpdateTwoUsersMs = performance.now() - started;
     let p = await profile(userId);
+    assert.equal(p.revision, metadataOnly.revision + 1, "a recovered onboarding vector revises the profile without new activity");
     assert.deepEqual(p.state.learning.recentInterests, {});
-    assert.equal(p.state.learning.longTermVector.length, 1536);
+    assert.equal(p.state.learning.onboardingVector.length, 1536);
+    assert.deepEqual(p.state.learning.longTermInterests, {}, "onboarding does not become behavioral evidence");
     assert.equal(await projectRecommendationProfiles(worker, provider, users), 0, "projection is restart-safe");
     const feed = await getHomeFeed(userId, "discover", { onTiming: (t) => { metrics.cacheMiss = t; } });
+    assert.notEqual(feed.runId, beforeRecovery.runId, "provider recovery invalidates the metadata-only cached feed");
     assert.ok(feed.sections.recommendedVideos.length >= 6);
     assert.ok(feed.sections.recommendedVideos.length <= 24);
     assert.equal(feed.personalization, "interests");
@@ -94,12 +126,40 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     metrics.profileUpdateTwentyEventsMs = performance.now() - updateStart;
     p = await profile(userId);
     assert.ok(p.state.learning.recentInterests[ai] > p.state.learning.recentInterests[python] || !p.state.learning.recentInterests[python]);
-    assert.ok(p.state.learning.longTermInterests[python] > 0);
+    assert.ok(p.state.learning.longTermInterests[ai] > 0);
+    assert.equal(p.state.learning.longTermInterests[python], undefined);
     assert.equal(await projectRecommendationProfiles(worker, provider, [userId]), 0);
     const shifted = await getHomeFeed(userId, "discover");
     assert.notEqual(shifted.runId, feed.runId);
     assert.equal(shifted.personalization, "learning");
     assert.ok(shifted.sections.interests.some((c) => c.id === ai));
+    // Removing an explicit preference retains genuinely learned interests only.
+    await db`UPDATE identity.user_settings SET learning_preferences = jsonb_set(learning_preferences,'{conceptIds}','[]'::jsonb), updated_at = now() WHERE user_id = ${userId}`;
+    await projectRecommendationProfiles(worker, provider, [userId]);
+    const removed = await profile(userId);
+    assert.deepEqual(removed.state.preferences.conceptIds, []);
+    assert.equal(removed.state.learning.onboardingVector, null);
+    assert.equal(removed.state.learning.longTermInterests[python], undefined);
+    assert.ok(removed.state.learning.longTermInterests[ai] > 0);
+    await db`UPDATE identity.user_settings SET learning_preferences = jsonb_set(learning_preferences,'{conceptIds}',${db.json([python])}), updated_at = now() WHERE user_id = ${userId}`;
+    await projectRecommendationProfiles(worker, provider, [userId]);
+    const { loadCompactProfile } = await import("../lib/discovery/compact-profile");
+    const recentSnapshot = (await profile(userId)).state;
+    const aged = { ...recentSnapshot, learning: { ...recentSnapshot.learning, recentInterests: { [ai]: .2 }, updatedAt: new Date(Date.now() - 28 * 86400000).toISOString() } };
+    await redisCommands([["DEL", recommendationProfileKey(userId)]]);
+    await db`UPDATE discovery.learner_profiles SET state = ${db.json(aged)} WHERE user_id = ${userId}`;
+    const expired = await withUserTransaction(userId, (tx) => loadCompactProfile(tx, userId));
+    assert.ok(expired.profileLoad.profile.recentInterests![ai]! < config.emergingInterestMinimum);
+    assert.ok(!expired.profileLoad.emergingConceptIds.includes(ai), "emerging classification expires with recent evidence");
+    await db`UPDATE discovery.learner_profiles SET state = ${db.json(recentSnapshot)} WHERE user_id = ${userId}`;
+    await redisCommands([["DEL", recommendationProfileKey(userId)]]);
+    const relationId = randomUUID();
+    relationIds.push(relationId);
+    const beforeRelation = await profile(userId);
+    await db`INSERT INTO knowledge.concept_relations (id,source_concept_id,target_concept_id,relation_type,created_by) VALUES (${relationId},${ai},${python},${`semantic-regression-${relationId}`},'integration')`;
+    assert.equal(await projectRecommendationProfiles(worker, provider, [userId]), 1);
+    assert.equal((await profile(userId)).revision, beforeRelation.revision + 1, "relation-only changes invalidate recommendations");
+    assert.equal(await projectRecommendationProfiles(worker, provider, [userId]), 0, "stable state does not repeatedly revise the profile");
     const focused = await getHomeFeed(userId, "discover", { topicId: ai });
     assert.ok(focused.sections.recommendedVideos.length > 0);
     const focusedIds = focused.sections.recommendedVideos.map((c) => c.resourceId);
@@ -121,6 +181,9 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await db`INSERT INTO catalog.collection_enrollments (user_id,collection_id,current_item_id,status,progress_pct) VALUES (${userId},${collectionId},${firstItem},'active',50)`;
     const candidates = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false));
     assert.ok(candidates.continuationIds.includes(resources[26]!), "continuation crosses sections and skips completed lessons");
+    await db`UPDATE catalog.collection_enrollments SET current_item_id = ${nextItem} WHERE user_id = ${userId} AND collection_id = ${collectionId}`;
+    const resume = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false));
+    assert.ok(resume.continuationIds.includes(resources[26]!), "the unfinished active lesson remains resumable");
     assert.ok(candidates.ids.length <= config.candidateCount);
     assert.equal(new Set(candidates.ids).size, candidates.ids.length);
     assert.equal(candidates.fallback, false);
@@ -128,6 +191,19 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await db`ALTER TABLE discovery.resource_embeddings RENAME TO unavailable_embeddings`;
     try { const fallback = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false)); assert.equal(fallback.fallback, true); assert.ok(fallback.ids.length > 0); }
     finally { await db`ALTER TABLE discovery.unavailable_embeddings RENAME TO resource_embeddings`; }
+    const impressionRuns = await db<{ recommendation_run_id: string; resource_id: string }[]>`
+      SELECT recommendation_run_id, resource_id FROM discovery.recommendation_candidates
+      WHERE recommendation_run_id IN (${feed.runId}, ${shifted.runId}) AND resource_id NOT IN
+        (SELECT resource_id FROM discovery.discovery_interactions WHERE user_id = ${userId})
+      AND resource_id IN (SELECT resource_id FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${feed.runId}, ${shifted.runId}) GROUP BY resource_id HAVING count(*) = 2)
+      ORDER BY resource_id, recommendation_run_id LIMIT 2`;
+    assert.equal(impressionRuns.length, 2);
+    for (const row of impressionRuns) await db`INSERT INTO discovery.recommendation_impressions (recommendation_run_id,user_id,resource_id,position,surface,shown_at) VALUES (${row.recommendation_run_id},${userId},${row.resource_id},0,'discover',now() - interval '13 hours') ON CONFLICT DO NOTHING`;
+    await db`UPDATE discovery.learner_profiles SET updated_at = now() - interval '2 hours' WHERE user_id = ${userId}`;
+    const beforeIgnored = await profile(userId);
+    await projectRecommendationProfiles(worker, provider, [userId]);
+    assert.equal((await profile(userId)).revision, beforeIgnored.revision + 1, "ignored-impression-only changes invalidate the feed");
+    await getHomeFeed(userId, "discover");
     const cached = await readRecommendationCache<any>(userId);
     assert.ok(cached.entry);
     await writeRecommendationCache({ ...cached.entry!, freshUntil: Date.now() - 1 });
@@ -151,6 +227,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await writeFile("../../docs/benchmarks/semantic-integration.json", JSON.stringify(metrics, null, 2));
   } catch (error) { console.error("semantic integration failure", error); throw error; } finally {
     try {
+    if (relationIds.length) await db`DELETE FROM knowledge.concept_relations WHERE id = ANY(${relationIds}::uuid[])`;
     for (const id of users) {
       await redisCommands([["DEL", recommendationCacheKey(id), recommendationProfileKey(id)]]);
       await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${id}`;
@@ -172,7 +249,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await db`DELETE FROM catalog.video_details WHERE resource_id = ANY(${resources}::uuid[])`;
     await db`DELETE FROM catalog.resources WHERE id = ANY(${resources}::uuid[])`;
     } finally {
-      await Promise.all([worker.end(), db.end(), closeDb(), closeRecommendationRedis()]);
+      await Promise.all([singleWorker.end(), worker.end(), db.end(), closeDb(), closeRecommendationRedis()]);
       if (previousTestMode === undefined) delete process.env.AUTH_TEST_MODE;
       else process.env.AUTH_TEST_MODE = previousTestMode;
     }

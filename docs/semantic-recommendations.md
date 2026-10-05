@@ -180,3 +180,58 @@ Backfill requires `DATABASE_WORKER_URL` and a working `OPENAI_API_KEY`. The scal
 **LearnSpace needs now:** provider quota restored, bounded backfill completed, observed fallback/cache/worker-backlog metrics, and real retention/exercise/completion outcomes to calibrate the current utility weights. Measure ANN recall and production percentile latency on actual embeddings before making capacity claims.
 
 **After substantial real interaction data exists:** consider offline item-item or implicit collaborative signals, then a small asynchronous sequence encoder if history volume supports it. Their outputs should become additional compact retrieval/ranking features. Keep online serving as cached state → bounded retrieval → deterministic ranking; introducing another service or per-request model is unnecessary for this implementation.
+
+## H. Resumed worker and recommendation work — 5 October 2026
+
+The uncommitted work after `6c1e50a` covers semantic-learning-v2 hardening and
+continuous AWS worker hosting. Onboarding now has its own vector rather than
+becoming behavioral evidence. Removing an explicit preference preserves only
+interests supported by learning activity. Emerging interests expire with recent
+evidence; graph and ignored-impression changes revise the compact profile.
+
+Embedding calls run outside resource/profile transactions. Resource claims use
+bounded leases with timestamp claim tokens, reject changed content, and keep
+the discovery queue moving while maintenance awaits a provider. The worker
+publishes a heartbeat and closes Redis when stopped.
+
+The resumed review fixed two remaining defects:
+
+- A restored onboarding embedding was neither retried promptly nor considered
+  a meaningful change. Provider-available maintenance now retries missing
+  onboarding vectors, validates query output, and invalidates the cached feed
+  when a vector arrives. Failed retries leave the recommendation revision alone.
+- Production Docker builds copied stale `.tsbuildinfo` files while excluding
+  `dist`, so the compiler reported success without emitting the worker runtime.
+  Docker now excludes that metadata. CI builds and imports the packaged worker,
+  checks its curriculum file, and checks that it runs without root.
+
+Worker deployment verification also checks the active task's exact build SHA
+and image digest, rejecting a stable older service. CI includes isolated tests
+for preserving runtime secrets and rejecting mismatched releases.
+
+Verification after these fixes:
+
+- All five workspace typechecks and lint commands passed; lint retains existing
+  non-null-assertion warnings in the recommendation tests.
+- The complete workspace production build passed, including all 41 Next.js
+  static pages and compiled shared/database/worker packages.
+- 28 recommendation tests and 12 worker tests passed, including real
+  PostgreSQL/Redis integration on an isolated database and slow-provider checks.
+- A fresh database passed the full migration chain, schema/RLS verification,
+  and development seed.
+- Two worker deployment tests and ten discovery deployment tests passed. Worker
+  Python lint and deployment shell syntax passed.
+- The production worker image built, imported its compiled dependencies, ran
+  with UID 1001 against the isolated database, wrote a fresh heartbeat, and
+  shut down cleanly on SIGTERM.
+- AWS accepted the worker CloudFormation template. Access Analyzer reported no
+  findings for the checked-in deployment policy. The live GitHub deployment
+  role already contains the worker permission statements.
+
+The cloud rollout remains pending: neither `learnspace-worker-staging` stack nor
+ECS cluster exists in the account. This review did not publish or deploy the
+uncommitted code. A fresh query-embedding request from the current worker
+returned provider HTTP 429; stored errors also include earlier connection
+failures. Live semantic backfill and
+hosted worker smoke verification require a working embedding provider and an
+actual worker release; local deterministic-vector tests do not establish them.

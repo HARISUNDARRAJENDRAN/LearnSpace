@@ -28,6 +28,10 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run build
+      - name: Verify the packaged worker runtime
+        run: |
+          docker build --target worker --tag learnspace-worker:ci .
+          docker run --rm --entrypoint node learnspace-worker:ci --input-type=module -e "import './dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
 
   database:
     runs-on: ubuntu-latest
@@ -116,7 +120,9 @@ jobs:
       - run: uv run pytest
       - run: uv run ruff check ../../infra/aws/discovery-agent
       - run: uv run python -m unittest discover -s ../../infra/aws/discovery-agent -p 'test_*.py'
-      - run: for script in ../../infra/aws/discovery-agent/*.sh; do bash -n "$script"; done
+      - run: for script in ../../infra/aws/discovery-agent/*.sh ../../infra/aws/worker/*.sh; do bash -n "$script"; done
+      - run: uv run ruff check ../../infra/aws/worker
+      - run: uv run python -m unittest discover -s ../../infra/aws/worker -p 'test_*.py'
 
   deploy-agent:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
@@ -137,7 +143,6 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Check AWS deployment configuration
-        id: aws_config
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
           AWS_EXA_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
@@ -146,28 +151,21 @@ jobs:
           missing=0
           for variable in AWS_ROLE_ARN AWS_EXA_SECRET_ARN AWS_INTERNAL_TOKEN_SECRET_ARN; do
             if [ -z "${!variable}" ]; then
-              echo "::warning title=AWS discovery deployment skipped::$variable is not configured. Vercel deployment will continue; run the manual discovery-agent workflow after configuring GitHub OIDC."
+              echo "::error::$variable is not configured; deployment cannot be verified."
               missing=1
             fi
           done
-          if [ "$missing" -eq 0 ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
+          if [ "$missing" -ne 0 ]; then exit 1; fi
       - name: Configure AWS credentials
-        if: steps.aws_config.outputs.ready == 'true'
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
       - name: Deploy the tested discovery agent
-        if: steps.aws_config.outputs.ready == 'true'
         run: |
           bash infra/aws/discovery-agent/deploy.sh
           echo "AGENT_DEPLOYED build=$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify the instant discovery route
-        if: steps.aws_config.outputs.ready == 'true'
         run: |
           # AgentUrl is a literal in the JMESPath expression.
           # shellcheck disable=SC2016
@@ -185,13 +183,10 @@ jobs:
             exit 1
           fi
           echo "AGENT_VERIFIED build=$GITHUB_SHA protocol=source-discovery-v3 schema=1" >> "$GITHUB_STEP_SUMMARY"
-      - name: Report agent deployment skipped
-        if: steps.aws_config.outputs.ready != 'true'
-        run: echo "AGENT_SKIPPED — AWS discovery deployment credentials are not configured; no agent verification was claimed." >> "$GITHUB_STEP_SUMMARY"
 
   deploy-vercel:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
-    needs: [foundation, database, python]
+    needs: [foundation, database, python, deploy-agent]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -234,3 +229,50 @@ jobs:
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: pnpm dlx --allow-build=esbuild vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
+
+  deploy-worker:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [deploy-vercel]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      WORKER_RUNTIME_SECRET_ARN: arn:aws:secretsmanager:us-east-1:934685482023:secret:learnspace/staging/worker/runtime-fEGrXW
+      INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
+      DISCOVERY_AGENT_URL: ${{ secrets.STAGING_DISCOVERY_AGENT_URL }}
+      DATABASE_WORKER_URL: ${{ secrets.STAGING_DATABASE_WORKER_URL }}
+      WORKER_VPC_ID: vpc-02c4dca1203de4511
+      WORKER_SUBNET_IDS: subnet-08f5e6209ec1bf17f,subnet-00acc9ce2c21bed83
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
+      - name: Configure private worker runtime
+        run: python3 infra/aws/worker/configure-runtime.py
+      - name: Deploy and verify the continuous worker
+        run: bash infra/aws/worker/deploy.sh
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @learnspace/shared build
+      - name: Hosted smoke through the deployed worker and authenticated web app
+        run: pnpm discovery:smoke
+        env:
+          DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
+          INTERNAL_SERVICE_TOKEN: ${{ secrets.STAGING_INTERNAL_SERVICE_TOKEN }}
+          DISCOVERY_SMOKE_WEB_URL: https://learnspace-staging.vercel.app
+          DISCOVERY_SMOKE_EMAIL: ${{ secrets.STAGING_DISCOVERY_SMOKE_EMAIL }}
+          DISCOVERY_SMOKE_PASSWORD: ${{ secrets.STAGING_DISCOVERY_SMOKE_PASSWORD }}
+          DISCOVERY_SMOKE_REQUIRE_PROVIDER: "true"
+          DISCOVERY_SMOKE_EXTERNAL_WORKER: "true"
+          DISCOVERY_SMOKE_TIMEOUT_MS: "360000"

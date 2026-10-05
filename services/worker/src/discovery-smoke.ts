@@ -154,7 +154,7 @@ async function main(): Promise<void> {
     const deadline = Date.now() + Number(process.env.DISCOVERY_SMOKE_TIMEOUT_MS ?? 120_000);
     while (Date.now() < deadline) {
       try {
-        await runDiscoveryWorker();
+        if (process.env.DISCOVERY_SMOKE_EXTERNAL_WORKER !== "true") await runDiscoveryWorker();
       } catch {
         await sleep(2_000);
       }

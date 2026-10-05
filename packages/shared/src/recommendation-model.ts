@@ -88,6 +88,7 @@ export function personalizationWeights(affinities: Iterable<LearnerAffinity>, on
 export type CompactLearningState = {
   longTermInterests: Record<string, number>;
   recentInterests: Record<string, number>;
+  onboardingVector?: number[] | null;
   longTermVector: number[] | null;
   recentVector: number[] | null;
   evidence: number;
@@ -117,12 +118,19 @@ export function updateVector(previous: number[] | null, resource: number[], stre
 export function retrievalVector(state: CompactLearningState): number[] | null {
   const recent = validVector(state.recentVector) ? state.recentVector : null;
   const longTerm = validVector(state.longTermVector) ? state.longTermVector : null;
-  if (!recent) return longTerm;
-  if (!longTerm) return recent;
+  const onboarding = validVector(state.onboardingVector) ? state.onboardingVector : null;
   const recentAge = Math.max(0, Date.now() - Date.parse(state.updatedAt)) / 86400000;
-  const recentWeight = config.recentShare * (state.evidence / (state.evidence + config.recentEvidenceScale)) * .5 ** (recentAge / config.recentHalfLifeDays);
-  const blended = recent.map((value, index) => value * recentWeight + longTerm[index]! * config.longTermShare);
-  return blended.some((value) => value !== 0) ? normalizeVector(blended) : longTerm;
+  const evidence = state.evidence / (state.evidence + config.recentEvidenceScale);
+  const recentWeight = config.recentShare * evidence * .5 ** (recentAge / config.recentHalfLifeDays);
+  const vectors = [
+    { vector: onboarding, weight: 1 - evidence },
+    { vector: longTerm, weight: config.longTermShare * evidence },
+    { vector: recent, weight: recentWeight },
+  ].filter((item) => item.vector && item.weight > 0);
+  if (!vectors.length) return longTerm ?? recent ?? onboarding;
+  const blended = Array.from({ length: config.embeddingDimensions }, (_, index) =>
+    vectors.reduce((sum, item) => sum + item.vector![index]! * item.weight, 0));
+  return blended.some((value) => value !== 0) ? normalizeVector(blended) : longTerm ?? onboarding ?? recent;
 }
 
 export function updateLearningState(previous: CompactLearningState, observation: LearnerObservation, conceptWeights: Record<string, number>, resourceVector: number[] | null, now: Date): CompactLearningState {
@@ -141,6 +149,7 @@ export function updateLearningState(previous: CompactLearningState, observation:
   };
   const positiveVector = resourceVector && signal.positive > 0;
   return {
+    onboardingVector: previous.onboardingVector ?? null,
     longTermInterests: updateInterests(previous.longTermInterests, config.longTermHalfLifeDays),
     recentInterests: updateInterests(previous.recentInterests, config.recentHalfLifeDays),
     longTermVector: positiveVector ? updateVector(previous.longTermVector, resourceVector, signal.positive * config.longTermVectorAlphaScale * .5 ** (lag / config.longTermHalfLifeDays)) : previous.longTermVector,

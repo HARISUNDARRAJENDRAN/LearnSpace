@@ -30,13 +30,13 @@ export async function loadCompactProfile(tx: Transaction, userId: string): Promi
   const coreIds = strings(preferences.conceptIds);
   const learning = state.learning as CompactLearningState | undefined;
   const topics = rows(state.topics).map((row) => ({ id: String(row.id), name: String(row.name), slug: String(row.slug), kind: String(row.kind) }));
-  const emergingIds = Object.entries(learning?.recentInterests ?? {}).filter(([id, weight]) => !coreIds.includes(id) && weight >= config.emergingInterestMinimum).map(([id]) => id);
+  const ageDays = learning ? Math.max(0, Date.now() - Date.parse(learning.updatedAt)) / 86400000 : 0;
+  const recent = Object.fromEntries(Object.entries(learning?.recentInterests ?? {}).map(([id, weight]) => [id, weight * .5 ** (ageDays / config.recentHalfLifeDays)]));
+  const emergingIds = Object.entries(recent).filter(([id, weight]) => !coreIds.includes(id) && weight >= config.emergingInterestMinimum).map(([id]) => id);
   const sessionRows = rows(state.sessions);
   const relations = rows(state.relations);
   const tracked = [...new Set([...coreIds, ...emergingIds, ...sessionRows.flatMap((row) => strings(row.concept_ids))])];
-  const adjacentIds = [...new Set(relations.flatMap((row) => [String(row.source_concept_id), String(row.target_concept_id)]))].filter((id) => !tracked.includes(id));
-  const ageDays = learning ? Math.max(0, Date.now() - Date.parse(learning.updatedAt)) / 86400000 : 0;
-  const recent = Object.fromEntries(Object.entries(learning?.recentInterests ?? {}).map(([id, weight]) => [id, weight * .5 ** (ageDays / config.recentHalfLifeDays)]));
+  const adjacentIds = [...new Set(relations.filter((row) => tracked.includes(String(row.source_concept_id)) || tracked.includes(String(row.target_concept_id))).flatMap((row) => [String(row.source_concept_id), String(row.target_concept_id)]))].filter((id) => !tracked.includes(id));
   const profile: LearnerProfile = {
     conceptIds: coreIds, coreConceptIds: coreIds, emergingConceptIds: emergingIds, adjacentConceptIds: adjacentIds,
     conceptNames: new Map(topics.map((topic) => [topic.id, topic.name])), recentInterests: recent, longTermInterests: Object.fromEntries(Object.entries(learning?.longTermInterests ?? {}).map(([id, weight]) => [id, weight * .5 ** (ageDays / config.longTermHalfLifeDays)])), semanticRanking: true,

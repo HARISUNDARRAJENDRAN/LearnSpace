@@ -50,9 +50,11 @@ Configure these GitHub Actions secrets:
 - `VERCEL_PROJECT_ID`
 - `VERCEL_TOKEN`
 
-The main workflow deploys Vercel independently after the foundation,
-database, and Python checks pass. AWS discovery deployment is a separate
-release job, so missing AWS credentials no longer block the web deployment.
+The main workflow verifies the foundation, database, and Python checks, then
+deploys and verifies the AWS discovery agent, deploys Vercel, and finally
+deploys the continuous AWS worker. Missing AWS configuration fails the release.
+Foundation checks also build and import the packaged production worker so a
+successful TypeScript check cannot mask missing runtime files.
 
 To deploy the discovery agent from main as well, also configure:
 
@@ -90,11 +92,9 @@ pnpm --filter @learnspace/web discovery:import:youtube-dataset -- --input ./educ
 ```
 
 The discovery agent is the AWS Lambda function
-`learnspace-discovery-agent-staging` in `us-east-1`. When the AWS OIDC secrets
-are configured, main-branch CI deploys and verifies the tested agent image in
-its own release job. The Vercel release remains independent so an AWS
-credential or OIDC outage does not prevent a web deployment. The manual
-workflow remains available for recovery. The CloudFormation stack output is
+`learnspace-discovery-agent-staging` in `us-east-1`. Main-branch CI deploys and
+verifies the tested agent image before releasing the web application. The
+manual workflow remains available for recovery. The CloudFormation stack output is
 the current API Gateway URL with a bounded stage throttle. The refresh, instant,
 and version routes remain protected by
 `INTERNAL_SERVICE_TOKEN`. The discovery worker uses the same worker connection
@@ -131,7 +131,40 @@ hours. It requires `STAGING_DATABASE_WORKER_URL`,
 `ai-machine-learning` concept, executes the real worker-to-agent path, verifies
 a persisted candidate, logs in as the completed staging learner, and confirms
 the candidate appears in the Home API before cleaning up with the migrator
-connection. It is separate from pull-request CI.
+connection. It is separate from pull-request CI and waits for the continuous
+hosted worker to process the job; it does not start a transient worker.
 
 The worker never needs `DATABASE_MIGRATOR_URL`; migrations remain a separate
 controlled job.
+
+## Continuous worker release
+
+`infra/aws/worker/template.yaml` defines one Fargate worker in `us-east-1`,
+using 0.25 vCPU and 512 MiB. It has no inbound access and uses the existing
+hosted PostgreSQL, Redis REST cache, and discovery agent. A heartbeat checks
+queue progress; embedding maintenance uses a separate connection and cannot
+hold up the discovery queue. The task runs without root and shuts down on
+SIGTERM.
+
+CI reads `STAGING_DATABASE_WORKER_URL` and updates only that field in the
+existing `learnspace/staging/worker/runtime` Secrets Manager JSON. The secret
+must also contain `OPENAI_API_KEY`, `KV_REST_API_URL`, and `KV_REST_API_TOKEN`.
+The internal service token remains in the discovery agent's separate secret.
+The checked-in GitHub deployment policy includes the scoped worker permissions.
+
+`infra/aws/worker/deploy.sh` publishes an immutable commit-tagged ECR image,
+deploys its digest through CloudFormation, waits for a stable service, and
+verifies both its build SHA and image digest. The following hosted smoke uses
+the persistent worker and authenticated Vercel app before claiming success.
+
+For a manual release, provide `AWS_REGION`, `GITHUB_SHA`,
+`WORKER_RUNTIME_SECRET_ARN`, `INTERNAL_SERVICE_TOKEN_SECRET_ARN`,
+`DISCOVERY_AGENT_URL`, `WORKER_VPC_ID`, and `WORKER_SUBNET_IDS`, then run
+`bash infra/aws/worker/deploy.sh` from the repository root. Updating the database
+credential separately requires `DATABASE_WORKER_URL` and
+`python3 infra/aws/worker/configure-runtime.py`.
+
+On 5 October 2026, the worker template passed AWS validation and the deployment
+policy passed Access Analyzer with no findings. Neither the worker stack nor
+ECS cluster existed yet. Local production-image verification is recorded in
+`docs/semantic-recommendations.md`; it is not a hosted deployment claim.

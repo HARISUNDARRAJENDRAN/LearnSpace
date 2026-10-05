@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import test, { after } from "node:test";
 import { closeRecommendationRedis } from "@learnspace/shared/recommendation-cache";
 import postgres from "postgres";
-import { runDiscoveryWorker } from "./discovery.js";
+import { runDiscoveryWorker, runDiscoveryWorkerLoop } from "./discovery.js";
 
 const databaseAvailable = Boolean(process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_WORKER_URL);
 after(closeRecommendationRedis);
@@ -191,8 +191,42 @@ test(
             },
           })}, ${instantTraceId}, ${randomUUID()})
       `;
-      const instantResult = await runDiscoveryWorker();
-      assert.equal(instantResult.status, "done");
+      const originalFetch = globalThis.fetch;
+      const originalKey = process.env.OPENAI_API_KEY;
+      const originalSemantic = process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED;
+      process.env.OPENAI_API_KEY = "worker-integration-key";
+      process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED = "true";
+      let release!: () => void, entered!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const providerEntered = new Promise<void>((resolve) => { entered = resolve; });
+      globalThis.fetch = async (input, init) => {
+        if (String(input) !== "https://api.openai.com/v1/embeddings") return originalFetch(input, init);
+        entered(); await gate;
+        const count = (JSON.parse(String(init?.body)) as { input: string[] }).input.length;
+        return new Response(JSON.stringify({ data: Array.from({ length: count }, (_, index) => ({ index, embedding: Array.from({ length: 1536 }, (_, i) => i === 0 ? 1 : 0) })) }), { status: 200, headers: { "content-type": "application/json" } });
+      };
+      // Claim one immediate job, then keep maintenance waiting on the provider.
+      // A second queued job must finish before that provider is released.
+      const stop = new AbortController();
+      const loop = runDiscoveryWorkerLoop({ signal: stop.signal, intervalMs: 1000 });
+      try {
+        await Promise.race([providerEntered, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error("maintenance did not reach the provider")), 10000); timer.unref(); })]);
+        const queuedId = randomUUID();
+        await migrator`INSERT INTO ops.jobs (id,queue,job_type,payload,status,priority,trace_id) VALUES (${queuedId},'discovery','discovery.persist_candidates',${migrator.json({ candidate_batch: { trace_id: traceId, youtube: [], arxiv: [], failures: [] } })},'pending',100,${traceId})`;
+        const deadline = Date.now() + 5000;
+        let done = false;
+        while (Date.now() < deadline) {
+          const [job] = await migrator<{ status: string }[]>`SELECT status FROM ops.jobs WHERE id = ${queuedId}`;
+          if (job?.status === "done") { done = true; break; }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        assert.ok(done, "a slow embedding provider cannot starve queued discovery jobs");
+      } finally {
+        stop.abort(); release(); await loop;
+        globalThis.fetch = originalFetch;
+        restoreEnv("OPENAI_API_KEY", originalKey);
+        restoreEnv("LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED", originalSemantic);
+      }
       const [instantRun] = await migrator<{ status: string; refresh_status: string }[]>`
         SELECT status, context_snapshot->>'refreshStatus' AS refresh_status
         FROM discovery.recommendation_runs WHERE id = ${instantRunId}
