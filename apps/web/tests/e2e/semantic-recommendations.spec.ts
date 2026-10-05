@@ -9,12 +9,14 @@ test("signup → interests → Discover preview → full feed → topic controls
   const worker = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false });
   const workerModules = "../../../../services/worker/dist/";
   const { projectRecommendationProfiles } = await import(`${workerModules}recommendation-profiles.js`);
+  const { syncCuratedCatalog } = await import(`${workerModules}curated-catalog.js`);
   const resources: string[] = [];
   const email = `semantic-browser-${randomUUID()}@example.test`;
   let userId: string | null = null;
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   try {
+    await syncCuratedCatalog(worker);
     const concepts = await db<{ id: string; slug: string }[]>`SELECT id, slug FROM knowledge.concepts WHERE slug IN ('python','ai-machine-learning','physics')`;
     const ai = concepts.find((c) => c.slug === "ai-machine-learning")!.id;
     const physics = concepts.find((c) => c.slug === "physics")!.id;
@@ -59,12 +61,18 @@ test("signup → interests → Discover preview → full feed → topic controls
     await expect(page).toHaveURL(/\/app\/discover\/for-you$/);
     await expect(page.getByRole("heading", { name: "Recommended for you", level: 1 })).toBeVisible();
     const full = page.locator("article.discovery-card");
-    await expect(full).toHaveCount(24);
-    expect((await full.locator("h3").allTextContents()).slice(0, 6)).toEqual(previewTitles);
     const firstResponse = await page.request.get("/api/v1/discovery/explore");
     expect(firstResponse.ok()).toBe(true);
     expect(firstResponse.headers()["server-timing"]).toContain("total;dur=");
     const first = await firstResponse.json();
+    const recommended = first.sections.recommendedVideos as { resourceId: string }[];
+    expect(recommended.length).toBeGreaterThan(6);
+    expect(recommended.length).toBeLessThanOrEqual(24);
+    await expect(full).toHaveCount(recommended.length);
+    expect((await full.locator("h3").allTextContents()).slice(0, 6)).toEqual(previewTitles);
+    if (process.env.PLAYWRIGHT_E2E_SERVER === "production") {
+      expect(recommended.every((card) => !resources.includes(card.resourceId))).toBe(true);
+    }
     const second = await (await page.request.get("/api/v1/discovery/explore")).json();
     expect(second.runId).toBe(first.runId);
     expect(JSON.stringify(second)).not.toMatch(/longTermVector|recentVector|positiveWeight|featureSnapshots|"score"/);

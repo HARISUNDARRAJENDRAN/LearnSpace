@@ -108,11 +108,12 @@ export async function seedHomeFixture(database: Database, populated = true): Pro
     weekStart.setUTCHours(0, 0, 0, 0);
     weekStart.setUTCDate(weekStart.getUTCDate() - ((weekStart.getUTCDay() + 6) % 7));
     const lastWeek = new Date(weekStart.getTime() - 6 * 86_400_000);
+    const thisWeekAgo = (days: number) => new Date(Math.max(weekStart.getTime(), ago(days).getTime()));
     for (const [sessionId, resourceId, mode, duration, startedAt] of [
-      [heroSession, hero, "guided_learning", 240, ago(.04)],
-      [olderSession, olderVideo, "practice", 120, ago(.04)],
-      [paperSession, paper, "research", 60, ago(.04)],
-      [heroSession, hero, "guided_learning", 180, ago(1.04)],
+      [heroSession, hero, "guided_learning", 240, thisWeekAgo(.04)],
+      [olderSession, olderVideo, "practice", 120, thisWeekAgo(.04)],
+      [paperSession, paper, "research", 60, thisWeekAgo(.04)],
+      [heroSession, hero, "guided_learning", 180, thisWeekAgo(1.04)],
       [heroSession, hero, "guided_learning", 90, lastWeek],
       [olderSession, olderVideo, "practice", 30, lastWeek],
       [paperSession, paper, "research", 60, lastWeek],
