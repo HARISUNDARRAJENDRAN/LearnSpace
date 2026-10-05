@@ -209,6 +209,13 @@ Worker deployment verification also checks the active task's exact build SHA
 and image digest, rejecting a stable older service. CI includes isolated tests
 for preserving runtime secrets and rejecting mismatched releases.
 
+The release review also made browser fixtures calendar-safe on Mondays and
+seeded the real curriculum within the recommendation browser test. The full
+feed assertion now checks the API's eligible result count and excludes synthetic
+fixtures in production. The deployment policy now grants CloudFormation's
+network parameter reads, security-group creation in the worker VPC, and ECS's
+task-definition read required for exact-build verification.
+
 Verification after these fixes:
 
 - All five workspace typechecks and lint commands passed; lint retains existing
@@ -227,11 +234,21 @@ Verification after these fixes:
 - AWS accepted the worker CloudFormation template. Access Analyzer reported no
   findings for the checked-in deployment policy. The live GitHub deployment
   role already contains the worker permission statements.
+- All 20 production browser tests passed in CI, including analytics controls,
+  touch interaction, onboarding, topic filtering, and persistent learning shifts.
 
-The cloud rollout remains pending: neither `learnspace-worker-staging` stack nor
-ECS cluster exists in the account. This review did not publish or deploy the
-uncommitted code. A fresh query-embedding request from the current worker
-returned provider HTTP 429; stored errors also include earlier connection
-failures. Live semantic backfill and
-hosted worker smoke verification require a working embedding provider and an
-actual worker release; local deterministic-vector tests do not establish them.
+The cloud rollout completed through [CI run 37288416604](https://github.com/HARISUNDARRAJENDRAN/LearnSpace/actions/runs/37288416604).
+The web app, discovery agent, and continuous worker serve tested build
+`8c75cf22a55e7d263c6bbf3ea0a6cd81ddd63bb3`. The worker stack reached
+`CREATE_COMPLETE`, with one healthy Fargate task and a completed ECS rollout.
+Release verification confirmed image digest
+`sha256:95f072a6c63ccf55dd1c22b0096c7fe607aff7449db6cf93fc77b9fe4369c38c`.
+The hosted smoke processed a job through the deployed worker, made three live
+provider calls, persisted ten resource-concept links, and verified that the
+authenticated web feed ranked all ten candidates. It did not require those
+candidates to displace stronger lessons in the visible preview.
+
+Embedding provider quota remains a separate limitation: query-embedding requests
+return HTTP 429. Live semantic backfill still requires available provider quota;
+the successful discovery smoke establishes ingestion and ranking, not live
+embedding quality.

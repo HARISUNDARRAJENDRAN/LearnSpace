@@ -164,7 +164,15 @@ For a manual release, provide `AWS_REGION`, `GITHUB_SHA`,
 credential separately requires `DATABASE_WORKER_URL` and
 `python3 infra/aws/worker/configure-runtime.py`.
 
-On 5 October 2026, the worker template passed AWS validation and the deployment
-policy passed Access Analyzer with no findings. Neither the worker stack nor
-ECS cluster existed yet. Local production-image verification is recorded in
-`docs/semantic-recommendations.md`; it is not a hosted deployment claim.
+On 5 October 2026, [CI run 37288416604](https://github.com/HARISUNDARRAJENDRAN/LearnSpace/actions/runs/37288416604)
+deployed build `8c75cf22a55e7d263c6bbf3ea0a6cd81ddd63bb3` to the discovery
+agent, Vercel app, and continuous worker. The worker stack reached
+`CREATE_COMPLETE`, with one healthy task and a completed ECS rollout. The
+hosted smoke made three live provider calls, persisted ten resource-concept
+links, and verified their ranking through the authenticated web app. The
+deployment policy passed Access Analyzer with no findings after the required
+CloudFormation network and ECS read permissions were applied.
+
+Embedding requests still return provider HTTP 429. Discovery ingestion and
+metadata/concept ranking work; live semantic backfill awaits available quota.
+Detailed verification is recorded in `docs/semantic-recommendations.md`.
