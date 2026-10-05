@@ -246,6 +246,8 @@
       "Sid": "WorkerInfrastructureInventory",
       "Effect": "Allow",
       "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets",
         "ec2:DescribeSecurityGroups",
         "logs:DescribeLogGroups"
       ],
