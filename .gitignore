@@ -1,6 +1,8 @@
 node_modules/
 dist/
 build/
+!apps/desktop/build/
+!apps/desktop/build/**
 .next*/
 out/
 .vercel/
@@ -60,3 +62,5 @@ Thumbs.db
 # Local benchmark and CI scratch output.
 /before
 /after
+dist-runtime/
+dist-release/

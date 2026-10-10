@@ -10,12 +10,16 @@
     "test": "tsx --test tests/server-ready.test.ts tests/free-port.test.ts tests/config.test.ts tests/launch-mode.test.ts",
     "dev": "pnpm run build && electron dist/main.js",
     "start": "electron dist/main.js",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "prepare-runtime": "node scripts/prepare-runtime.mjs",
+    "package": "pnpm run build && pnpm run prepare-runtime && electron-builder --linux --config electron-builder.yml"
   },
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "@playwright/test": "^1.52.0",
     "@types/node": "26.4.0",
     "electron": "^40.0.0",
+    "electron-builder": "^26.0.12",
     "tsx": "4.23.12",
     "typescript": "7.0.2"
   }

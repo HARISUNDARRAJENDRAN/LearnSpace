@@ -1,0 +1,39 @@
+appId: ai.learnspace.desktop
+productName: LearnSpace
+electronVersion: 40.10.6
+
+directories:
+  output: dist-release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - package.json
+
+extraResources:
+  - from: dist-runtime/runtime
+    to: runtime
+
+asar: true
+afterPack: scripts/after-pack-fuses.cjs
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Education
+  synopsis: AI-native learning, research, and knowledge-retention workspace
+  maintainer: LearnSpace <noreply@learnspace.ai>
+  vendor: LearnSpace
+  desktop:
+    entry:
+      Name: LearnSpace
+      Comment: AI-native learning workspace
+      Categories: Education;Science;
+      StartupWMClass: LearnSpace
+
+appImage:
+  artifactName: LearnSpace-${version}.${ext}
+
+deb:
+  artifactName: learnspace_${version}_${arch}.${ext}
