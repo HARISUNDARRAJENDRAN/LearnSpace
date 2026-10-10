@@ -5,6 +5,7 @@
   "homepage": "https://github.com/HARISUNDARRAJENDRAN/LearnSpace",
   "type": "module",
   "main": "dist/main.js",
+  "desktopName": "LearnSpace.desktop",
   "scripts": {
     "build": "tsc --build && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",

@@ -276,4 +276,13 @@ if (!gotLock) {
   app.on("before-quit", () => {
     stopRuntime();
   });
+
+  // Desktop session managers (Hyprland, systemd --user) end apps with SIGTERM;
+  // without an explicit handler the Chromium SIGTERM path can hang and leave
+  // the bundled runtime running.
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.on(signal, () => {
+      app.quit();
+    });
+  }
 }
