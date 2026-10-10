@@ -4,7 +4,8 @@ const path = require("node:path");
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");
 
 module.exports = async function afterPack(context) {
-  const executableName = context.packager.appInfo.executableFilename;
+  const executableName =
+    context.packager.appInfo.executableFilename ?? context.packager.appInfo.productFilename;
   const electronPath = path.join(context.appOutDir, executableName);
 
   await flipFuses(electronPath, {
@@ -15,6 +16,6 @@ module.exports = async function afterPack(context) {
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
     [FuseV1Options.onlyLoadAppFromAsar]: true,
-    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: true,
+    [FuseV1Options.LoadBrowserProcessSpecificV8Snapshot]: false,
   });
 };

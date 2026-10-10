@@ -18,6 +18,7 @@ asar: true
 afterPack: scripts/after-pack-fuses.cjs
 
 linux:
+  executableName: LearnSpace
   target:
     - AppImage
     - deb
