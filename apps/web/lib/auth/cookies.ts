@@ -1,11 +1,14 @@
 import type { NextResponse } from "next/server";
 
+import { isDesktopRuntime } from "./config";
+
 export const sessionCookieName = "learnspace_session";
 export const oauthStateCookieName = "learnspace_oauth_state";
 
-function secureCookies(): boolean {
+export function secureCookies(): boolean {
   if (process.env.AUTH_SECURE_COOKIES === "true") return true;
   if (process.env.AUTH_SECURE_COOKIES === "false") return false;
+  if (isDesktopRuntime()) return false;
   return process.env.NODE_ENV === "production" && process.env.AUTH_TEST_MODE !== "true";
 }
 

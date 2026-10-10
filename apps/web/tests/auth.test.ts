@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createOpaqueToken, hashToken, hashPassword, verifyPassword } from "../lib/auth/crypto";
-import { getAppBaseUrl, getGoogleConfig } from "../lib/auth/config";
+import {
+  assertEmailDeliveryConfigured,
+  getGoogleConfig,
+  getAppBaseUrl,
+} from "../lib/auth/config";
+import { secureCookies } from "../lib/auth/cookies";
+import { sendVerificationEmail } from "../lib/auth/email";
 import { AuthError } from "../lib/auth/errors";
 import { enforceRateLimit } from "../lib/auth/rate-limit";
 import { getClientIp, readJson } from "../lib/auth/request";
@@ -149,5 +155,110 @@ test("production auth URLs require an HTTPS APP_URL", () => {
     else process.env.APP_URL = previous.appUrl;
     if (previous.nodeEnv === undefined) delete mutableEnv.NODE_ENV;
     else mutableEnv.NODE_ENV = previous.nodeEnv;
+  }
+});
+
+test("desktop runtime mode allows only a loopback HTTP APP_URL in production", () => {
+  const previous = {
+    appUrl: process.env.APP_URL,
+    nodeEnv: process.env.NODE_ENV,
+    desktop: process.env.LEARNSPACE_DESKTOP_RUNTIME,
+  };
+  mutableEnv.NODE_ENV = "production";
+
+  try {
+    process.env.LEARNSPACE_DESKTOP_RUNTIME = "true";
+    process.env.APP_URL = "http://127.0.0.1:4310";
+    assert.equal(getAppBaseUrl(), "http://127.0.0.1:4310");
+
+    process.env.APP_URL = "http://learnspace.example";
+    assert.throws(() => getAppBaseUrl(), (error: unknown) =>
+      error instanceof AuthError && error.code === "APP_URL_INVALID");
+
+    delete process.env.LEARNSPACE_DESKTOP_RUNTIME;
+    process.env.APP_URL = "http://127.0.0.1:4310";
+    assert.throws(() => getAppBaseUrl(), (error: unknown) =>
+      error instanceof AuthError && error.code === "APP_URL_INVALID");
+
+    process.env.LEARNSPACE_DESKTOP_RUNTIME = "true";
+    process.env.APP_URL = "https://learnspace.example";
+    assert.equal(getAppBaseUrl(), "https://learnspace.example");
+  } finally {
+    if (previous.appUrl === undefined) delete process.env.APP_URL;
+    else process.env.APP_URL = previous.appUrl;
+    if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.desktop === undefined) delete process.env.LEARNSPACE_DESKTOP_RUNTIME;
+    else process.env.LEARNSPACE_DESKTOP_RUNTIME = previous.desktop;
+  }
+});
+
+test("desktop runtime mode disables secure cookies only for loopback runtimes", () => {
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    desktop: process.env.LEARNSPACE_DESKTOP_RUNTIME,
+    secure: process.env.AUTH_SECURE_COOKIES,
+  };
+  mutableEnv.NODE_ENV = "production";
+
+  try {
+    delete process.env.AUTH_SECURE_COOKIES;
+    process.env.LEARNSPACE_DESKTOP_RUNTIME = "true";
+    assert.equal(secureCookies(), false);
+
+    delete process.env.LEARNSPACE_DESKTOP_RUNTIME;
+    assert.equal(secureCookies(), true);
+  } finally {
+    if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous.nodeEnv;
+    if (previous.desktop === undefined) delete process.env.LEARNSPACE_DESKTOP_RUNTIME;
+    else process.env.LEARNSPACE_DESKTOP_RUNTIME = previous.desktop;
+    if (previous.secure === undefined) delete process.env.AUTH_SECURE_COOKIES;
+    else process.env.AUTH_SECURE_COOKIES = previous.secure;
+  }
+});
+
+test("desktop runtime mode permits running without email delivery", async () => {
+  const previous = {
+    nodeEnv: process.env.NODE_ENV,
+    desktop: process.env.LEARNSPACE_DESKTOP_RUNTIME,
+    testMode: process.env.AUTH_TEST_MODE,
+    resend: process.env.RESEND_API_KEY,
+    emailFrom: process.env.EMAIL_FROM,
+    expose: process.env.AUTH_EXPOSE_VERIFICATION_LINK,
+  };
+  mutableEnv.NODE_ENV = "production";
+
+  try {
+    delete process.env.AUTH_TEST_MODE;
+    delete process.env.RESEND_API_KEY;
+    delete process.env.EMAIL_FROM;
+    delete process.env.AUTH_EXPOSE_VERIFICATION_LINK;
+    process.env.LEARNSPACE_DESKTOP_RUNTIME = "true";
+
+    assert.doesNotThrow(() => assertEmailDeliveryConfigured());
+    const delivery = await sendVerificationEmail({
+      email: "learner@example.test",
+      displayName: "Learner",
+      verificationUrl: "http://127.0.0.1:4310/api/auth/verify?token=abc",
+    });
+    assert.equal(delivery.verificationUrl, "http://127.0.0.1:4310/api/auth/verify?token=abc");
+
+    delete process.env.LEARNSPACE_DESKTOP_RUNTIME;
+    assert.throws(() => assertEmailDeliveryConfigured(), (error: unknown) =>
+      error instanceof AuthError && error.code === "EMAIL_NOT_CONFIGURED");
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      const envKey = {
+        nodeEnv: "NODE_ENV",
+        desktop: "LEARNSPACE_DESKTOP_RUNTIME",
+        testMode: "AUTH_TEST_MODE",
+        resend: "RESEND_API_KEY",
+        emailFrom: "EMAIL_FROM",
+        expose: "AUTH_EXPOSE_VERIFICATION_LINK",
+      }[key]!;
+      if (value === undefined) delete process.env[envKey];
+      else process.env[envKey] = value;
+    }
   }
 });

@@ -1,5 +1,24 @@
 import { AuthError } from "./errors";
 
+/**
+ * True only when this server process was explicitly started as the bundled
+ * Electron desktop runtime (an environment variable set by the desktop shell
+ * at spawn time — never inferred from request data). Hosted deployments must
+ * never set it.
+ */
+export function isDesktopRuntime(): boolean {
+  return process.env.LEARNSPACE_DESKTOP_RUNTIME === "true";
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+}
+
+/** A desktop runtime may only ever use an http loopback origin. */
+function isDesktopLoopbackUrl(url: URL): boolean {
+  return isDesktopRuntime() && url.protocol === "http:" && isLoopbackHost(url.hostname);
+}
+
 export function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET;
   if (!secret || secret.length < 32 || secret === "replace-with-a-random-32-byte-secret") {
@@ -28,7 +47,23 @@ export function getAppBaseUrl(request?: Request): string {
   try {
     if (configuredUrl) {
       const parsed = new URL(configuredUrl);
-      if (process.env.NODE_ENV === "production" && !testMode && parsed.protocol !== "https:") {
+      if (
+        isDesktopRuntime() &&
+        parsed.protocol === "http:" &&
+        !isLoopbackHost(parsed.hostname)
+      ) {
+        throw new AuthError(
+          "APP_URL_INVALID",
+          "The application URL is invalid.",
+          503,
+        );
+      }
+      if (
+        process.env.NODE_ENV === "production" &&
+        !testMode &&
+        parsed.protocol !== "https:" &&
+        !isDesktopLoopbackUrl(parsed)
+      ) {
         throw new AuthError(
           "APP_URL_INVALID",
           "The application URL must use HTTPS in production.",
@@ -77,7 +112,12 @@ export function getGoogleConfig(request: Request): {
         503,
       );
     }
-    if (process.env.NODE_ENV === "production" && !testMode && parsedRedirectUri.protocol !== "https:") {
+    if (
+      process.env.NODE_ENV === "production" &&
+      !testMode &&
+      parsedRedirectUri.protocol !== "https:" &&
+      !isDesktopLoopbackUrl(parsedRedirectUri)
+    ) {
       throw new AuthError(
         "GOOGLE_REDIRECT_URI_INVALID",
         "The Google redirect URL must use HTTPS in production.",
@@ -136,6 +176,7 @@ export function assertEmailDeliveryConfigured(): void {
   if (
     process.env.NODE_ENV === "production" &&
     !testMode &&
+    !isDesktopRuntime() &&
     (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM)
   ) {
     throw new AuthError(
