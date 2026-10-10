@@ -7,7 +7,7 @@
     "build": "tsc --build && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/server-ready.test.ts tests/free-port.test.ts",
+    "test": "tsx --test tests/server-ready.test.ts tests/free-port.test.ts tests/config.test.ts",
     "dev": "pnpm run build && electron dist/main.js",
     "start": "electron dist/main.js",
     "smoke": "node scripts/smoke.mjs"
