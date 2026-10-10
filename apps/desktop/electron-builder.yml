@@ -1,6 +1,6 @@
 appId: ai.learnspace.desktop
 productName: LearnSpace
-electronVersion: 40.10.6
+electronVersion: 44.7.0
 
 directories:
   output: dist-release
