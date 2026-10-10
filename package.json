@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "desktop:dev": "pnpm --filter @learnspace/desktop dev",
+    "desktop:smoke": "pnpm --filter @learnspace/desktop build && pnpm --filter @learnspace/desktop smoke",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "test": "turbo run test",
