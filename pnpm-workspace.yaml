@@ -10,6 +10,9 @@ allowBuilds:
   unrs-resolver: true
 minimumReleaseAgeExclude:
   - zod@4.5.2
+overrides:
+  sharp: 0.35.5
+  source-map-js: 1.2.2
 patchedDependencies:
   braces@3.0.3: patches/braces@3.0.3.patch
 # No upstream release fixes this advisory. The checked-in patch bounds both
