@@ -64,3 +64,4 @@ Thumbs.db
 /after
 dist-runtime/
 dist-release/
+/apps/desktop/dist-release-config.json

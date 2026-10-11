@@ -20,7 +20,7 @@ jobs:
       LEARNSPACE_STAGE: staging
       AWS_STACK_NAME: learnspace-discovery-agent-staging
       AWS_FUNCTION_NAME: learnspace-discovery-agent-staging
-      AWS_ECR_REPOSITORY: learnspace-discovery-agent-staging
+      AWS_ECR_REPOSITORY: learnspace-backend-staging
       IMAGE_TAG: ${{ inputs.image_tag || github.sha }}
       EXA_API_KEY_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
       INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}

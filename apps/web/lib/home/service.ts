@@ -1,5 +1,5 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
-import { concepts, libraryItems, resourceConcepts, resources, studySessions, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
+import { concepts, libraryItems, paperDetails, resourceConcepts, resources, studySessions, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { youtubeThumbnailSources } from "./thumbnail";
 
@@ -28,11 +28,60 @@ export type HomeVideoItem = HomeVideo & {
 };
 
 export type LearnHomeData = {
+  sessions: HomeSession[];
+  sessionCounts: HomeSessionCounts;
   activity: { today: string; days: HomeActivityDay[] };
   continueWatching: HomeContinueItem | null;
   relatedAnchor: { resourceId: string; title: string } | null;
   relatedVideos: HomeVideoItem[];
 };
+
+export type HomeSession = {
+  id: string;
+  resourceId: string;
+  title: string;
+  type: "video" | "paper";
+  description: string | null;
+  source: string;
+  youtubeId: string | null;
+  progressPct: number;
+  completed: boolean;
+  lastActiveAt: string;
+};
+
+export type HomeSessionCounts = { total: number; completed: number; videos: number; videosCompleted: number; papers: number; papersCompleted: number };
+
+async function loadHomeSessions(tx: Transaction, userId: string): Promise<Pick<LearnHomeData, "sessions" | "sessionCounts">> {
+  const completed = sql`(${studySessions.status} = 'completed' OR coalesce(${userResourceProgress.progressPct}, 0) >= 100 OR ${userResourceProgress.status} = 'completed')`;
+  const rows = await tx.select({
+    id: studySessions.id, resource: resources, video: videoDetails, paper: paperDetails,
+    progressPct: userResourceProgress.progressPct, completed: sql<boolean>`coalesce(${completed}, false)`, lastActiveAt: studySessions.lastActiveAt,
+    total: sql<number>`count(*) OVER ()`, completedCount: sql<number>`count(*) FILTER (WHERE ${completed}) OVER ()`,
+    videos: sql<number>`count(*) FILTER (WHERE ${resources.type} = 'video') OVER ()`,
+    videosCompleted: sql<number>`count(*) FILTER (WHERE ${resources.type} = 'video' AND ${completed}) OVER ()`,
+    papers: sql<number>`count(*) FILTER (WHERE ${resources.type} IN ('paper', 'pdf')) OVER ()`,
+    papersCompleted: sql<number>`count(*) FILTER (WHERE ${resources.type} IN ('paper', 'pdf') AND ${completed}) OVER ()`,
+  }).from(studySessions)
+    .innerJoin(resources, eq(resources.id, studySessions.activeResourceId))
+    .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
+    .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+    .leftJoin(userResourceProgress, and(eq(userResourceProgress.userId, userId), eq(userResourceProgress.resourceId, resources.id)))
+    .where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused", "completed"]),
+      inArray(resources.type, ["video", "paper", "pdf"]), isNull(resources.deletedAt),
+      inArray(resources.status, ["pending", "processing", "ready"]), visibleResource(userId)))
+    .orderBy(desc(studySessions.lastActiveAt)).limit(50);
+  const first = rows[0];
+  return {
+    sessionCounts: { total: Number(first?.total ?? 0), completed: Number(first?.completedCount ?? 0), videos: Number(first?.videos ?? 0), videosCompleted: Number(first?.videosCompleted ?? 0), papers: Number(first?.papers ?? 0), papersCompleted: Number(first?.papersCompleted ?? 0) },
+    sessions: rows.map((row) => ({
+      id: row.id, resourceId: row.resource.id, title: row.resource.title, type: row.resource.type === "video" ? "video" : "paper",
+      description: row.paper?.abstract ?? row.resource.description,
+      source: row.resource.type === "video" ? row.video?.channelTitle ?? "Video lesson" : row.paper?.venue ?? (row.paper?.arxivId ? `arXiv · ${row.paper.arxivId}` : "Research paper"),
+      youtubeId: row.video?.youtubeId ?? null, progressPct: row.completed ? 100 : Math.max(0, Math.min(100, Number(row.progressPct ?? 0))),
+      completed: row.completed, lastActiveAt: row.lastActiveAt.toISOString(),
+    })),
+  };
+}
 
 export type HomeActivityDay = {
   day: string;
@@ -221,17 +270,19 @@ async function loadRelatedVideos(tx: Transaction, userId: string, anchorResource
 
 export async function getLearnHome(userId: string): Promise<LearnHomeData> {
   return withUserTransaction(userId, async (tx) => {
-    const [active, paused, recentAnchor, activity] = await Promise.all([
+    const [active, paused, recentAnchor, activity, sessionData] = await Promise.all([
       loadContinueCandidates(tx, userId, "active"),
       loadContinueCandidates(tx, userId, "paused"),
       loadRecentAnchor(tx, userId),
       loadActivity(tx, userId),
+      loadHomeSessions(tx, userId),
     ]);
     const continueCandidates = active.length > 0 ? active : paused;
     const continueWatching = continueCandidates[0] ?? null;
     const relatedResource = continueWatching ?? recentAnchor;
     const relatedVideos = relatedResource ? await loadRelatedVideos(tx, userId, relatedResource.resourceId) : [];
     return {
+      ...sessionData,
       activity,
       continueWatching,
       relatedAnchor: relatedResource ? { resourceId: relatedResource.resourceId, title: relatedResource.title } : null,

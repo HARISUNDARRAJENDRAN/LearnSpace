@@ -1,6 +1,6 @@
 import Image from "next/image";
 
-export function BannerCta({ authenticated = false }: { authenticated?: boolean }) {
+export function BannerCta() {
 	return (
 		<section
 			className="landing-cta wide-container banner-cta scenic-panel"
@@ -14,8 +14,8 @@ export function BannerCta({ authenticated = false }: { authenticated?: boolean }
 					and carry what you learn into whatever comes next.
 				</p>
 				<div className="hero-actions">
-					<a className="button cta-start" href={authenticated ? "/app" : "/register"}>
-						{authenticated ? "Continue learning" : "Start learning"} <span aria-hidden="true">→</span>
+					<a className="button cta-start" href="https://github.com/HARISUNDARRAJENDRAN/LearnSpace/releases/latest">
+						Download for Linux <span aria-hidden="true">→</span>
 					</a>
 				</div>
 			</div>

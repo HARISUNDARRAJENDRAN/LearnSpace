@@ -44,7 +44,7 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     await page.getByRole("link", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL(/\/app$/);
     await expect(page.getByText("Your learning starts here.")).toBeVisible();
-    await expect(page.locator(".analytics-bubble, .analytics-ring-arc, .analytics-trend-dot")).toHaveCount(0);
+    await expect(page.locator(".home-session-card, .home-activity-bar")).toHaveCount(0);
     await page.reload();
     await expect(page).toHaveURL(/\/app$/);
     const laterSession = await createSession(fresh.userId, { userAgent: "home-return-visit" }, process.env.AUTH_SECRET ?? "");
@@ -59,7 +59,10 @@ test("first app entry goes to Discover once; empty Home works across later sessi
       type PlayerOptions = { events: { onReady: (event: { target: FixturePlayer }) => void; onStateChange: (event: { data: number }) => void } };
       class FixturePlayer {
         startedAt = 0;
+        element: HTMLElement;
+        readyTimer: number;
         constructor(element: HTMLElement, options: PlayerOptions) {
+          this.element = element;
           const play = document.createElement("button");
           play.textContent = "Play fixture video";
           play.onclick = () => { this.startedAt = Date.now(); options.events.onStateChange({ data: 1 }); };
@@ -67,9 +70,9 @@ test("first app entry goes to Discover once; empty Home works across later sessi
           pause.textContent = "Pause fixture video";
           pause.onclick = () => options.events.onStateChange({ data: 2 });
           element.append(play, pause);
-          setTimeout(() => options.events.onReady({ target: this }), 0);
+          this.readyTimer = window.setTimeout(() => options.events.onReady({ target: this }), 0);
         }
-        destroy() {}
+        destroy() { clearTimeout(this.readyTimer); this.element.replaceChildren(); }
         getDuration() { return 600; }
         getCurrentTime() { return this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0; }
         seekTo() {}
@@ -87,130 +90,63 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     expect(recorded[0]?.seconds).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Pause fixture video" }).click();
     await page.getByRole("link", { name: "Home", exact: true }).click();
-    await expect(page.locator(".analytics-overview-metric .analytics-duration")).toHaveText(/\d+ sec/);
-    await expect(page.locator(".analytics-ring-value")).toHaveText(/\d+ sec/);
-    await expect(page.locator(".analytics-distribution-stats")).toContainText("Videos");
-    await expect(page.locator(".analytics-trends .analytics-empty")).toBeVisible();
+    await expect(page.locator(".home-activity-total")).toContainText("recorded study time");
+    await expect(page.locator(".home-stat-card").filter({ hasText: "Total Learning Time" })).toContainText(/\d+ sec/);
+    await expect(page.locator(".home-session-card")).toHaveCount(1);
   } finally {
     await cleanupHomeFixture(database, fresh);
   }
 });
 
-test("populated Home renders analytics and continues the current video", async ({ page }) => {
+test("populated Home unifies learning and research and fits the reference viewport", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.setViewportSize({ width: 1360, height: 768 });
   await page.goto("/app", { waitUntil: "networkidle" });
-  await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Learning Overview" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Weekly Progress" })).toBeVisible();
+  for (const name of ["Continue Learning", "Learning Progress", "Your Learning Activity", "Quick Stats"]) await expect(page.getByRole("heading", { name })).toBeVisible();
+  await expect(page.locator(".home-session-card")).toHaveCount(3);
+  await expect(page.locator(".home-session-card").filter({ hasText: "Home E2E Python lesson" })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
+  await expect(page.locator(".home-session-card").filter({ hasText: "Home E2E research paper" })).toHaveAttribute("href", `/app/study/paper/${fixture.sessions.paper}`);
+  await expect(page.locator(".home-paper-preview")).toContainText("A deterministic Home E2E abstract.");
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
+  await expect.poll(() => page.locator(".home-progress-panel").evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
   await expect(page.getByRole("button", { name: "Start learning" })).not.toBeFocused();
-  await expect(page.locator(".analytics-continue").getByRole("link", { name: "Resume", exact: true })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
-  await expect(page.getByRole("heading", { name: "Learning Activity & Progress Trends" })).toBeVisible();
+  expect(errors).toEqual([]);
 });
 
-test("Home analytics controls open details and change chart periods", async ({ page }) => {
+test("Home filters, activity periods and progress scopes respond without losing resume links", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  const detailDialog = page.getByRole("dialog", { name: "Study Distribution" });
-  await page.getByRole("button", { name: "View Details" }).click();
-  await expect(detailDialog).toBeVisible();
-  await detailDialog.getByRole("button", { name: "Close details" }).click();
-  await expect(detailDialog).toBeHidden();
-  const progressPeriod = page.getByRole("combobox", { name: "Progress period" });
-  await progressPeriod.selectOption("1");
-  await expect(page.locator(".analytics-ring-value")).toHaveText("3 min");
-  const periods = page.getByRole("group", { name: "Trend period" });
-  await periods.getByRole("button", { name: "Day" }).click();
-  await expect(periods.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
+  const filters = page.getByRole("group", { name: "Learning status" });
+  await filters.getByRole("button", { name: "Completed", exact: true }).click();
+  await expect(page.locator(".home-session-card")).toHaveCount(0);
+  await expect(page.getByText("No completed sessions yet.")).toBeVisible();
+  await filters.getByRole("button", { name: "In Progress", exact: true }).click();
+  await expect(page.locator(".home-session-card")).toHaveCount(3);
+  await page.getByRole("combobox", { name: "Activity period" }).selectOption("Last Week");
+  await expect(page.getByRole("img", { name: /Last Week:/ })).toBeVisible();
+  await page.getByRole("combobox", { name: "Progress scope" }).selectOption("Research");
+  await expect(page.getByRole("progressbar", { name: "Research sessions completed" })).toHaveAttribute("aria-valuenow", "0");
+});
+
+test("Home retains source discovery focus and opens the shared search palette", async ({ page }) => {
+  await page.goto("/app", { waitUntil: "networkidle" });
   const startLearning = page.getByRole("button", { name: "Start learning" });
   await startLearning.click();
   const sourceDialog = page.getByRole("dialog", { name: "Learn any topic from the best videos" });
   await expect(sourceDialog).toBeVisible();
   await sourceDialog.getByRole("button", { name: "Close source discovery" }).click();
   await expect(startLearning).toBeFocused();
+  await page.getByRole("button", { name: "Search your study sessions" }).click();
+  await expect(page.getByRole("dialog").filter({ has: page.getByRole("textbox") })).toBeVisible();
 });
 
-test("Home charts keep donut and bubble focus synchronized without a click outline", async ({ page }) => {
-  await page.goto("/app", { waitUntil: "networkidle" });
-
-  const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
-  const practiceSegment = page.locator(".analytics-ring-segment.tone-green");
-  const researchSegment = page.locator(".analytics-ring-segment.tone-light-lavender");
-  for (const [label, activeSegment, mutedSegment] of [
-    ["Focus", focusSegment, practiceSegment],
-    ["Practice", practiceSegment, focusSegment],
-    ["Research", researchSegment, practiceSegment],
-  ] as const) {
-    await page.locator(".analytics-ring-legend button").filter({ hasText: label }).hover();
-    await expect(activeSegment).toHaveClass(/is-active/);
-    await expect(mutedSegment).toHaveClass(/is-muted/);
-  }
-
-  const focusPoint = await focusSegment.locator(".analytics-ring-hit-target").evaluate((element) => {
-    const path = element as SVGPathElement;
-    const svg = path.ownerSVGElement;
-    if (!svg) throw new Error("Donut segment is missing its SVG");
-    const point = svg.createSVGPoint();
-    const midpoint = path.getPointAtLength(path.getTotalLength() / 2);
-    point.x = midpoint.x;
-    point.y = midpoint.y;
-    const matrix = svg.getScreenCTM();
-    if (!matrix) throw new Error("Donut segment is missing its screen transform");
-    const coordinates = point.matrixTransform(matrix);
-    return { x: coordinates.x, y: coordinates.y };
-  });
-  await page.mouse.move(focusPoint.x, focusPoint.y);
-  await expect(focusSegment).toHaveClass(/is-active/);
-
-  const videos = page.locator('.analytics-bubble[data-category="Videos"]');
-  const research = page.locator('.analytics-bubble[data-category="Research"]');
-  await videos.hover();
-  await expect(videos).toHaveClass(/is-active/);
-  await expect(research).toHaveClass(/is-muted/);
-  await videos.click();
-  await expect(videos).toHaveCSS("outline-style", "none");
-  await page.mouse.move(0, 0);
-  await videos.focus();
-  await page.keyboard.press("Enter");
-  await expect(videos).toHaveClass(/is-active/);
-});
-
-test("touch taps toggle donut and bubble focus", async ({ browser }) => {
-  const context = await browser.newContext({
-    baseURL: "http://localhost:3101",
-    hasTouch: true,
-    viewport: { width: 390, height: 844 },
-  });
-  try {
-    await context.addCookies([{ name: sessionCookieName, value: fixture.sessionToken, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
-    const page = await context.newPage();
-    await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-home-touch-${randomUUID()}` });
+test("Home remains readable without horizontal page overflow on smaller screens", async ({ page }) => {
+  for (const viewport of [{ width: 1024, height: 768 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
     await page.goto("/app", { waitUntil: "networkidle" });
-
-    const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
-    const hitTarget = focusSegment.locator(".analytics-ring-hit-target");
-    await hitTarget.scrollIntoViewIfNeeded();
-    const focusPoint = await hitTarget.evaluate((element) => {
-      const path = element as SVGPathElement;
-      const svg = path.ownerSVGElement;
-      if (!svg) throw new Error("Donut segment is missing its SVG");
-      const point = svg.createSVGPoint();
-      const midpoint = path.getPointAtLength(path.getTotalLength() / 2);
-      point.x = midpoint.x;
-      point.y = midpoint.y;
-      const matrix = svg.getScreenCTM();
-      if (!matrix) throw new Error("Donut segment is missing its screen transform");
-      const coordinates = point.matrixTransform(matrix);
-      return { x: coordinates.x, y: coordinates.y };
-    });
-    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
-    await expect(focusSegment).toHaveClass(/is-active/);
-    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
-    await expect(focusSegment).not.toHaveClass(/is-active/);
-
-    const videos = page.locator('.analytics-bubble[data-category="Videos"]');
-    await videos.locator("circle").tap();
-    await expect(videos).toHaveClass(/is-active/);
-    await videos.locator("circle").tap();
-    await expect(videos).not.toHaveClass(/is-active/);
-  } finally {
-    await context.close();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await expect(page.locator(".home-session-card").first()).toBeVisible();
+    await page.getByRole("heading", { name: "Quick Stats" }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole("heading", { name: "Quick Stats" })).toBeVisible();
   }
 });

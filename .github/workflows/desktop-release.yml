@@ -1,0 +1,70 @@
+name: Desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to publish; must match the desktop package version (vX.Y.Z).
+        required: true
+        type: string
+      app_origin:
+        description: Public HTTPS origin the packaged app should open.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag }}
+      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: 11.24.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Verify release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          package_version="$(node -p "require('./apps/desktop/package.json').version")"
+          if [[ "$RELEASE_TAG" != "v$package_version" ]]; then
+            echo "Release tag $RELEASE_TAG must match desktop package version v$package_version."
+            exit 1
+          fi
+      - name: Verify hosted desktop service
+        env:
+          APP_ORIGIN: ${{ inputs.app_origin }}
+        run: |
+          app_origin="${APP_ORIGIN%/}"
+          curl --fail --silent --show-error --max-time 20 "$app_origin/api/health" > /dev/null
+          curl --fail --silent --show-error --location --max-time 20 \
+            --header 'x-learnspace-desktop: 1' "$app_origin/login" > /dev/null
+      - name: Build Linux packages
+        env:
+          LEARNSPACE_DESKTOP_APP_URL: ${{ inputs.app_origin }}
+        run: pnpm --filter @learnspace/desktop package
+      - name: Publish .deb to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          shopt -s nullglob
+          debs=(apps/desktop/dist-release/learnspace_*.deb)
+          if [[ ${#debs[@]} -ne 1 ]]; then
+            echo "Expected one .deb package; found ${#debs[@]}."
+            exit 1
+          fi
+          gh release create "$RELEASE_TAG" "${debs[0]}" \
+            --verify-tag \
+            --title "LearnSpace $RELEASE_TAG" \
+            --generate-notes

@@ -4,7 +4,7 @@ import { AuthError } from "../lib/auth/errors";
 import { loadHomeData } from "../lib/home/load";
 import type { LearnHomeData } from "../lib/home/service";
 
-const home: LearnHomeData = { activity: { today: "2026-09-27", days: [] }, continueWatching: null, relatedAnchor: null, relatedVideos: [] };
+const home: LearnHomeData = { sessions: [], sessionCounts: { total: 0, completed: 0, videos: 0, videosCompleted: 0, papers: 0, papersCompleted: 0 }, activity: { today: "2026-09-27", days: [] }, continueWatching: null, relatedAnchor: null, relatedVideos: [] };
 
 test("Home loads its dashboard data", async () => {
   const result = await loadHomeData("user", async () => home);

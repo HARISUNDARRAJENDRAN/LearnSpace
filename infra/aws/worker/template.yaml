@@ -59,7 +59,7 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action: [ecr:BatchCheckLayerAvailability, ecr:GetDownloadUrlForLayer, ecr:BatchGetImage]
-                Resource: !Sub 'arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/learnspace-worker-staging'
+                Resource: !Sub 'arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/learnspace-backend-staging'
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !GetAtt Logs.Arn
@@ -84,6 +84,7 @@ Resources:
           Essential: true
           StopTimeout: 120
           Environment:
+            - {Name: LEARNSPACE_BACKEND_MODE, Value: worker}
             - {Name: DISCOVERY_AGENT_URL, Value: !Ref AgentUrl}
             - {Name: WORKER_BUILD_SHA, Value: !Ref BuildSha}
             - {Name: WORKER_HEARTBEAT_PATH, Value: /tmp/learnspace-worker-heartbeat}

@@ -21,6 +21,7 @@
       "Resource": [
         "arn:aws:cloudformation:us-east-1:934685482023:stack/learnspace-discovery-agent-staging/*",
         "arn:aws:cloudformation:us-east-1:934685482023:changeSet/awscli-cloudformation-package-deploy-*/*",
+        "arn:aws:cloudformation:us-east-1:934685482023:changeSet/adopt-existing-discovery-agent/*",
         "arn:aws:cloudformation:us-east-1:934685482023:stack/learnspace-worker-staging/*"
       ]
     },
@@ -43,6 +44,7 @@
         "ecr:CreateRepository",
         "ecr:DescribeRepositories",
         "ecr:DescribeImages",
+        "ecr:PutImageTagMutability",
         "ecr:GetRepositoryPolicy",
         "ecr:SetRepositoryPolicy",
         "ecr:BatchCheckLayerAvailability",
@@ -54,8 +56,7 @@
         "ecr:GetDownloadUrlForLayer"
       ],
       "Resource": [
-        "arn:aws:ecr:us-east-1:934685482023:repository/learnspace-discovery-agent-staging",
-        "arn:aws:ecr:us-east-1:934685482023:repository/learnspace-worker-staging"
+        "arn:aws:ecr:us-east-1:934685482023:repository/learnspace-backend-staging"
       ]
     },
     {
@@ -153,19 +154,69 @@
       }
     },
     {
-      "Sid": "StagingDiscoveryApi",
+      "Sid": "ReadDiscoveryApiResources",
       "Effect": "Allow",
-      "Action": [
-        "apigateway:GET",
-        "apigateway:PATCH",
-        "apigateway:POST",
-        "apigateway:DELETE",
-        "apigateway:PUT"
-      ],
+      "Action": "apigateway:GET",
       "Resource": [
-        "arn:aws:apigateway:us-east-1::/apis/n108t7s9vd",
-        "arn:aws:apigateway:us-east-1::/apis/n108t7s9vd/*",
-        "arn:aws:apigateway:us-east-1::/tags/arn:aws:apigateway:us-east-1::/apis/n108t7s9vd"
+        "arn:aws:apigateway:us-east-1::/apis/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/integrations",
+        "arn:aws:apigateway:us-east-1::/apis/*/integrations/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/routes",
+        "arn:aws:apigateway:us-east-1::/apis/*/routes/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/stages",
+        "arn:aws:apigateway:us-east-1::/apis/*/stages/$default"
+      ]
+    },
+    {
+      "Sid": "CreateDiscoveryApiResources",
+      "Effect": "Allow",
+      "Action": "apigateway:POST",
+      "Resource": [
+        "arn:aws:apigateway:us-east-1::/apis/*/integrations",
+        "arn:aws:apigateway:us-east-1::/apis/*/routes",
+        "arn:aws:apigateway:us-east-1::/apis/*/stages"
+      ]
+    },
+    {
+      "Sid": "UpdateDiscoveryApi",
+      "Effect": "Allow",
+      "Action": "apigateway:PATCH",
+      "Resource": "arn:aws:apigateway:us-east-1::/apis/*",
+      "Condition": {
+        "StringEquals": {
+          "apigateway:Resource/ApiName": "learnspace-discovery-agent-staging-http"
+        }
+      }
+    },
+    {
+      "Sid": "UpdateDiscoveryApiChildren",
+      "Effect": "Allow",
+      "Action": "apigateway:PATCH",
+      "Resource": [
+        "arn:aws:apigateway:us-east-1::/apis/*/integrations/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/routes/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/stages/$default"
+      ]
+    },
+    {
+      "Sid": "DeleteDiscoveryApi",
+      "Effect": "Allow",
+      "Action": "apigateway:DELETE",
+      "Resource": "arn:aws:apigateway:us-east-1::/apis/*",
+      "Condition": {
+        "StringEquals": {
+          "apigateway:Resource/ApiName": "learnspace-discovery-agent-staging-http"
+        }
+      }
+    },
+    {
+      "Sid": "DeleteDiscoveryApiChildren",
+      "Effect": "Allow",
+      "Action": "apigateway:DELETE",
+      "Resource": [
+        "arn:aws:apigateway:us-east-1::/apis/*/integrations/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/routes/*",
+        "arn:aws:apigateway:us-east-1::/apis/*/stages/$default"
       ]
     },
     {

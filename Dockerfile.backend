@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+
+ARG NODE_VERSION=22.15.0
+
+FROM node:${NODE_VERSION}-bookworm-slim AS worker-build
+
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    CI=true
+
+WORKDIR /workspace
+
+RUN npm install --global pnpm@11.24.0
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .npmrc ./
+COPY patches ./patches
+COPY packages/shared/package.json packages/shared/package.json
+COPY services/worker/package.json services/worker/package.json
+RUN pnpm install --frozen-lockfile --filter @learnspace/worker... --filter learnspace
+COPY packages/shared ./packages/shared
+COPY services/worker ./services/worker
+COPY apps/web/public/data/learnspace_youtube_curriculum_master.csv ./apps/web/public/data/learnspace_youtube_curriculum_master.csv
+
+RUN pnpm --filter "@learnspace/worker..." run build \
+    && pnpm --filter @learnspace/worker deploy --prod --legacy --config.allowUnusedPatches=true /worker-runtime
+
+FROM python:3.13-slim AS python-build
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=180 \
+    UV_CONCURRENT_DOWNLOADS=4
+
+WORKDIR /service
+
+COPY services/ai-backend/pyproject.toml services/ai-backend/uv.lock ./
+
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --timeout 120 uv==0.11.28 \
+    && uv sync --frozen --no-dev
+
+FROM python:3.13-slim AS backend
+
+ENV HOME=/tmp \
+    NODE_ENV=production \
+    PATH=/service/.venv/bin:$PATH \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    CURRICULUM_PATH=/worker/data/curriculum.csv
+
+WORKDIR /service
+
+RUN groupadd --system --gid 10001 learnspace \
+    && useradd --system --uid 10001 --gid learnspace --home-dir /tmp --shell /usr/sbin/nologin learnspace
+
+COPY --from=worker-build /usr/local/bin/node /usr/local/bin/node
+COPY --from=worker-build --chown=learnspace:learnspace /worker-runtime /worker
+COPY --from=worker-build --chown=learnspace:learnspace /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv /worker/data/curriculum.csv
+COPY --from=python-build --chown=learnspace:learnspace /service/.venv /service/.venv
+COPY --chown=learnspace:learnspace services/ai-backend/app ./app
+COPY --chown=learnspace:learnspace services/ai-backend/lambda_handler.py ./lambda_handler.py
+COPY --chown=learnspace:learnspace services/backend-entrypoint.sh /usr/local/bin/learnspace-backend
+
+RUN chmod 0755 /usr/local/bin/learnspace-backend
+
+USER learnspace
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=12 --start-period=15s \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"
+
+ENTRYPOINT ["learnspace-backend"]
+CMD ["api"]

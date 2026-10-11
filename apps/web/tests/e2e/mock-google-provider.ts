@@ -4,7 +4,7 @@ const port = Number(process.env.PORT ?? 4010);
 const email = process.env.AUTH_TEST_GOOGLE_EMAIL ?? "google-e2e@example.test";
 const subject = process.env.AUTH_TEST_GOOGLE_SUB ?? "playwright-google-sub";
 
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://127.0.0.1:${port}`);
 
   if (url.pathname === "/health") {
@@ -30,6 +30,21 @@ const server = createServer((request, response) => {
   }
 
   if (url.pathname === "/token") {
+    let body = "";
+    for await (const chunk of request) body += chunk.toString();
+    const parameters = new URLSearchParams(body);
+    if (
+      request.method !== "POST" ||
+      parameters.get("code") !== "playwright-code" ||
+      parameters.get("client_id") !== process.env.GOOGLE_CLIENT_ID ||
+      parameters.get("client_secret") !== process.env.GOOGLE_CLIENT_SECRET ||
+      parameters.get("redirect_uri") !== process.env.GOOGLE_REDIRECT_URI ||
+      parameters.get("grant_type") !== "authorization_code"
+    ) {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "invalid_grant" }));
+      return;
+    }
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ access_token: "playwright-access-token" }));
     return;

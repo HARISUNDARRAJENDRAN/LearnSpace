@@ -67,10 +67,10 @@ export function Pricing() {
 							</ul>
 							<a
 								className="plan-button"
-								href="/register"
+								href="https://github.com/HARISUNDARRAJENDRAN/LearnSpace/releases/latest"
 								aria-label={`Get started with ${plan.name}`}
 							>
-								Get started
+								Download for Linux
 							</a>
 						</div>
 					</article>

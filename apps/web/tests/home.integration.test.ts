@@ -159,6 +159,8 @@ test(
       });
 
       const home = await getLearnHome(owner.id);
+      for (const excluded of [resourceIds.private, resourceIds.deleted, resourceIds.other, resourceIds.abandoned]) assert.equal(home.sessions.some((item) => item.resourceId === excluded), false);
+      assert.equal(home.sessions.find((item) => item.resourceId === resourceIds.anchor)?.progressPct, 64);
       assert.equal(home.continueWatching?.resourceId, resourceIds.anchor);
       assert.equal(home.continueWatching?.sessionId, sessionIds.anchor);
       assert.equal(home.continueWatching?.progressPct, 64);
@@ -169,6 +171,13 @@ test(
       assert.equal(home.relatedVideos.some((item) => item.resourceId === resourceIds.dismissed), false);
       assert.equal(home.relatedVideos.some((item) => item.resourceId === resourceIds.paper), false);
       assert.equal(new Set(home.relatedVideos.map((item) => item.resourceId)).size, home.relatedVideos.length);
+
+      const paperSession = await startOrResumeStudySession(owner.id, { resourceId: resourceIds.paper, origin: "research", idempotencyKey: `home-paper-${randomUUID()}` });
+      const mixedHome = await getLearnHome(owner.id);
+      const paper = mixedHome.sessions.find((item) => item.id === paperSession.sessionId);
+      assert.equal(paper?.type, "paper");
+      assert.equal(paper?.description, "A deterministic paper.");
+      assert.equal(mixedHome.sessionCounts.papers, 1);
 
       const pausedHome = await getLearnHome(pausedLearner.id);
       assert.equal(pausedHome.continueWatching?.resourceId, resourceIds.paused);

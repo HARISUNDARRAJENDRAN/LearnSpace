@@ -13,11 +13,17 @@ import {
 import { getSessionContext } from "../../../../../lib/auth/request";
 import { getAuthenticatedDestination } from "../../../../../lib/onboarding/service";
 import {
+  clearDesktopOauthFlowCookie,
   clearOauthStateCookie,
+  desktopOauthFlowCookieName,
   oauthStateCookieName,
   setSessionCookie,
 } from "../../../../../lib/auth/cookies";
 import { safeEqualText } from "../../../../../lib/auth/crypto";
+import {
+  validDesktopFlowId,
+  writeDesktopAuthHandoff,
+} from "../../../../../lib/auth/desktop-handoff";
 import { safeRedirectPath } from "../../../../../lib/auth/validation";
 
 const googleTokenResponseSchema = z.object({
@@ -45,21 +51,64 @@ function loginRedirect(request: NextRequest, error?: string): NextResponse {
 
 function clearState(response: NextResponse): NextResponse {
   clearOauthStateCookie(response);
+  clearDesktopOauthFlowCookie(response);
   return response;
+}
+
+function desktopAuthResponse(
+  flowId: string,
+  code: string,
+): NextResponse {
+  const url = new URL("learnspace://google-oauth");
+  url.searchParams.set("flow", flowId);
+  url.searchParams.set("code", code);
+  return clearState(new NextResponse(null, {
+    status: 302,
+    headers: {
+      Location: url.toString(),
+      "Cache-Control": "no-store",
+    },
+  }));
+}
+
+async function failureResponse(
+  request: NextRequest,
+  desktopFlow: string | undefined,
+  code: string,
+  stateValidated = false,
+): Promise<NextResponse> {
+  if (desktopFlow && stateValidated) {
+    try {
+      const handoffCode = await writeDesktopAuthHandoff(desktopFlow, {
+        status: "error",
+        message: code === "google-cancelled" ? "Google sign-in was cancelled." : "Google sign-in failed. Please try again.",
+      });
+      if (handoffCode) return desktopAuthResponse(desktopFlow, handoffCode);
+    } catch (error) {
+      console.error("[auth] Desktop sign-in handoff failed", error);
+    }
+    return clearState(new NextResponse("Google sign-in failed. Please return to LearnSpace.", {
+      status: 503,
+      headers: { "Cache-Control": "no-store" },
+    }));
+  }
+  return clearState(loginRedirect(request, code));
 }
 
 export async function GET(request: NextRequest) {
   const stateCookie = request.cookies.get(oauthStateCookieName)?.value;
+  const desktopFlowCookie = request.cookies.get(desktopOauthFlowCookieName)?.value;
+  const desktopFlow = validDesktopFlowId(desktopFlowCookie) ? desktopFlowCookie : undefined;
   const state = request.nextUrl.searchParams.get("state");
   const code = request.nextUrl.searchParams.get("code");
 
   if (!stateCookie || !state) {
-    return clearState(loginRedirect(request, "google-invalid-callback"));
+    return failureResponse(request, desktopFlow, "google-invalid-callback");
   }
 
   const separator = stateCookie.indexOf(".");
   if (separator < 1) {
-    return clearState(loginRedirect(request, "google-invalid-callback"));
+    return failureResponse(request, desktopFlow, "google-invalid-callback");
   }
 
   const expectedState = stateCookie.slice(0, separator);
@@ -69,18 +118,18 @@ export async function GET(request: NextRequest) {
       decodeURIComponent(stateCookie.slice(separator + 1)),
     );
   } catch {
-    return clearState(loginRedirect(request, "google-invalid-callback"));
+    return failureResponse(request, desktopFlow, "google-invalid-callback");
   }
 
   if (!safeEqualText(state, expectedState)) {
-    return clearState(loginRedirect(request, "google-invalid-callback"));
+    return failureResponse(request, desktopFlow, "google-invalid-callback");
   }
 
   if (request.nextUrl.searchParams.get("error")) {
-    return clearState(loginRedirect(request, "google-cancelled"));
+    return failureResponse(request, desktopFlow, "google-cancelled", true);
   }
   if (!code) {
-    return clearState(loginRedirect(request, "google-invalid-callback"));
+    return failureResponse(request, desktopFlow, "google-invalid-callback", true);
   }
 
   try {
@@ -110,7 +159,7 @@ export async function GET(request: NextRequest) {
     }
     const profile = googleProfileSchema.parse(await profileResponse.json());
     if (!profile.email_verified) {
-      return clearState(loginRedirect(request, "google-email-unverified"));
+      return failureResponse(request, desktopFlow, "google-email-unverified", true);
     }
 
     const googleUserInput: {
@@ -138,12 +187,23 @@ export async function GET(request: NextRequest) {
       getAuthSecret(),
     );
     const destination = await getAuthenticatedDestination(user.id, next);
+    if (desktopFlow) {
+      const code = await writeDesktopAuthHandoff(desktopFlow, {
+        status: "success",
+        token: session.token,
+        maxAge: session.maxAge,
+        destination,
+      });
+      if (!code) throw new Error("Desktop sign-in handoff was not stored.");
+      return desktopAuthResponse(desktopFlow, code);
+    }
     const response = NextResponse.redirect(new URL(destination, getAppBaseUrl(request)));
     setSessionCookie(response, session.token, session.maxAge);
     clearOauthStateCookie(response);
+    clearDesktopOauthFlowCookie(response);
     return response;
   } catch (error) {
     console.error("[auth] Google callback failed", error);
-    return clearState(loginRedirect(request, "google-failed"));
+    return failureResponse(request, desktopFlow, "google-failed", true);
   }
 }

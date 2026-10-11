@@ -734,12 +734,15 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   background: #fff;
 }
 
-.application-main:has(.home-dashboard) .application-header,
+.application-page:has(.home-dashboard) .application-sidebar { padding-top: 18px; }
+
 .application-page--discover .application-header {
   height: 90px;
   min-height: 90px;
   padding-top: 18px;
 }
+
+.application-main:has(.home-dashboard) .application-header { height: 82px; min-height: 82px; padding-top: 10px; }
 
 .application-header-bottom,
 .application-header-actions {
@@ -780,7 +783,6 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 }
 
 .application-header-title-row { display: flex; align-items: center; gap: 8px; }
-.application-home-data-note { padding: 3px 6px; border-radius: 5px; background: rgba(0,0,0,.035); color: #77767d; font-size: 9px; font-weight: 500; line-height: 1.2; }
 
 .application-header-title {
   overflow: hidden;
@@ -894,9 +896,15 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   min-height: calc(100dvh - 72px);
 }
 
-.home-canvas {
-  min-height: calc(100dvh - 72px);
-  background: #fff;
+.application-body:has(.home-dashboard) { min-height: calc(100dvh - 82px); }
+.application-header--home .application-header-actions { opacity: 1; gap: 18px; }
+.application-header-search { display: flex; width: min(310px,30vw); height: 38px; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid #e6e9e2; border-radius: 9px; background: #fff; color: #8a9084; font-size: 12px; text-align: left; cursor: pointer; }
+.application-header-search svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.application-header-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: #def0d4; color: #4e6b3c; font-size: 11px; font-weight: 600; }
+@media (max-width: 600px) {
+  .application-header--home .application-header-actions { gap: 10px; }
+  .application-header-search { width: 34px; justify-content: center; padding: 0; }
+  .application-header-search span { display: none; }
 }
 
 .application-page[data-view="compact"] .home-recommendation-grid,
@@ -1167,8 +1175,8 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   .application-search-results { max-height: calc(100dvh - 86px); }
   .application-menu-button { display: grid; margin-right: 0; }
   .application-header { height: 72px; min-height: 72px; padding: 0 12px; }
-  .application-main:has(.home-dashboard) .application-header,
   .application-page--discover .application-header { height: 90px; min-height: 90px; padding: 18px 12px 0; }
+  .application-main:has(.home-dashboard) .application-header { height: 82px; min-height: 82px; padding: 10px 12px 0; }
   .application-header-bottom { gap: 8px; }
   .application-header-start { gap: 8px; }
   .application-header-title { font-size: 20px; }

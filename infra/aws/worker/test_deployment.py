@@ -59,7 +59,7 @@ elif args[:2] == ['ecs', 'describe-task-definition']:
             docker = Path(directory) / "docker"
             docker.write_text("#!/bin/sh\ncat >/dev/null\n")
             docker.chmod(0o755)
-            image = "123.dkr.ecr.test.amazonaws.com/learnspace-worker-staging@sha256:expected"
+            image = "123.dkr.ecr.test.amazonaws.com/learnspace-backend-staging@sha256:expected"
             env = {**os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
                    "AWS_REGION": "test", "GITHUB_SHA": "current-build",
                    "WORKER_RUNTIME_SECRET_ARN": "runtime",

@@ -5,7 +5,7 @@ region="${AWS_REGION:-us-east-1}"
 stage="${LEARNSPACE_STAGE:-staging}"
 stack_name="${AWS_STACK_NAME:-learnspace-discovery-agent-${stage}}"
 function_name="${AWS_FUNCTION_NAME:-learnspace-discovery-agent-${stage}}"
-repository="${AWS_ECR_REPOSITORY:-learnspace-discovery-agent-${stage}}"
+repository="${AWS_ECR_REPOSITORY:-learnspace-backend-${stage}}"
 image_tag="${IMAGE_TAG:-$(date -u +%Y%m%d%H%M%S)}"
 
 command -v aws >/dev/null || { echo "aws CLI is required" >&2; exit 1; }
@@ -29,22 +29,34 @@ if ! aws ecr describe-repositories \
   >/dev/null 2>&1; then
   aws ecr create-repository \
     --repository-name "$repository" \
+    --image-tag-mutability IMMUTABLE \
     --image-scanning-configuration scanOnPush=true \
     --region "$region" \
     >/dev/null
 fi
+aws ecr put-image-tag-mutability \
+  --repository-name "$repository" \
+  --image-tag-mutability IMMUTABLE \
+  --region "$region" \
+  >/dev/null
 
 image_uri="${registry}/${repository}:${image_tag}"
 aws ecr get-login-password --region "$region" \
   | docker login --username AWS --password-stdin "$registry" >/dev/null
 
-docker build \
-  --platform linux/amd64 \
-  --provenance=false \
-  -f services/ai-backend/Dockerfile.lambda \
-  -t "$image_uri" \
-  services/ai-backend
-docker push "$image_uri" >/dev/null
+if ! aws ecr describe-images \
+  --repository-name "$repository" \
+  --image-ids "imageTag=$image_tag" \
+  --region "$region" \
+  >/dev/null 2>&1; then
+  docker build \
+    --platform linux/amd64 \
+    --provenance=false \
+    -f Dockerfile.backend \
+    -t "$image_uri" \
+    .
+  docker push "$image_uri" >/dev/null
+fi
 
 python3 infra/aws/discovery-agent/adopt-existing-function.py
 

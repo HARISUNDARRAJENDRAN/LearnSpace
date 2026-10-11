@@ -55,6 +55,7 @@ export function AuthForm({
         : "",
   );
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
 
   function updateValue(field: keyof typeof initialValues, value: string) {
     setValues((current) => ({ ...current, [field]: value }));
@@ -111,6 +112,22 @@ export function AuthForm({
 
   const googleUrl = `/api/auth/google?next=${encodeURIComponent(next)}`;
 
+  async function startGoogleAuth() {
+    setError("");
+    const desktop = window.learnspaceDesktop;
+    if (!desktop) {
+      window.location.assign(googleUrl);
+      return;
+    }
+    setIsGoogleSubmitting(true);
+    try {
+      await desktop.startGoogleAuth(next);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Google sign-in failed. Please try again.");
+      setIsGoogleSubmitting(false);
+    }
+  }
+
   return (
     <div className={`auth-form-flow auth-form-flow-${mode}`}>
       {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
@@ -127,12 +144,17 @@ export function AuthForm({
         </div>
       ) : null}
       <div className="auth-providers">
-        <a className="auth-provider-button" href={googleUrl}>
+        <button
+          className="auth-provider-button"
+          type="button"
+          disabled={isGoogleSubmitting}
+          onClick={startGoogleAuth}
+        >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path fill="currentColor" d="M12.479 14.265v-3.279h11.049c.108.571.164 1.247.164 1.979 0 2.46-.672 5.502-2.84 7.669C18.744 22.829 16.051 24 12.483 24 5.869 24 .308 18.613.308 12S5.869 0 12.483 0c3.659 0 6.265 1.436 8.223 3.307L18.392 5.62c-1.404-1.317-3.307-2.341-5.913-2.341C7.65 3.279 3.873 7.171 3.873 12s3.777 8.721 8.606 8.721c3.132 0 4.916-1.258 6.059-2.401.927-.927 1.537-2.251 1.777-4.059l-7.836.004Z" />
           </svg>
-          Continue with Google
-        </a>
+          {isGoogleSubmitting ? "Complete sign-in in your browser…" : "Continue with Google"}
+        </button>
       </div>
       <div className="auth-divider" aria-hidden="true"><span>OR</span></div>
       <form className="auth-form" onSubmit={submit}>

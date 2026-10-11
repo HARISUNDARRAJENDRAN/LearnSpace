@@ -36,10 +36,11 @@ services:
 
   migrate:
     mem_limit: ${MIGRATE_MEMORY_LIMIT:-768m}
+    image: learnspace-frontend:local
     build:
       context: .
       dockerfile: Dockerfile
-      target: tools
+      target: development
     environment:
       DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@postgres:5432/learnspace
       NODE_OPTIONS: --max-old-space-size=384
@@ -58,10 +59,12 @@ services:
 
   ai:
     mem_limit: ${AI_MEMORY_LIMIT:-768m}
+    image: learnspace-backend:local
     build:
-      context: ./services/ai-backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.backend
     environment:
+      LEARNSPACE_BACKEND_MODE: api
       MALLOC_ARENA_MAX: "2"
       INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:-local-development-internal-token}"
       DISCOVERY_AGENTS_ENABLED: "${DISCOVERY_AGENTS_ENABLED:-false}"
@@ -89,6 +92,7 @@ services:
 
   web:
     mem_limit: ${WEB_MEMORY_LIMIT:-1536m}
+    image: learnspace-frontend:local
     build:
       context: .
       dockerfile: Dockerfile
@@ -149,11 +153,12 @@ services:
 
   worker:
     mem_limit: ${WORKER_MEMORY_LIMIT:-512m}
+    image: learnspace-backend:local
     build:
       context: .
-      dockerfile: Dockerfile
-      target: development
+      dockerfile: Dockerfile.backend
     environment:
+      LEARNSPACE_BACKEND_MODE: worker
       NODE_ENV: production
       NODE_OPTIONS: --max-old-space-size=384
       DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@postgres:5432/learnspace
@@ -171,20 +176,18 @@ services:
       DISCOVERY_REFRESH_SLOW_HOURS: "${DISCOVERY_REFRESH_SLOW_HOURS:-72}"
       DISCOVERY_REFRESH_JITTER_PERCENT: "${DISCOVERY_REFRESH_JITTER_PERCENT:-0.1}"
       DISCOVERY_REFRESH_DEDUP_HOURS: "${DISCOVERY_REFRESH_DEDUP_HOURS:-12}"
+      WORKER_HEARTBEAT_PATH: /tmp/learnspace-worker-heartbeat
     depends_on:
       migrate:
         condition: service_completed_successfully
       ai:
         condition: service_healthy
-    volumes:
-      - .:/workspace
-      - learnspace_node_modules:/workspace/node_modules
-      - learnspace_web_node_modules:/workspace/apps/web/node_modules
-      - learnspace_db_node_modules:/workspace/packages/db/node_modules
-      - learnspace_shared_node_modules:/workspace/packages/shared/node_modules
-      - learnspace_runner_node_modules:/workspace/services/runner/node_modules
-      - learnspace_worker_node_modules:/workspace/services/worker/node_modules
-    command: ["sh", "-c", "pnpm --filter '@learnspace/worker...' run build && exec node services/worker/dist/index.js --loop"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"process.exit(Date.now()-Number(require('fs').readFileSync(process.env.WORKER_HEARTBEAT_PATH,'utf8'))<180000?0:1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
 volumes:

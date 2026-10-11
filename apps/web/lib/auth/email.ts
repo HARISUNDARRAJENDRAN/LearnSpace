@@ -1,5 +1,4 @@
 import { AuthError } from "./errors";
-import { isDesktopRuntime } from "./config";
 
 function escapeHtml(value: string): string {
   return value
@@ -47,7 +46,7 @@ async function deliverEmail(input: {
     return true;
   }
 
-  if (process.env.NODE_ENV === "production" && !testMode && !isDesktopRuntime()) {
+  if (process.env.NODE_ENV === "production" && !testMode) {
     throw new AuthError(
       "EMAIL_NOT_CONFIGURED",
       "Email delivery is not configured on this server.",
@@ -60,9 +59,7 @@ async function deliverEmail(input: {
 
 function exposeDevelopmentLink(): boolean {
   return (
-    (process.env.NODE_ENV !== "production" ||
-      process.env.AUTH_TEST_MODE === "true" ||
-      isDesktopRuntime()) &&
+    (process.env.NODE_ENV !== "production" || process.env.AUTH_TEST_MODE === "true") &&
     process.env.AUTH_EXPOSE_VERIFICATION_LINK !== "false"
   );
 }

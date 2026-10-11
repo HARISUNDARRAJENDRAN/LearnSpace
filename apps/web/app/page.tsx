@@ -7,9 +7,6 @@ import { Footer } from "../components/marketing/Footer";
 import { NotesDemo } from "../components/marketing/NotesDemo";
 import { MotionEffects } from "../components/marketing/MotionEffects";
 import { Pricing } from "../components/marketing/Pricing";
-import { getCurrentSession } from "../lib/auth/session";
-
-export const dynamic = "force-dynamic";
 
 const learningCommunities = [
 	["r/learnprogramming", "reddit"],
@@ -81,12 +78,10 @@ function CommunityGroup({ hidden = false }: { hidden?: boolean }) {
 }
 
 export default async function Page() {
-	const currentSession = await getCurrentSession();
-
 	return (
 		<main className="marketing-page">
 			<MotionEffects />
-			<Hero authenticated={Boolean(currentSession)} />
+			<Hero />
 			<section className="community-marquee" aria-label="Examples of learning communities" data-reveal="fade">
 				<div className="community-marquee-viewport">
 					<div className="community-marquee-track">
@@ -97,7 +92,7 @@ export default async function Page() {
 			</section>
 			<NotesDemo />
 			<FeatureGrid />
-			<BannerCta authenticated={Boolean(currentSession)} />
+			<BannerCta />
 			<Pricing />
 			<Footer />
 		</main>

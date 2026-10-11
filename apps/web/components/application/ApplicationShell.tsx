@@ -47,7 +47,7 @@ export function ApplicationShell({ user, recentSessions, children }: { user: App
         onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
       />
       <div className="application-main">
-        <AppHeader onMenu={() => setSidebarOpen(true)} viewMode={viewMode} onViewModeChange={setViewMode} />
+        <AppHeader onMenu={() => setSidebarOpen(true)} viewMode={viewMode} onViewModeChange={setViewMode} onOpenSearch={openSearch} user={user} />
         <div className="application-body">{children}</div>
       </div>
       <SearchPalette isOpen={searchOpen} mode={searchMode} onClose={closeSearch} />

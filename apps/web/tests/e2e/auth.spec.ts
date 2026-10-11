@@ -211,11 +211,13 @@ test("Google registration goes straight to onboarding, then returning login goes
   await clearGoogleTestUser();
   // Start on an alias: OAuth must move to the public host before setting state.
   await page.goto("http://127.0.0.1:3101/register");
-  await page.getByRole("link", { name: "Continue with Google" }).click();
+  await page.getByRole("button", { name: "Continue with Google" }).click();
   await expect(page).toHaveURL("http://localhost:3101/onboarding");
+  await page.waitForLoadState("load");
   await page.goto("/login");
   await expect(page).toHaveURL("http://localhost:3101/onboarding");
   await completeOnboarding(page);
+  await page.waitForLoadState("load");
   await page.goto("/register");
   await expect(page).toHaveURL("http://localhost:3101/app");
   await page.goto("/login?next=/login");
@@ -223,7 +225,7 @@ test("Google registration goes straight to onboarding, then returning login goes
   await logout(page);
 
   await page.goto("/login");
-  await page.getByRole("link", { name: "Continue with Google" }).click();
+  await page.getByRole("button", { name: "Continue with Google" }).click();
   await expect(page).toHaveURL("http://localhost:3101/app");
   const databaseUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!databaseUrl) throw new Error("DATABASE_MIGRATOR_URL is required for auth verification");
@@ -257,6 +259,36 @@ test("Google rejects invalid state and redirects errors to the public login URL"
   }
 });
 
+test("Google cancellation and malformed callbacks clear state without creating a session", async ({ request }) => {
+  for (const [query, cookie, error] of [
+    ["state=expected&error=access_denied", "expected.%2Fapp", "google-cancelled"],
+    ["state=expected", "expected.%2Fapp", "google-invalid-callback"],
+    ["state=expected&code=unused", "expected.%ZZ", "google-invalid-callback"],
+    ["state=expected&code=unused", "expected", "google-invalid-callback"],
+  ]) {
+    const response = await request.get(`/api/auth/google/callback?${query}`, {
+      headers: { cookie: `learnspace_oauth_state=${cookie}` },
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(307);
+    expect(response.headers().location).toBe(`http://localhost:3101/login?error=${error}`);
+    expect(response.headers()["set-cookie"]).toContain("learnspace_oauth_state=;");
+    expect(response.headers()["set-cookie"]).toContain("Max-Age=0");
+    expect(response.headers()["set-cookie"]).not.toContain("learnspace_session=");
+  }
+});
+
+test("Google rejects a failed token exchange without creating a session", async ({ request }) => {
+  const response = await request.get("/api/auth/google/callback?state=expected&code=invalid-code", {
+    headers: { cookie: "learnspace_oauth_state=expected.%2Fapp" },
+    maxRedirects: 0,
+  });
+  expect(response.status()).toBe(307);
+  expect(response.headers().location).toBe("http://localhost:3101/login?error=google-failed");
+  expect(response.headers()["set-cookie"]).toContain("learnspace_oauth_state=;");
+  expect(response.headers()["set-cookie"]).not.toContain("learnspace_session=");
+});
+
 test("Google takeover clears the unverified password credential", async ({ page }) => {
   await isolateClientIp(page);
   await clearGoogleTestUser();
@@ -269,7 +301,7 @@ test("Google takeover clears the unverified password credential", async ({ page 
   await expect(page).toHaveURL(/\/verify-email/);
 
   await page.goto("/login");
-  await page.getByRole("link", { name: "Continue with Google" }).click();
+  await page.getByRole("button", { name: "Continue with Google" }).click();
   await expect(page).toHaveURL(/\/onboarding/);
   await completeOnboarding(page);
   await page.waitForLoadState("load");

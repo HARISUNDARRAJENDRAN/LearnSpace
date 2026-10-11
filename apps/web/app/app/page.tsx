@@ -15,5 +15,5 @@ export default async function ApplicationPage() {
   if (!isApplicationPrefetch(await headers())
     && await recordFirstApplicationVisit(currentSession.user.id)) redirect("/app/discover");
   const data = await loadHomeData(currentSession.user.id);
-  return <HomeDashboard {...data} />;
+  return <HomeDashboard {...data} user={{ displayName: currentSession.user.displayName, email: currentSession.user.email }} />;
 }

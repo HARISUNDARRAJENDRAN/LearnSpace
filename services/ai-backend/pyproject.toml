@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Bounded asynchronous discovery agents for LearnSpace"
 requires-python = ">=3.11,<3.14"
 dependencies = [
+  "awslambdaric==4.0.4",
+  "boto3==1.43.111",
   "crewai==1.15.18",
   "crewai-tools==1.15.18",
   "fastapi==0.141.1",

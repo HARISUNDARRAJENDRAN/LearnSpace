@@ -1,6 +1,7 @@
 "use client";
 
-import { AlignJustify, Columns2, LayoutGrid, Menu, Plus } from "lucide-react";
+import { AlignJustify, Columns2, LayoutGrid, Menu, Plus, Search } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
@@ -26,12 +27,14 @@ function contextLabel(pathname: string): string {
 }
 
 type AppHeaderProps = {
+  onOpenSearch: () => void;
+  user: { displayName: string | null; email: string };
   onMenu: () => void;
   viewMode: ApplicationViewMode;
   onViewModeChange: (mode: ApplicationViewMode) => void;
 };
 
-export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps) {
+export function AppHeader({ onMenu, viewMode, onViewModeChange, onOpenSearch, user }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [sourceDiscoveryOpen, setSourceDiscoveryOpen] = useState(false);
@@ -62,6 +65,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
         </div>
 
         <div className="application-header-actions">
+          {isHome ? <><button type="button" className="application-header-search" onClick={onOpenSearch} aria-label="Search your study sessions"><Search aria-hidden="true" /><span>Search your study sessions…</span></button><Link href="/app/settings" className="application-header-avatar" aria-label="Account settings">{(user.displayName || user.email).trim().split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</Link></> : null}
           {showViewControls && (
             <fieldset className="application-header-view-group">
               <legend className="sr-only">Page layout</legend>

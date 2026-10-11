@@ -1,14 +1,12 @@
 import type { NextResponse } from "next/server";
 
-import { isDesktopRuntime } from "./config";
-
 export const sessionCookieName = "learnspace_session";
 export const oauthStateCookieName = "learnspace_oauth_state";
+export const desktopOauthFlowCookieName = "learnspace_desktop_oauth_flow";
 
 export function secureCookies(): boolean {
   if (process.env.AUTH_SECURE_COOKIES === "true") return true;
   if (process.env.AUTH_SECURE_COOKIES === "false") return false;
-  if (isDesktopRuntime()) return false;
   return process.env.NODE_ENV === "production" && process.env.AUTH_TEST_MODE !== "true";
 }
 
@@ -49,6 +47,22 @@ export function setOauthStateCookie(response: NextResponse, value: string): void
 export function clearOauthStateCookie(response: NextResponse): void {
   response.cookies.set({
     name: oauthStateCookieName,
+    value: "",
+    ...cookieOptions(0),
+  });
+}
+
+export function setDesktopOauthFlowCookie(response: NextResponse, flowId: string): void {
+  response.cookies.set({
+    name: desktopOauthFlowCookieName,
+    value: flowId,
+    ...cookieOptions(600),
+  });
+}
+
+export function clearDesktopOauthFlowCookie(response: NextResponse): void {
+  response.cookies.set({
+    name: desktopOauthFlowCookieName,
     value: "",
     ...cookieOptions(0),
   });

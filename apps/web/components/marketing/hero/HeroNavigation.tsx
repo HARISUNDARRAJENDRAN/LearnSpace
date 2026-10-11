@@ -2,9 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-export function HeroNavigation({ authenticated = false }: { authenticated?: boolean }) {
-	const appHref = authenticated ? "/app" : "/register";
-	const appLabel = authenticated ? "Open LearnSpace" : "Start learning";
+export function HeroNavigation() {
 	const [isScrolled, setIsScrolled] = useState(false);
 	const [isMenuOpen, setIsMenuOpen] = useState(false);
 
@@ -36,8 +34,7 @@ export function HeroNavigation({ authenticated = false }: { authenticated?: bool
 					<a href="#pricing">Pricing</a>
 				</div>
 				<div className="hero-navbar-actions">
-					{authenticated ? null : <a className="hero-navbar-login" href="/login">Log in</a>}
-					<a className="hero-navbar-cta" href={appHref}>{appLabel}</a>
+					<a className="hero-navbar-cta" href="https://github.com/HARISUNDARRAJENDRAN/LearnSpace/releases/latest">Download for Linux</a>
 				</div>
 				<div className="hero-navbar-mobile-menu">
 					<button
@@ -60,7 +57,7 @@ export function HeroNavigation({ authenticated = false }: { authenticated?: bool
 						<a href="#how-it-works">How it works</a>
 						<a href="#features">Features</a>
 						<a href="#pricing">Pricing</a>
-						{authenticated ? null : <a href="/login">Log in</a>}
+						<a href="https://github.com/HARISUNDARRAJENDRAN/LearnSpace/releases/latest">Download for Linux</a>
 					</div>
 				</div>
 			</nav>

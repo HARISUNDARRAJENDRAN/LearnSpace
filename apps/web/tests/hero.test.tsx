@@ -10,17 +10,9 @@ test("renders the native LearnSpace learning hero", () => {
   assert.match(markup, /Learn anything\./);
   assert.match(markup, /Lose nothing\./);
   assert.match(markup, /Discover videos and papers/);
-  assert.match(markup, /Start learning/);
+  assert.match(markup, /Download for Linux/);
   assert.match(markup, /See how it works/);
-  assert.doesNotMatch(markup, /Start Free Trial|Download for Playstore|\+100k active users/);
+  assert.doesNotMatch(markup, /Start Free Trial|Download for Playstore|\+100k active users|href="\/(?:login|register|app)/);
   assert.doesNotMatch(markup, /hero-tools|hero-tool/);
   assert.match(markup, /LearnSpace home/);
-});
-
-test("authenticated hero points learners back to the app", () => {
-  const markup = renderToStaticMarkup(<Hero authenticated />);
-
-  assert.match(markup, /Open LearnSpace/);
-  assert.match(markup, /href="\/app"/);
-  assert.doesNotMatch(markup, /Log in|href="\/register"/);
 });

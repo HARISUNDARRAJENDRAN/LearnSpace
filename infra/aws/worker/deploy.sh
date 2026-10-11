@@ -9,17 +9,18 @@ set -euo pipefail
 : "${WORKER_VPC_ID:?}"
 : "${WORKER_SUBNET_IDS:?}"
 
-repository=learnspace-worker-staging
+repository=learnspace-backend-staging
 stack=learnspace-worker-staging
 account="$(aws sts get-caller-identity --query Account --output text)"
 registry="$account.dkr.ecr.$AWS_REGION.amazonaws.com"
 if ! aws ecr describe-repositories --repository-names "$repository" > /dev/null 2>&1; then
   aws ecr create-repository --repository-name "$repository" --image-tag-mutability IMMUTABLE > /dev/null
 fi
+aws ecr put-image-tag-mutability --repository-name "$repository" --image-tag-mutability IMMUTABLE > /dev/null
 aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
 image="$registry/$repository:$GITHUB_SHA"
 if ! aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$GITHUB_SHA" > /dev/null 2>&1; then
-  docker build --platform linux/amd64 --target worker --tag "$image" .
+  docker build --platform linux/amd64 --provenance=false --file Dockerfile.backend --tag "$image" .
   docker push "$image"
 fi
 digest="$(aws ecr describe-images --repository-name "$repository" --image-ids "imageTag=$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)"

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { assertEmailDeliveryConfigured, getAppBaseUrl } from "../../../../lib/auth/config";
+import { assertEmailDeliveryConfigured } from "../../../../lib/auth/config";
+import { passwordResetActionUrl } from "../../../../lib/auth/action-url";
 import { sendPasswordResetEmail } from "../../../../lib/auth/email";
 import { authErrorResponse } from "../../../../lib/auth/errors";
 import { createAuthChallenge, findUserByEmail } from "../../../../lib/auth/repository";
@@ -35,8 +36,7 @@ export async function POST(request: NextRequest) {
           "password_reset",
           new Date(Date.now() + 1000 * 60 * 60),
         );
-        const resetUrl = new URL("/reset-password", getAppBaseUrl(request));
-        resetUrl.searchParams.set("token", token);
+        const resetUrl = passwordResetActionUrl(request, token);
         const delivery = await sendPasswordResetEmail({
           email: user.email,
           displayName: user.displayName ?? "learner",

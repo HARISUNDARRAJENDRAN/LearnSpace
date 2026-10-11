@@ -30,8 +30,8 @@ jobs:
       - run: pnpm run build
       - name: Verify the packaged worker runtime
         run: |
-          docker build --target worker --tag learnspace-worker:ci .
-          docker run --rm --entrypoint node learnspace-worker:ci --input-type=module -e "import './dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
+          docker build --file Dockerfile.backend --tag learnspace-backend:ci .
+          docker run --rm --entrypoint node learnspace-backend:ci --input-type=module -e "import '/worker/dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
 
   database:
     runs-on: ubuntu-latest
@@ -136,7 +136,7 @@ jobs:
       LEARNSPACE_STAGE: staging
       AWS_STACK_NAME: learnspace-discovery-agent-staging
       AWS_FUNCTION_NAME: learnspace-discovery-agent-staging
-      AWS_ECR_REPOSITORY: learnspace-discovery-agent-staging
+      AWS_ECR_REPOSITORY: learnspace-backend-staging
       IMAGE_TAG: ${{ github.sha }}
       EXA_API_KEY_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
       INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}

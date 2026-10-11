@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getAppBaseUrl, getGoogleConfig, getGoogleOAuthEndpoints } from "../../../../lib/auth/config";
 import { createOpaqueToken } from "../../../../lib/auth/crypto";
-import { setOauthStateCookie } from "../../../../lib/auth/cookies";
+import { setDesktopOauthFlowCookie, setOauthStateCookie } from "../../../../lib/auth/cookies";
+import { validDesktopFlowId } from "../../../../lib/auth/desktop-handoff";
 import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
 import { enforceRateLimit } from "../../../../lib/auth/rate-limit";
 import { safeRedirectPath } from "../../../../lib/auth/validation";
@@ -38,6 +39,10 @@ export async function GET(request: NextRequest) {
     const endpoints = getGoogleOAuthEndpoints();
     const state = createOpaqueToken();
     const next = safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined);
+    const desktopFlow = request.nextUrl.searchParams.get("desktop_flow");
+    if (desktopFlow !== null && !validDesktopFlowId(desktopFlow)) {
+      return redirectToLogin(request, "google-unavailable");
+    }
     const stateCookieValue = `${state}.${encodeURIComponent(next)}`;
     const authorizationUrl = new URL(endpoints.authorizationUrl);
     authorizationUrl.searchParams.set("client_id", google.clientId);
@@ -49,11 +54,15 @@ export async function GET(request: NextRequest) {
 
     const response = NextResponse.redirect(authorizationUrl);
     setOauthStateCookie(response, stateCookieValue);
+    if (desktopFlow) {
+      setDesktopOauthFlowCookie(response, desktopFlow);
+    }
     return response;
   } catch (error) {
     if (error instanceof AuthError && error.status === 429) {
       return authErrorResponse(error);
     }
+    console.error("[auth] Google initiation failed", error);
     return redirectToLogin(request, "google-unavailable");
   }
 }

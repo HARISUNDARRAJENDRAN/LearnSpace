@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import {
-  assertEmailDeliveryConfigured,
-  getAppBaseUrl,
-} from "../../../../lib/auth/config";
+import { assertEmailDeliveryConfigured } from "../../../../lib/auth/config";
+import { verificationActionUrl } from "../../../../lib/auth/action-url";
 import { hashPassword } from "../../../../lib/auth/crypto";
 import { sendVerificationEmail } from "../../../../lib/auth/email";
 import { AuthError, authErrorResponse, isUniqueViolation } from "../../../../lib/auth/errors";
@@ -48,9 +46,7 @@ export async function POST(request: NextRequest) {
       "email_verification",
       new Date(Date.now() + 1000 * 60 * 60 * 24),
     );
-    const verificationUrl = new URL("/api/auth/verify", getAppBaseUrl(request));
-    verificationUrl.searchParams.set("token", verificationToken);
-    verificationUrl.searchParams.set("next", next);
+    const verificationUrl = verificationActionUrl(request, verificationToken, next);
     const delivery = await sendVerificationEmail({
       email: user.email,
       displayName: user.displayName ?? input.displayName,

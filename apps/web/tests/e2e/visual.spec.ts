@@ -78,8 +78,9 @@ test.describe("populated Home visual regression", () => {
   });
 
   test("populated Home dashboard at desktop, laptop, tablet, narrow, and mobile breakpoints", async ({ page }) => {
-    await page.context().addCookies([{ name: sessionCookieName, value: homeFixture.sessionToken, url: "http://localhost:3100", httpOnly: true, sameSite: "Lax" }]);
+    await page.context().addCookies([{ name: sessionCookieName, value: homeFixture.sessionToken, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
     for (const [name, viewport] of [
+      ["reference", { width: 1360, height: 768 }],
       ["desktop", desktop],
       ["laptop", laptop],
       ["tablet", tablet],
@@ -92,6 +93,7 @@ test.describe("populated Home visual regression", () => {
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.waitForFunction(() => [...document.images].every((image) => image.complete));
       await stabilize(page);
+      if (viewport.width >= 1200) await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
       await expect(page.locator(".application-main")).toHaveScreenshot(`home-populated-${name}.png`, {
         animations: "disabled",
         caret: "hide",
@@ -160,7 +162,7 @@ test.describe("authenticated app shell visual regression", () => {
       {
         name: sessionCookieName,
         value: sessionToken,
-        url: "http://localhost:3100",
+        url: "http://localhost:3101",
         httpOnly: true,
         sameSite: "Lax",
       },
@@ -197,7 +199,7 @@ test.describe("authenticated app shell visual regression", () => {
       {
         name: sessionCookieName,
         value: sessionToken,
-        url: "http://localhost:3100",
+        url: "http://localhost:3101",
         httpOnly: true,
         sameSite: "Lax",
       },
