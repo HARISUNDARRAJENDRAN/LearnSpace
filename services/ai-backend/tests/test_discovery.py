@@ -1,6 +1,6 @@
 import asyncio
 from datetime import UTC, datetime
-from typing import Literal, cast
+from typing import Any, Literal, cast
 from uuid import UUID
 
 import pytest
@@ -380,6 +380,103 @@ def test_youtube_enrichment_requires_structured_evidence() -> None:
         )
 
 
+def test_youtube_enrichment_uses_bounded_transcript_and_structured_openai_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict[str, object]] = []
+
+    class Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"relevant":true,"conceptCoverage":0.9,'
+                                '"estimatedLevel":"beginner","learningFormat":"hands_on",'
+                                '"hasImplementation":true,"evidence":["shows a working example"],'
+                                '"confidence":0.85}'
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class Client:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 15
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def post(
+            self, url: str, *, headers: dict[str, str], json: dict[str, object]
+        ) -> Response:
+            assert url == "https://api.openai.com/v1/chat/completions"
+            assert headers == {"Authorization": "Bearer test-key"}
+            requests.append(json)
+            return Response()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    def transcript_for(video_id: str) -> str:
+        return f"Transcript for {video_id}"
+
+    monkeypatch.setattr(
+        "app.tools.youtube_content_search.fetch_youtube_transcript",
+        transcript_for,
+    )
+    monkeypatch.setattr("app.tools.youtube_content_search.httpx.AsyncClient", Client)
+
+    result = asyncio.run(
+        YoutubeContentSearchTool(enabled=True).analyze(
+            ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+            "Artificial Intelligence",
+            ToolBudget(1),
+        )
+    )
+    assert result["https://www.youtube.com/watch?v=dQw4w9WgXcQ"].has_implementation is True
+    assert "Transcript for dQw4w9WgXcQ" in str(requests[0]["messages"])
+
+
+def test_youtube_transcript_session_sets_bounded_http_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from requests import Response, Session
+
+    from app.tools.youtube_content_search import fetch_youtube_transcript
+
+    seen: dict[str, object] = {}
+
+    def request(self: Session, *args: Any, **kwargs: Any) -> Response:
+        seen["timeout"] = kwargs.get("timeout")
+        return cast(Response, object())
+
+    class Snippet:
+        text = "transcript"
+
+    class FakeTranscriptApi:
+        def __init__(self, *, http_client: Session) -> None:
+            self.http_client = http_client
+
+        def fetch(self, video_id: str, *, languages: list[str]) -> list[Snippet]:
+            assert video_id == "dQw4w9WgXcQ"
+            assert languages == ["en"]
+            self.http_client.get("https://www.youtube.com/")
+            return [Snippet()]
+
+    monkeypatch.setattr(Session, "request", request)
+    monkeypatch.setattr("youtube_transcript_api.YouTubeTranscriptApi", FakeTranscriptApi)
+    assert fetch_youtube_transcript("dQw4w9WgXcQ") == "transcript"
+    assert seen["timeout"] == (3, 10)
+
+
 def test_youtube_enrichment_uses_canonical_concept_and_preserves_base_on_failure() -> None:
     class FakeExa:
         async def search(self, *args: object, **kwargs: object) -> list[dict[str, object]]:
@@ -706,8 +803,6 @@ def test_instant_timeout_keeps_provider_fetch_alive_and_warms_cache() -> None:
             request_timeout_seconds=1,
             redis_url=None,
             database_ai_url=None,
-            youtube_embedder_provider="openai",
-            youtube_embedder_model="text-embedding-3-small",
             interactive_timeout_seconds=0.01,
         )
 
@@ -760,8 +855,6 @@ def test_stale_instant_refresh_failure_does_not_poison_cache_or_leak_tasks() -> 
             request_timeout_seconds=1,
             redis_url=None,
             database_ai_url=None,
-            youtube_embedder_provider="openai",
-            youtube_embedder_model="text-embedding-3-small",
         )
 
         class FailingRuntime(AgentRuntime):
@@ -811,8 +904,6 @@ def test_empty_instant_success_is_not_cached_as_a_positive_result() -> None:
             request_timeout_seconds=1,
             redis_url=None,
             database_ai_url=None,
-            youtube_embedder_provider="openai",
-            youtube_embedder_model="text-embedding-3-small",
         )
 
         class EmptyRuntime(AgentRuntime):
@@ -904,6 +995,52 @@ def test_arxiv_parser_prefers_structured_results_and_falls_back_to_fixture_text(
     assert fixture[0]["title"] == "Attention Is All You Need"
 
 
+def test_arxiv_search_reads_the_public_atom_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[dict[str, object]] = []
+
+    class Response:
+        text = """<feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>https://arxiv.org/abs/1706.03762v5</id>
+            <title>Attention Is All You Need</title>
+            <summary>We propose a new simple network architecture.</summary>
+            <published>2017-06-12T17:57:34Z</published>
+            <author><name>A. Author</name></author>
+            <category term="cs.CL" />
+          </entry>
+        </feed>"""
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, *, timeout: float) -> None:
+            assert timeout == 10
+
+        async def __aenter__(self) -> "Client":
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        async def get(self, url: str, *, params: dict[str, object]) -> Response:
+            assert url == "https://export.arxiv.org/api/query"
+            assert params["max_results"] == 2
+            assert params["sortBy"] == "relevance"
+            requests.append(params)
+            return Response()
+
+    monkeypatch.setattr("app.tools.arxiv_search.httpx.AsyncClient", Client)
+    result = asyncio.run(
+        ArxivPaperTool(enabled=True).search(
+            ["Artificial Intelligence"], 2, ToolBudget(1), paper_strategy="foundational"
+        )
+    )
+    assert result[0]["url"] == "https://arxiv.org/abs/1706.03762v5"
+    assert result[0]["title"] == "Attention Is All You Need"
+    assert 'all:"foundational"' in str(requests[0]["search_query"])
+
+
 def test_live_readiness_requires_provider_dependencies() -> None:
     settings = Settings(
         internal_service_token="token",
@@ -914,8 +1051,6 @@ def test_live_readiness_requires_provider_dependencies() -> None:
         request_timeout_seconds=8,
         redis_url=None,
         database_ai_url=None,
-        youtube_embedder_provider="openai",
-        youtube_embedder_model="text-embedding-3-small",
     )
     errors = settings.readiness_errors()
     assert "EXA_API_KEY" in errors

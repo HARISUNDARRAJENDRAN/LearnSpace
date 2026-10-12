@@ -141,15 +141,7 @@ jobs:
           version: "0.11.28"
       - run: uv sync --frozen
       - run: uv export --frozen --no-dev --format requirements.txt --output-file /tmp/learnspace-python-requirements.txt
-      # crewai-tools pulls ChromaDB transitively, but LearnSpace never exposes or starts its Chroma server.
-      # These advisories currently have no upstream fix; keep the audit strict for every other dependency.
-      - run: >-
-          uvx --python 3.13 pip-audit --strict
-          --requirement /tmp/learnspace-python-requirements.txt
-          --ignore-vuln PYSEC-2026-311
-          --ignore-vuln PYSEC-2026-3814
-          --ignore-vuln PYSEC-2026-3815
-          --ignore-vuln PYSEC-2026-3813
+      - run: uvx --python 3.13 pip-audit --strict --requirement /tmp/learnspace-python-requirements.txt
       - run: uv run ruff check app tests
       - run: uv run pyright
       - run: uv run pytest

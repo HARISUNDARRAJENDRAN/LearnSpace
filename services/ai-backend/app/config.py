@@ -12,8 +12,6 @@ class Settings:
     request_timeout_seconds: float
     redis_url: str | None
     database_ai_url: str | None
-    youtube_embedder_provider: str
-    youtube_embedder_model: str
     youtube_enrichment_enabled: bool = False
     interactive_timeout_seconds: float = 1.2
     build_sha: str = "unknown"
@@ -33,10 +31,6 @@ class Settings:
             ),
             redis_url=os.getenv("REDIS_URL"),
             database_ai_url=os.getenv("DATABASE_AI_URL"),
-            youtube_embedder_provider=os.getenv("DISCOVERY_YOUTUBE_EMBEDDER_PROVIDER", "openai"),
-            youtube_embedder_model=os.getenv(
-                "DISCOVERY_YOUTUBE_EMBEDDER_MODEL", "text-embedding-3-small"
-            ),
             youtube_enrichment_enabled=os.getenv(
                 "DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED", "false"
             ).lower()
@@ -56,11 +50,7 @@ class Settings:
         if self.agents_enabled:
             if not self.exa_api_key:
                 errors.append("EXA_API_KEY")
-            if (
-                self.youtube_enrichment_enabled
-                and self.youtube_embedder_provider == "openai"
-                and not os.getenv("OPENAI_API_KEY")
-            ):
+            if self.youtube_enrichment_enabled and not os.getenv("OPENAI_API_KEY"):
                 errors.append("OPENAI_API_KEY")
         return errors
 

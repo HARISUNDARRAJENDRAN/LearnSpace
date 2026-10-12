@@ -38,11 +38,7 @@ class AgentRuntime:
         exa = ExaDiscoveryTool(settings.exa_api_key, settings.request_timeout_seconds)
         youtube = YoutubeDiscoveryAgent(
             exa,
-            YoutubeContentSearchTool(
-                settings.youtube_enrichment_enabled,
-                settings.youtube_embedder_provider,
-                settings.youtube_embedder_model,
-            ),
+            YoutubeContentSearchTool(settings.youtube_enrichment_enabled),
             min(10, settings.max_tool_calls),
         )
         arxiv = ArxivDiscoveryAgent(
