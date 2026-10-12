@@ -67,7 +67,9 @@ elif args[:2] == ['ecs', 'describe-task-definition']:
                    "WORKER_RUNTIME_SECRET_ARN": "runtime",
                    "INTERNAL_SERVICE_TOKEN_SECRET_ARN": "token",
                    "VERCEL_TEAM_SLUG": "learnspace-test",
-                   "VERCEL_OIDC_PROVIDER_ARN": "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com",
+                   "VERCEL_OIDC_PROVIDER_ARN": (
+                       "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com"
+                   ),
                    "TEST_OIDC_ARN": "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com",
                    "DISCOVERY_AGENT_URL": "https://agent.test", "WORKER_VPC_ID": "vpc-test",
                    "WORKER_SUBNET_IDS": "subnet-test", "TEST_IMAGE": image}
