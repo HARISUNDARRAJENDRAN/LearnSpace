@@ -61,13 +61,12 @@ try {
   assert.equal(desktopLogin.pathname, "/login");
   assert.equal(desktopLogin.searchParams.get("next"), "/app");
 
-  const sameOriginMutation = await page.request.post(`${baseUrl}/api/auth/login`, {
+  const sameOriginMutation = await page.request.post(`${baseUrl}/api/auth/logout`, {
     headers: { ...desktopHeaders, origin: appOrigin },
-    data: {},
   });
-  assert.equal(sameOriginMutation.status(), 400, "the canonical app origin must pass the CSRF guard");
+  assert.equal(sameOriginMutation.status(), 200, "the canonical app origin must pass the CSRF guard");
   const crossOriginMutation = await page.request.post(
-    `${baseUrl}/api/auth/login`,
+    `${baseUrl}/api/auth/logout`,
     {
       headers: { ...desktopHeaders, origin: "https://attacker.example" },
       data: {},
