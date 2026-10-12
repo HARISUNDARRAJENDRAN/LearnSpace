@@ -71,7 +71,7 @@ async function stagingHomeContainsResource(
   const baseUrl = webUrl.replace(/\/$/, "");
   const login = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", origin: new URL(baseUrl).origin },
     body: JSON.stringify({ email, password, next: "/app" }),
   });
   if (!login.ok) {

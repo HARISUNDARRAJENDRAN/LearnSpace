@@ -3,6 +3,7 @@ import type { LibraryCollectionDetail, LibraryCollectionSummary, ResearchPaperSu
 import { SaveResourceButton, StartCollectionButton, StartStudyButton } from "../study/StudyActions";
 import type { LibraryPageData, SavedLibraryResource } from "../../lib/library/service";
 import type { ResearchPageData } from "../../lib/research/service";
+import { DocumentUploader } from "../library/DocumentUploader";
 
 type SessionSummary = Awaited<ReturnType<typeof import("../../lib/study/service").listStudySessions>>[number];
 
@@ -46,6 +47,7 @@ export function LibraryPage({ data }: { data: LibraryPageData }) {
       <LibraryLane title="Continue a collection" collections={data.continueCollections} />
       <LibraryLane title="Your playlists" collections={playlists} empty="Create a playlist when you have a sequence in mind." />
       {ownedPaths.length > 0 ? <LibraryLane title="Your learning paths" collections={ownedPaths} /> : null}
+      <section className="product-lane document-upload-lane"><div className="product-lane-heading"><h2>Upload a document</h2></div><DocumentUploader /></section>
       <SavedLane resources={data.savedResources} />
       <LibraryLane title="LearnSpace collections" collections={curated} empty="Curated collections will appear here as they are published." />
       {generated.length > 0 ? <LibraryLane title="Made for you" collections={generated} /> : null}

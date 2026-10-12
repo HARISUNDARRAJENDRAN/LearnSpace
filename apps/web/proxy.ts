@@ -2,20 +2,28 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getAppBaseUrl } from "./lib/auth/config";
 
 const sessionCookieName = "learnspace_session";
+const desktopHandoffPostPath = /^\/api\/auth\/desktop\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\/complete)?$/i;
+
+function hasSameOrigin(request: NextRequest): boolean {
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  try {
+    return new URL(origin).origin === request.nextUrl.origin;
+  } catch {
+    return false;
+  }
+}
 
 export function proxy(request: NextRequest) {
-  const testMode = process.env.AUTH_TEST_MODE === "true";
   const pathname = request.nextUrl.pathname;
-  const isDesktop = request.headers.get("x-learnspace-desktop") === "1";
-  const desktopFlow = request.nextUrl.searchParams.get("desktop_flow");
-  const isBrowserOauth = pathname === "/api/auth/google/callback" || (
-    pathname === "/api/auth/google" &&
-    desktopFlow !== null &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(desktopFlow)
-  );
 
-  if (!testMode && !isDesktop && !isBrowserOauth) {
-    return new NextResponse("Not Found", { status: 404 });
+  if (
+    pathname.startsWith("/api/") &&
+    ["POST", "PUT", "PATCH", "DELETE"].includes(request.method) &&
+    !desktopHandoffPostPath.test(pathname) &&
+    !hasSameOrigin(request)
+  ) {
+    return NextResponse.json({ error: "Cross-origin request rejected." }, { status: 403 });
   }
 
   if (

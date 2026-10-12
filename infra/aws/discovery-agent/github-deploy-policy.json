@@ -102,8 +102,16 @@
       ],
       "Resource": [
         "arn:aws:iam::934685482023:role/learnspace-discovery-agent-staging-execution",
-        "arn:aws:iam::934685482023:role/learnspace-worker-staging-execution"
+        "arn:aws:iam::934685482023:role/learnspace-worker-staging-execution",
+        "arn:aws:iam::934685482023:role/learnspace-worker-staging-task",
+        "arn:aws:iam::934685482023:role/learnspace-web-staging-storage"
       ]
+    },
+    {
+      "Sid": "ReadSharedVercelOidcProvider",
+      "Effect": "Allow",
+      "Action": "iam:GetOpenIDConnectProvider",
+      "Resource": "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com"
     },
     {
       "Sid": "ExecutionLoggingPolicy",
@@ -239,6 +247,37 @@
           "iam:PassedToService": "ecs-tasks.amazonaws.com"
         }
       }
+    },
+    {
+      "Sid": "PassWorkerTaskRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::934685482023:role/learnspace-worker-staging-task",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "ecs-tasks.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "ManageStagingDocumentBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketCORS",
+        "s3:PutBucketCORS",
+        "s3:GetLifecycleConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "s3:GetEncryptionConfiguration",
+        "s3:PutEncryptionConfiguration",
+        "s3:GetBucketOwnershipControls",
+        "s3:PutBucketOwnershipControls",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:PutBucketPublicAccessBlock"
+      ],
+      "Resource": "arn:aws:s3:::learnspace-private-documents-staging-934685482023-*"
     },
     {
       "Sid": "WorkerContainers",

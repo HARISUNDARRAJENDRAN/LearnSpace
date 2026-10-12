@@ -130,6 +130,65 @@ test("rate limiting returns a retryable 429", async () => {
     else mutableEnv.NODE_ENV = previous.nodeEnv;
   }
 });
+
+test("production rate limiting uses an atomic Redis counter and fails closed on outage", async () => {
+  const keys = [
+    "AUTH_SECRET",
+    "AUTH_RATE_LIMIT_BACKEND",
+    "NODE_ENV",
+    "UPSTASH_REDIS_REST_URL",
+    "UPSTASH_REDIS_REST_TOKEN",
+    "KV_REST_API_URL",
+    "KV_REST_API_TOKEN",
+  ] as const;
+  const previous = keys.map((key) => process.env[key]);
+  const previousFetch = globalThis.fetch;
+  process.env.AUTH_SECRET = secret;
+  process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
+  mutableEnv.NODE_ENV = "production";
+  process.env.UPSTASH_REDIS_REST_URL = "https://redis.invalid";
+  process.env.UPSTASH_REDIS_REST_TOKEN = "test-only-token";
+  let unavailable = false;
+  const commands: unknown[][] = [];
+  globalThis.fetch = async (_input, init) => {
+    if (unavailable) throw new Error("Redis unavailable");
+    commands.push(JSON.parse(String(init?.body)) as unknown[]);
+    return Response.json({ result: [3, 41] });
+  };
+
+  try {
+    await assert.rejects(
+      () => enforceRateLimit({
+        request: new Request("https://learnspace.example"),
+        bucket: "production-unavailable",
+        limit: 1,
+        windowSeconds: 60,
+      }),
+      (error: unknown) => error instanceof AuthError && error.status === 429 && error.retryAfterSeconds === 41,
+    );
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.[0], "EVAL");
+    assert.match(String(commands[0]?.[1]), /INCR[\s\S]*EXPIRE/);
+
+    unavailable = true;
+    await assert.rejects(
+      () => enforceRateLimit({
+        request: new Request("https://learnspace.example"),
+        bucket: "production-unavailable",
+        limit: 1,
+        windowSeconds: 60,
+      }),
+      (error: unknown) => error instanceof AuthError && error.code === "RATE_LIMIT_UNAVAILABLE" && error.status === 503,
+    );
+  } finally {
+    keys.forEach((key, index) => {
+      if (previous[index] === undefined) delete process.env[key];
+      else mutableEnv[key] = previous[index];
+    });
+    globalThis.fetch = previousFetch;
+  }
+});
+
 test("production auth URLs require an HTTPS APP_URL", () => {
   const previous = { appUrl: process.env.APP_URL, nodeEnv: process.env.NODE_ENV };
   mutableEnv.NODE_ENV = "production";

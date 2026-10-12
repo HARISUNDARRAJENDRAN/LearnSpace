@@ -9,6 +9,19 @@ Parameters:
     Type: String
   AgentUrl:
     Type: String
+  AppOrigin:
+    Type: String
+    Default: https://learnspace-staging.vercel.app
+    AllowedPattern: '^https://[A-Za-z0-9.-]+$'
+    Description: Exact HTTPS origin allowed to upload private PDFs; no path or wildcard.
+  VercelTeamSlug:
+    Type: String
+    AllowedPattern: '^[A-Za-z0-9_-]+$'
+    Description: Team slug used by the LearnSpace staging project's Vercel OIDC subject and audience.
+  VercelOidcProviderArn:
+    Type: String
+    AllowedPattern: '^arn:aws:iam::934685482023:oidc-provider/oidc\.vercel\.com$'
+    Description: Existing account-level Vercel OIDC provider; it is shared with production and must not be stack-owned.
   BuildSha:
     Type: String
   VpcId:
@@ -25,6 +38,49 @@ Resources:
     Properties:
       LogGroupName: /learnspace/worker/staging
       RetentionInDays: 7
+  DocumentBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub 'learnspace-private-documents-staging-${AWS::AccountId}-${AWS::Region}'
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins:
+              - !Ref AppOrigin
+            AllowedMethods:
+              - GET
+              - PUT
+            AllowedHeaders:
+              - Content-Type
+              - Content-Length
+              - If-None-Match
+              - Range
+              - If-Range
+            ExposedHeaders:
+              - Accept-Ranges
+              - Content-Length
+              - Content-Range
+              - ETag
+            MaxAge: 300
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-abandoned-document-uploads
+            Status: Enabled
+            Prefix: pending/
+            ExpirationInDays: 1
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -66,6 +122,67 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: [!Ref RuntimeSecretArn, !Ref InternalTokenSecretArn]
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: learnspace-worker-staging-task
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ecs-tasks.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:*'
+      Policies:
+        - PolicyName: private-document-processing
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${DocumentBucket.Arn}/pending/*'
+              - Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub '${DocumentBucket.Arn}/private/*'
+              - Effect: Allow
+                Action: s3:DeleteObject
+                Resource:
+                  - !Sub '${DocumentBucket.Arn}/pending/*'
+                  - !Sub '${DocumentBucket.Arn}/private/*'
+  WebStorageRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: learnspace-web-staging-storage
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref VercelOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'oidc.vercel.com:aud': !Sub 'https://vercel.com/${VercelTeamSlug}'
+                'oidc.vercel.com:sub': !Sub 'owner:${VercelTeamSlug}:project:learnspace-staging:environment:production'
+      Policies:
+        - PolicyName: private-document-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetBucketLocation
+                Resource: !GetAtt DocumentBucket.Arn
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource:
+                  - !Sub '${DocumentBucket.Arn}/pending/*'
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub '${DocumentBucket.Arn}/private/*'
   Task:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -78,6 +195,7 @@ Resources:
       RequiresCompatibilities: [FARGATE]
       RuntimePlatform: {CpuArchitecture: X86_64, OperatingSystemFamily: LINUX}
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: worker
           Image: !Ref ImageUri
@@ -86,6 +204,8 @@ Resources:
           Environment:
             - {Name: LEARNSPACE_BACKEND_MODE, Value: worker}
             - {Name: DISCOVERY_AGENT_URL, Value: !Ref AgentUrl}
+            - {Name: S3_BUCKET, Value: !Ref DocumentBucket}
+            - {Name: S3_REGION, Value: !Ref AWS::Region}
             - {Name: WORKER_BUILD_SHA, Value: !Ref BuildSha}
             - {Name: WORKER_HEARTBEAT_PATH, Value: /tmp/learnspace-worker-heartbeat}
             - {Name: NODE_OPTIONS, Value: '--max-old-space-size=256'}
@@ -135,3 +255,7 @@ Outputs:
     Value: !Ref Cluster
   ServiceName:
     Value: !GetAtt Service.Name
+  DocumentBucketName:
+    Value: !Ref DocumentBucket
+  WebStorageRoleArn:
+    Value: !GetAtt WebStorageRole.Arn

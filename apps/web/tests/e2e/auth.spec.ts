@@ -318,12 +318,12 @@ test("auth login rate limit returns HTTP 429", async ({ request }) => {
   const limitedEmail = `rate-${Date.now()}@example.test`;
   const rateIp = `e2e-rate-${Date.now()}`;
   let lastResponse = await request.post("/api/auth/login", {
-    headers: { "x-real-ip": rateIp },
+    headers: { origin: "http://localhost:3101", "x-real-ip": rateIp },
     data: { email: limitedEmail, password: "wrong-password" },
   });
   for (let attempt = 1; attempt < 9; attempt += 1) {
     lastResponse = await request.post("/api/auth/login", {
-      headers: { "x-real-ip": rateIp },
+      headers: { origin: "http://localhost:3101", "x-real-ip": rateIp },
       data: { email: limitedEmail, password: "wrong-password" },
     });
   }

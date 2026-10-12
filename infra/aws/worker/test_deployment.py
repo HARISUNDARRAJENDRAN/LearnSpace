@@ -45,6 +45,8 @@ import json, os, sys
 args = sys.argv[1:]
 if args[:2] == ['sts', 'get-caller-identity']:
     print('123')
+elif args[:2] == ['cloudformation', 'deploy']:
+    assert 'VercelOidcProviderArn=' + os.environ['TEST_OIDC_ARN'] in args
 elif args[:2] == ['ecr', 'describe-images'] and '--query' in args:
     print('sha256:expected')
 elif args[:2] == ['ecs', 'describe-services']:
@@ -64,6 +66,9 @@ elif args[:2] == ['ecs', 'describe-task-definition']:
                    "AWS_REGION": "test", "GITHUB_SHA": "current-build",
                    "WORKER_RUNTIME_SECRET_ARN": "runtime",
                    "INTERNAL_SERVICE_TOKEN_SECRET_ARN": "token",
+                   "VERCEL_TEAM_SLUG": "learnspace-test",
+                   "VERCEL_OIDC_PROVIDER_ARN": "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com",
+                   "TEST_OIDC_ARN": "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com",
                    "DISCOVERY_AGENT_URL": "https://agent.test", "WORKER_VPC_ID": "vpc-test",
                    "WORKER_SUBNET_IDS": "subnet-test", "TEST_IMAGE": image}
             for build, deployed_image, expected in [
@@ -76,6 +81,11 @@ elif args[:2] == ['ecs', 'describe-task-definition']:
                 )
                 self.assertEqual(result.returncode, expected, result.stderr)
                 self.assertEqual("WORKER_VERIFIED" in result.stdout, expected == 0)
+
+    def test_worker_storage_uses_a_shared_account_level_oidc_provider(self):
+        template = (ROOT / "template.yaml").read_text()
+        self.assertNotIn("AWS::IAM::OIDCProvider", template)
+        self.assertIn("VercelOidcProviderArn", template)
 
 
 if __name__ == "__main__":

@@ -67,7 +67,7 @@ async function visibleResource(tx: Transaction, userId: string, resourceId: stri
 export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
   return withUserTransaction(userId, async (tx) => {
     const [savedRows, collectionRows] = await Promise.all([
-      tx.select({ item: libraryItems, resource: resources, video: videoDetails, paper: paperDetails }).from(libraryItems).innerJoin(resources, eq(resources.id, libraryItems.resourceId)).leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id)).leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id)).where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "saved"))).orderBy(desc(libraryItems.updatedAt)).limit(60),
+      tx.select({ item: libraryItems, resource: resources, video: videoDetails, paper: paperDetails }).from(libraryItems).innerJoin(resources, eq(resources.id, libraryItems.resourceId)).leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id)).leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id)).where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "saved"), isNull(resources.deletedAt))).orderBy(desc(libraryItems.updatedAt)).limit(60),
       tx.select().from(collections).where(or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))).orderBy(desc(collections.updatedAt)).limit(40),
     ]);
     const resourceIds = savedRows.map((row) => row.resource.id);
@@ -93,7 +93,7 @@ export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
         progressPct: Number(progressByResource.get(row.resource.id)?.progressPct ?? 0),
         lastOpenedAt: iso(progressByResource.get(row.resource.id)?.lastOpenedAt ?? row.item.lastOpenedAt),
         canonicalUrl: row.resource.canonicalUrl,
-        readiness: readiness(row.resource.status, Boolean(row.resource.currentVersionId), row.resource.type === "video" ? Boolean(row.video?.youtubeId) : row.resource.type === "paper" || row.resource.type === "pdf" ? Boolean(row.paper) : true),
+        readiness: readiness(row.resource.status, Boolean(row.resource.currentVersionId), row.resource.provider === "user_upload" && row.resource.type === "pdf" ? true : row.resource.type === "video" ? Boolean(row.video?.youtubeId) : row.resource.type === "paper" || row.resource.type === "pdf" ? Boolean(row.paper) : true),
       })),
       collections: summaries,
       continueCollections: summaries.filter((collection) => collection.progressPct !== null && collection.progressPct < 100),

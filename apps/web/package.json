@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsx scripts/generate-category-intelligence.ts && next build --webpack",
+    "build": "node scripts/assert-no-project-env.mjs && tsx scripts/generate-category-intelligence.ts && next build --webpack",
     "dev": "next dev --webpack",
     "start": "next start",
     "start:standalone": "node scripts/start-standalone.mjs",

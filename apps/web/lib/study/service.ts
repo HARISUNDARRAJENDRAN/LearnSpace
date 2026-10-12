@@ -198,7 +198,16 @@ function resourceFromRow(row: {
           publicationDate: row.paper.publicationDate,
           pdfSourceUrl: safeSourceUrl(row.paper.pdfSourceUrl, "paper"),
         }
-      : null,
+      : row.resource.provider === "user_upload" && row.resource.type === "pdf"
+        ? {
+            arxivId: null,
+            doi: null,
+            abstract: row.resource.description,
+            venue: null,
+            publicationDate: null,
+            pdfSourceUrl: `/api/v1/resources/${row.resource.id}/file`,
+          }
+        : null,
   };
 }
 

@@ -8,6 +8,8 @@ set -euo pipefail
 : "${DISCOVERY_AGENT_URL:?}"
 : "${WORKER_VPC_ID:?}"
 : "${WORKER_SUBNET_IDS:?}"
+: "${VERCEL_TEAM_SLUG:?}"
+: "${VERCEL_OIDC_PROVIDER_ARN:?}"
 
 repository=learnspace-backend-staging
 stack=learnspace-worker-staging
@@ -28,7 +30,8 @@ aws cloudformation deploy --stack-name "$stack" --template-file infra/aws/worker
   --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset \
   --parameter-overrides "ImageUri=$registry/$repository@$digest" "BuildSha=$GITHUB_SHA" \
     "RuntimeSecretArn=$WORKER_RUNTIME_SECRET_ARN" "InternalTokenSecretArn=$INTERNAL_SERVICE_TOKEN_SECRET_ARN" \
-    "AgentUrl=$DISCOVERY_AGENT_URL" "VpcId=$WORKER_VPC_ID" "SubnetIds=$WORKER_SUBNET_IDS"
+    "AgentUrl=$DISCOVERY_AGENT_URL" "VpcId=$WORKER_VPC_ID" "SubnetIds=$WORKER_SUBNET_IDS" \
+    "VercelTeamSlug=$VERCEL_TEAM_SLUG" "VercelOidcProviderArn=$VERCEL_OIDC_PROVIDER_ARN"
 aws ecs wait services-stable --cluster "$stack" --services "$stack"
 service="$(aws ecs describe-services --cluster "$stack" --services "$stack")"
 task_definition="$(echo "$service" | python3 -c 'import json,sys; s=json.load(sys.stdin)["services"][0]; assert s["runningCount"] == 1 and s["pendingCount"] == 0 and len(s["deployments"]) == 1 and s["deployments"][0]["rolloutState"] == "COMPLETED"; print(s["taskDefinition"])')"

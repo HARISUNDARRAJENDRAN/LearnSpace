@@ -79,12 +79,28 @@ by the service token.
 
 ## GitHub Actions
 
-`.github/workflows/discovery-agent-deploy.yml` is manual by design. Configure
-these repository secrets, then run it from the Actions tab:
+The AWS agent is deployed by the `deploy-agent` job in
+`.github/workflows/ci.yml`. It runs only by manual dispatch from `main` with
+`deploy_staging` enabled, after the foundation, database, and Python jobs pass.
+Configure these staging-environment secrets before dispatch:
 
 - `AWS_DISCOVERY_AGENT_ROLE_ARN` — an IAM role trusted by GitHub OIDC
 - `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`
 - `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`
+- `STAGING_VERCEL_PROJECT_ID` — must identify the `learnspace-staging` project
+- `VERCEL_ORG_ID`, `VERCEL_TOKEN`
+- `STAGING_DATABASE_MIGRATOR_URL`, `STAGING_DATABASE_WORKER_URL`
+- `STAGING_DISCOVERY_AGENT_URL`, `STAGING_INTERNAL_SERVICE_TOKEN`
+- `STAGING_DISCOVERY_SMOKE_EMAIL`, `STAGING_DISCOVERY_SMOKE_PASSWORD`
+
+Set the `STAGING_VERCEL_TEAM_SLUG` and
+`STAGING_VERCEL_OIDC_PROVIDER_ARN` variables on the same GitHub environment.
+The ARN must identify the pre-provisioned account-level `oidc.vercel.com`
+provider with audience `https://vercel.com/<team-slug>`. Keep that shared
+provider outside the staging CloudFormation stack so staging teardown cannot
+break production trust. The staging project must use Vercel's global OIDC
+issuer; its runtime receives only the private-document S3 role scoped to the
+staging bucket prefixes.
 
 The workflow uses the same deploy script and never stores the provider key in
 GitHub Actions.

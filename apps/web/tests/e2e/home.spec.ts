@@ -79,7 +79,7 @@ test("first app entry goes to Discover once; empty Home works across later sessi
       }
       (window as unknown as { YT: { Player: typeof FixturePlayer } }).YT = { Player: FixturePlayer };
     });
-    const started = await page.request.post("/api/v1/study-sessions", { data: { resourceId: fixture.resources.hero, origin: "discover", idempotencyKey: randomUUID() } });
+    const started = await page.request.post("/api/v1/study-sessions", { headers: { origin: "http://localhost:3101" }, data: { resourceId: fixture.resources.hero, origin: "discover", idempotencyKey: randomUUID() } });
     expect(started.ok()).toBeTruthy();
     const study = await started.json() as { route: string };
     await page.goto(study.route);

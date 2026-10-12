@@ -339,6 +339,7 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   if (!behaviorCoreResourceId) throw new Error("behavior seed resource was not created");
   for (let index = 0; index < 2; index += 1) {
     const response = await page.request.post("/api/v1/discovery/interactions", {
+      headers: { origin: "http://localhost:3101" },
       data: {
         resourceId: behaviorCoreResourceId,
         action: "save",
@@ -399,6 +400,7 @@ test("meaningful learning promotes an adjacent concept and dismissal persists", 
   const promoted = changedHome.sections.recommendedVideos.find((card) => card.resourceId === behaviorAdjacentResourceId);
   expect(promoted?.reason).toBeTruthy();
   const dismissal = await page.request.post("/api/v1/discovery/interactions", {
+    headers: { origin: "http://localhost:3101" },
     data: { resourceId: behaviorAdjacentResourceId, action: "dismiss", correlationId: randomUUID(), metadata: {} },
   });
   expect(dismissal.ok()).toBe(true);

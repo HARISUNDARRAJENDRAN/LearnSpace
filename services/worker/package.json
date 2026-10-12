@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@learnspace/shared": "workspace:*",
+    "pdfjs-dist": "^6.4.299",
     "postgres": "3.4.9"
   },
   "devDependencies": {

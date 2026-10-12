@@ -17,13 +17,16 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ inputs.tag }}
+          fetch-depth: 0
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
         with:
           version: 11.24.0
@@ -41,12 +44,24 @@ jobs:
             echo "Release tag $RELEASE_TAG must match desktop package version v$package_version."
             exit 1
           fi
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$(git rev-parse HEAD)" FETCH_HEAD; then
+            echo "Release tag must point to a commit already merged into main."
+            exit 1
+          fi
       - name: Verify hosted desktop service
         env:
           APP_ORIGIN: ${{ inputs.app_origin }}
+          PRODUCTION_APP_ORIGIN: ${{ vars.PRODUCTION_APP_ORIGIN }}
         run: |
           app_origin="${APP_ORIGIN%/}"
+          if [[ -z "$PRODUCTION_APP_ORIGIN" || "$app_origin" != "${PRODUCTION_APP_ORIGIN%/}" || "$app_origin" != https://* || "$app_origin" == "https://learnspace-staging.vercel.app" ]]; then
+            echo "The package origin must exactly match the configured production origin."
+            exit 1
+          fi
           curl --fail --silent --show-error --max-time 20 "$app_origin/api/health" > /dev/null
+          curl --fail --silent --show-error --max-time 20 "$app_origin/" > /dev/null
+          curl --fail --silent --show-error --max-time 20 "$app_origin/login" > /dev/null
           curl --fail --silent --show-error --location --max-time 20 \
             --header 'x-learnspace-desktop: 1' "$app_origin/login" > /dev/null
       - name: Build Linux packages

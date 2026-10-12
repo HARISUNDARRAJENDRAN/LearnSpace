@@ -5,6 +5,7 @@ import { redisCommands, recommendationCatalogKey } from "@learnspace/shared/reco
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { recommendationMaintenance } from "./recommendation-maintenance.js";
+import { deleteUploadedObjects, ingestUploadedPdf, markUploadedPdfFailed } from "./document-ingestion.js";
 import {
   DISCOVERY_LEARNING_FORMATS,
   canonicalYoutubeUrl,
@@ -380,7 +381,11 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
       SELECT id, event_type, user_id, payload, correlation_id, trace_id
       FROM ops.outbox_events
       WHERE status = 'pending'
-        AND event_type IN ('discovery.refresh_requested', 'discovery.candidates_discovered')
+        AND (
+          event_type IN ('discovery.refresh_requested', 'discovery.candidates_discovered')
+          OR (event_type = 'resource.ingestion_requested' AND payload->>'sourceKind' = 'uploaded_document')
+          OR event_type = 'resource.file_deletion_requested'
+        )
         AND available_at <= now()
       ORDER BY created_at
       FOR UPDATE SKIP LOCKED
@@ -389,8 +394,38 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
     const outbox = rows[0];
     if (!outbox?.user_id) return null;
     const outboxPayload = objectValue(outbox.payload);
-    if (!outboxPayload) return null;
     const traceId = outbox.trace_id ?? `outbox-${outbox.id}`;
+    if (outbox.event_type === "resource.ingestion_requested" || outbox.event_type === "resource.file_deletion_requested") {
+      const resourceId = stringValue(outboxPayload?.resourceId);
+      const versionId = stringValue(outboxPayload?.versionId);
+      const validUuid = (value: string | null): value is string => Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+      const objectKeys = outboxPayload?.objectKeys;
+      const validDeletionKeys = Array.isArray(objectKeys)
+        && objectKeys.length <= 500
+        && objectKeys.every((key) => typeof key === "string");
+      if (!outbox.user_id || !outboxPayload || !validUuid(resourceId)
+        || (outbox.event_type === "resource.ingestion_requested" && (!validUuid(versionId) || typeof outboxPayload.objectKey !== "string"))
+        || (outbox.event_type === "resource.file_deletion_requested" && !validDeletionKeys)) {
+        await tx`UPDATE ops.outbox_events SET status = 'dead', last_error = 'invalid resource storage event' WHERE id = ${outbox.id}`;
+        return null;
+      }
+      const jobPayload = outbox.event_type === "resource.ingestion_requested"
+        ? { userId: outbox.user_id, resourceId, versionId, objectKey: outboxPayload.objectKey, traceId }
+        : { userId: outbox.user_id, resourceId, objectKeys, traceId };
+      const jobType = outbox.event_type === "resource.ingestion_requested" ? "resource.ingest_pdf" : "resource.delete_objects";
+      const dedupKey = outbox.event_type === "resource.ingestion_requested"
+        ? `resource:ingest:${resourceId}:${versionId}`
+        : `resource:delete:${resourceId}:${outbox.id}`;
+      const inserted = await tx<{ id: string }[]>`
+        INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', ${jobType}, ${tx.json(jobPayload)}, 'pending', 20, ${dedupKey}, ${outbox.id}, ${outbox.correlation_id}, ${traceId})
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      await tx`UPDATE ops.outbox_events SET status = 'published', published_at = now() WHERE id = ${outbox.id}`;
+      return inserted[0]?.id ?? null;
+    }
+    if (!outboxPayload) return null;
     const conceptIds = stringArray(outboxPayload.conceptIds);
     const conceptNames = stringArray(outboxPayload.conceptNames);
     const sourcePickerRunId = stringValue(outboxPayload.sourcePickerRunId);
@@ -775,7 +810,7 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
   await sql`
     UPDATE ops.jobs
     SET status = (CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END)::ops.job_status,
-      last_error_code = 'DISCOVERY_REFRESH_FAILED',
+      last_error_code = ${job.job_type.startsWith("resource.") ? "RESOURCE_INGESTION_FAILED" : "DISCOVERY_REFRESH_FAILED"},
       last_error_detail = ${detail},
       available_at = now() + make_interval(secs => ${retryDelaySeconds}),
       finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
@@ -784,6 +819,9 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
       updated_at = now()
     WHERE id = ${job.id}
   `;
+  if (job.job_type === "resource.ingest_pdf" && job.attempts >= job.max_attempts) {
+    await markUploadedPdfFailed(sql, job);
+  }
   const runId = stringValue(job.payload.source_picker_run_id);
   if (runId && job.attempts >= job.max_attempts) {
     await sql`
@@ -799,8 +837,6 @@ export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}
   const agentUrl = process.env.DISCOVERY_AGENT_URL;
   const token = process.env.INTERNAL_SERVICE_TOKEN;
   if (!databaseUrl) throw new Error("DATABASE_WORKER_URL is required");
-  if (!agentUrl) throw new Error("DISCOVERY_AGENT_URL is required");
-  if (!token) throw new Error("INTERNAL_SERVICE_TOKEN is required");
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
@@ -820,9 +856,21 @@ export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}
         const result = { ...persisted };
         await markSourcePickerRefresh(sql, job, persisted.resourceIds);
         if (persisted.resourceIds.length) await redisCommands([["INCR", recommendationCatalogKey]]);
-      await finishJob(sql, job, result);
+        await finishJob(sql, job, result);
         return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
       }
+      if (job.job_type === "resource.ingest_pdf") {
+        const result = await ingestUploadedPdf(sql, job);
+        await finishJob(sql, job, result);
+        return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
+      }
+      if (job.job_type === "resource.delete_objects") {
+        const result = await deleteUploadedObjects(sql, job);
+        await finishJob(sql, job, result);
+        return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
+      }
+      if (!agentUrl) throw new Error("DISCOVERY_AGENT_URL is required");
+      if (!token) throw new Error("INTERNAL_SERVICE_TOKEN is required");
       const batch = await callAgent(agentUrl, token, job);
       const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
       if (sourcePickerRunId && batch.failures.length > 0 && batch.youtube.length === 0 && batch.arxiv.length === 0) {

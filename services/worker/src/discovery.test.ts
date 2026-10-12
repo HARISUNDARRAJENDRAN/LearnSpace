@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult, sourcePickerJobPayload } from "./discovery.js";
+import { extractPdfChunks, hasPdfHeader } from "./document-ingestion.js";
 import { DISCOVERY_SMOKE_SYSTEM_ACCOUNT, hasSmokeAccountMarker } from "./discovery-smoke-provision.js";
+import { signPrivateUpload } from "@learnspace/shared/private-storage";
 
 test("discovery jobs are scoped to one canonical concept", () => {
   const payload = discoveryPayload(
@@ -60,6 +62,64 @@ test("smoke agent requests can explicitly bypass a stale cache", () => {
     force_refresh: true,
   });
   assert.equal(payload.force_refresh, true);
+});
+
+test("uploaded documents must have a PDF header within the file signature window", () => {
+  const pdf = new TextEncoder().encode(`${" ".repeat(900)}%PDF-1.7`);
+  assert.equal(hasPdfHeader(pdf), true);
+  assert.equal(hasPdfHeader(new TextEncoder().encode("not a PDF")), false);
+  assert.equal(hasPdfHeader(new TextEncoder().encode(`${" ".repeat(1024)}%PDF-1.7`)), false);
+});
+
+test("presigned PDF uploads are content-bound and cannot be overwritten", async () => {
+  const envKeys = ["VERCEL", "VERCEL_ENV", "S3_BUCKET", "S3_REGION", "S3_ENDPOINT", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"];
+  const previous = new Map(envKeys.map((key) => [key, process.env[key]]));
+  process.env.VERCEL = "0";
+  process.env.S3_BUCKET = "learnspace-upload-test";
+  process.env.S3_REGION = "us-east-1";
+  delete process.env.VERCEL_ENV;
+  delete process.env.S3_ENDPOINT;
+  process.env.AWS_ACCESS_KEY_ID = "AKIDEXAMPLE";
+  process.env.AWS_SECRET_ACCESS_KEY = "local-test-secret-not-a-credential";
+  delete process.env.AWS_SESSION_TOKEN;
+  try {
+    const signed = await signPrivateUpload("pending/user/resource/version/random.pdf", 123);
+    assert.equal(signed.headers["If-None-Match"], "*");
+    const requiredHeaders = new URL(signed.url).searchParams.get("X-Amz-SignedHeaders")?.split(";") ?? [];
+    assert.ok(requiredHeaders.includes("content-length"));
+    assert.ok(requiredHeaders.includes("content-type"));
+    assert.ok(requiredHeaders.includes("if-none-match"));
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test("PDF ingestion extracts bounded page text into searchable chunks", async () => {
+  const stream = "BT /F1 12 Tf 50 200 Td (LearnSpace private PDF) Tj ET";
+  const bodies = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+    "2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+    "3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+    "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+    `5 0 obj << /Length ${stream.length} >> stream\n${stream}\nendstream endobj\n`,
+  ];
+  let source = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const body of bodies) {
+    offsets.push(source.length);
+    source += body;
+  }
+  const xrefOffset = source.length;
+  source += `xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  const result = await extractPdfChunks(new TextEncoder().encode(source));
+  assert.equal(result.pageCount, 1);
+  assert.equal(result.chunks.length, 1);
+  assert.match(result.chunks[0]?.content ?? "", /LearnSpace private PDF/);
+  assert.equal(result.chunks[0]?.page, 1);
 });
 
 test("agent payload construction rejects multi-concept refreshes", () => {

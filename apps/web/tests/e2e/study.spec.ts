@@ -178,6 +178,7 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(page.getByText("Learning context preparing")).toBeVisible();
 
   const progressResponse = await page.request.post(`/api/v1/study-sessions/${videoSessionId}/progress`, {
+    headers: { origin: "http://localhost:3101" },
     data: { resourceId: videoResourceId, progressPct: 25, anchor: { kind: "video", positionMs: 150000 }, event: "checkpoint", idempotencyKey: `e2e-progress-${randomUUID()}` },
   });
   expect(progressResponse.status()).toBe(200);

@@ -26,9 +26,10 @@ function percentile(values, percentage) {
 
 async function measure(query, rankingIntent, scenario) {
   const started = performance.now();
+  const origin = new URL(baseUrl).origin;
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/v1/source-discovery/search`, {
     method: "POST",
-    headers: { "content-type": "application/json", cookie },
+    headers: { "content-type": "application/json", cookie, origin },
     body: JSON.stringify({ mode, query, rankingIntent, correlationId: randomUUID() }),
   });
   const body = await response.json();

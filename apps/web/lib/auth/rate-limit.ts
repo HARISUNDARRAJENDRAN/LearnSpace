@@ -13,6 +13,14 @@ type RateLimitInput = {
 
 type Counter = { count: number; resetAt: number };
 
+const redisIncrementScript = `
+local count = redis.call("INCR", KEYS[1])
+if count == 1 or redis.call("TTL", KEYS[1]) < 0 then
+  redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return {count, redis.call("TTL", KEYS[1])}
+`;
+
 const memoryCounters = new Map<string, Counter>();
 let warnedUnavailable = false;
 
@@ -38,48 +46,57 @@ async function redisIncrement(key: string, windowSeconds: number): Promise<Count
     throw new Error("Upstash Redis is not configured");
   }
 
-  const headers = { Authorization: `Bearer ${token}` };
-  const response = await fetch(`${url}/incr/${encodeURIComponent(key)}`, { headers });
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(["EVAL", redisIncrementScript, "1", key, String(windowSeconds)]),
+    cache: "no-store",
+    signal: AbortSignal.timeout(3000),
+  });
   if (!response.ok) {
     throw new Error(`Upstash increment failed with ${response.status}`);
   }
 
-  const body = (await response.json()) as { result?: unknown };
-  if (typeof body.result !== "number") {
+  const body: unknown = await response.json();
+  const result = body && typeof body === "object" && "result" in body
+    ? (body as { result: unknown }).result
+    : null;
+  if (
+    !Array.isArray(result) || typeof result[0] !== "number" ||
+    typeof result[1] !== "number" || result[1] < 0
+  ) {
     throw new Error("Upstash returned an invalid counter");
   }
 
-  if (body.result === 1) {
-    const expiryResponse = await fetch(
-      `${url}/expire/${encodeURIComponent(key)}/${windowSeconds}`,
-      { headers },
-    );
-    if (!expiryResponse.ok) {
-      throw new Error(`Upstash expiry failed with ${expiryResponse.status}`);
-    }
-  }
-
-  return { count: body.result, resetAt: Date.now() + windowSeconds * 1000 };
+  return { count: result[0], resetAt: Date.now() + result[1] * 1000 };
 }
 
 async function increment(key: string, windowSeconds: number): Promise<Counter> {
+  const production = process.env.NODE_ENV === "production";
   if (
-    process.env.AUTH_RATE_LIMIT_BACKEND === "memory" ||
+    (!production && process.env.AUTH_RATE_LIMIT_BACKEND === "memory") ||
     (!process.env.UPSTASH_REDIS_REST_URL &&
       !process.env.KV_REST_API_URL &&
-      process.env.NODE_ENV !== "production")
+      !production)
   ) {
     return memoryIncrement(key, windowSeconds);
   }
 
   try {
     return await redisIncrement(key, windowSeconds);
-  } catch (error) {
+  } catch {
+    if (production) {
+      throw new AuthError(
+        "RATE_LIMIT_UNAVAILABLE",
+        "Authentication is temporarily unavailable. Please try again.",
+        503,
+      );
+    }
     if (!warnedUnavailable) {
       warnedUnavailable = true;
-      console.error("[auth] rate limiter unavailable; allowing the request", error);
+      console.warn("[auth] rate limiter unavailable; using the local development fallback");
     }
-    return { count: 0, resetAt: Date.now() + windowSeconds * 1000 };
+    return memoryIncrement(key, windowSeconds);
   }
 }
 
