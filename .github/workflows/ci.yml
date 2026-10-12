@@ -35,8 +35,9 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run build
-      - name: Verify the packaged worker runtime
+      - name: Build both application images and verify the packaged worker runtime
         run: |
+          docker build --file Dockerfile --tag learnspace-frontend:ci .
           docker build --file Dockerfile.backend --tag learnspace-backend:ci .
           docker run --rm --entrypoint node learnspace-backend:ci --input-type=module -e "import '/worker/dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
 
@@ -155,7 +156,7 @@ jobs:
           AWS_ROLE_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
           AWS_EXA_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN }}
           AWS_INTERNAL_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
-          STAGING_VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
           VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           STAGING_DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
@@ -169,7 +170,7 @@ jobs:
         run: |
           missing=0
           for variable in AWS_ROLE_ARN AWS_EXA_SECRET_ARN AWS_INTERNAL_TOKEN_SECRET_ARN \
-            STAGING_VERCEL_PROJECT_ID VERCEL_ORG_ID VERCEL_TOKEN \
+            VERCEL_PROJECT_ID VERCEL_ORG_ID VERCEL_TOKEN \
             STAGING_DATABASE_MIGRATOR_URL STAGING_DATABASE_WORKER_URL \
             STAGING_DISCOVERY_AGENT_URL STAGING_INTERNAL_SERVICE_TOKEN \
             STAGING_DISCOVERY_SMOKE_EMAIL STAGING_DISCOVERY_SMOKE_PASSWORD \
@@ -182,9 +183,9 @@ jobs:
           if [ "$missing" -ne 0 ]; then exit 1; fi
           project="$(curl --fail --silent --show-error --max-time 10 \
             --header "Authorization: Bearer $VERCEL_TOKEN" \
-            "https://api.vercel.com/v9/projects/$STAGING_VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID")"
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID")"
           if ! jq -e '.name == "learnspace-staging"' <<< "$project" > /dev/null; then
-            echo "::error::STAGING_VERCEL_PROJECT_ID is not the learnspace-staging project."
+            echo "::error::VERCEL_PROJECT_ID is not the learnspace-staging project."
             exit 1
           fi
       - name: Configure AWS credentials
@@ -215,11 +216,25 @@ jobs:
           fi
           echo "AGENT_VERIFIED build=$GITHUB_SHA protocol=source-discovery-v3 schema=1" >> "$GITHUB_STEP_SUMMARY"
 
-  deploy-vercel:
+  deploy-staging:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_staging && needs.foundation.result == 'success' && needs.database.result == 'success' && needs.python.result == 'success'
     needs: [foundation, database, python, deploy-agent]
     runs-on: ubuntu-latest
     environment: staging
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      WORKER_RUNTIME_SECRET_ARN: arn:aws:secretsmanager:us-east-1:934685482023:secret:learnspace/staging/worker/runtime-fEGrXW
+      INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
+      DISCOVERY_AGENT_URL: ${{ secrets.STAGING_DISCOVERY_AGENT_URL }}
+      DATABASE_WORKER_URL: ${{ secrets.STAGING_DATABASE_WORKER_URL }}
+      WORKER_VPC_ID: vpc-02c4dca1203de4511
+      WORKER_SUBNET_IDS: subnet-08f5e6209ec1bf17f,subnet-00acc9ce2c21bed83
+      VERCEL_TEAM_SLUG: ${{ vars.STAGING_VERCEL_TEAM_SLUG }}
+      VERCEL_OIDC_PROVIDER_ARN: ${{ vars.STAGING_VERCEL_OIDC_PROVIDER_ARN }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
@@ -230,6 +245,24 @@ jobs:
           node-version: 22.15.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Assume the staging deployment role
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
+      - name: Verify the staging Vercel project
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          project="$(curl --fail --silent --show-error --max-time 10 \
+            --header "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID")"
+          if ! jq -e '.name == "learnspace-staging"' <<< "$project" > /dev/null; then
+            echo "::error::VERCEL_PROJECT_ID is not the learnspace-staging project."
+            exit 1
+          fi
       - run: pnpm run db:check
         env:
           DATABASE_MIGRATOR_URL: ${{ secrets.STAGING_DATABASE_MIGRATOR_URL }}
@@ -253,41 +286,7 @@ jobs:
           DB_PREPARED_STATEMENTS: "false"
           DB_STATEMENT_TIMEOUT_MS: "3000"
           DB_LOCK_TIMEOUT_MS: "500"
-      - name: Deploy the tested source to the configured staging Vercel project
-        # Vercel's local builder is incompatible with pnpm monorepos outside Vercel infrastructure.
-        # Remote deployment builds this exact checked-out commit on Vercel instead.
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-        run: pnpm dlx --allow-build=esbuild vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
-
-  deploy-worker:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.deploy_staging
-    needs: [deploy-vercel]
-    runs-on: ubuntu-latest
-    environment: staging
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      AWS_REGION: us-east-1
-      WORKER_RUNTIME_SECRET_ARN: arn:aws:secretsmanager:us-east-1:934685482023:secret:learnspace/staging/worker/runtime-fEGrXW
-      INTERNAL_SERVICE_TOKEN_SECRET_ARN: ${{ secrets.AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN }}
-      DISCOVERY_AGENT_URL: ${{ secrets.STAGING_DISCOVERY_AGENT_URL }}
-      DATABASE_WORKER_URL: ${{ secrets.STAGING_DATABASE_WORKER_URL }}
-      WORKER_VPC_ID: vpc-02c4dca1203de4511
-      WORKER_SUBNET_IDS: subnet-08f5e6209ec1bf17f,subnet-00acc9ce2c21bed83
-      VERCEL_TEAM_SLUG: ${{ vars.STAGING_VERCEL_TEAM_SLUG }}
-      VERCEL_OIDC_PROVIDER_ARN: ${{ vars.STAGING_VERCEL_OIDC_PROVIDER_ARN }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
-        with:
-          aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ secrets.AWS_DISCOVERY_AGENT_ROLE_ARN }}
-      - name: Verify the shared Vercel OIDC provider
+      - name: Verify the Vercel OIDC provider audience
         env:
           VERCEL_OIDC_PROVIDER_ARN: ${{ vars.STAGING_VERCEL_OIDC_PROVIDER_ARN }}
           VERCEL_TEAM_SLUG: ${{ vars.STAGING_VERCEL_TEAM_SLUG }}
@@ -297,18 +296,45 @@ jobs:
             echo "::error::The shared Vercel OIDC provider is missing the staging team audience."
             exit 1
           fi
-      - name: Configure private worker runtime
-        run: python3 infra/aws/worker/configure-runtime.py
-      - name: Deploy and verify the continuous worker
-        run: bash infra/aws/worker/deploy.sh
-      - uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
-        with:
-          version: 11.24.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22.15.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - name: Configure and deploy the continuous worker
+        run: |
+          python3 infra/aws/worker/configure-runtime.py
+          bash infra/aws/worker/deploy.sh
+      - name: Sync private storage outputs to staging Vercel
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          bucket="$(aws cloudformation describe-stacks --stack-name learnspace-worker-staging --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`DocumentBucketName`].OutputValue | [0]' --output text)"
+          role_arn="$(aws cloudformation describe-stacks --stack-name learnspace-worker-staging --region "$AWS_REGION" --query 'Stacks[0].Outputs[?OutputKey==`WebStorageRoleArn`].OutputValue | [0]' --output text)"
+          if [[ -z "$bucket" || "$bucket" == None || -z "$role_arn" || "$role_arn" == None ]]; then
+            echo "::error::The worker stack did not return its private-storage outputs."
+            exit 1
+          fi
+          for entry in "S3_BUCKET:$bucket" "S3_REGION:$AWS_REGION" "AWS_ROLE_ARN:$role_arn"; do
+            key="${entry%%:*}"
+            value="${entry#*:}"
+            body="$(jq -nc --arg key "$key" --arg value "$value" '{key:$key,value:$value,type:"plain",target:["production"]}')"
+            response="$(curl --fail --silent --show-error --max-time 15 \
+              --request POST \
+              --header "Authorization: Bearer $VERCEL_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$body" \
+              "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/env?upsert=true&teamId=$VERCEL_ORG_ID")"
+            if ! jq -e '.failed | length == 0' <<< "$response" > /dev/null; then
+              echo "::error::Unable to configure $key on the staging Vercel project."
+              exit 1
+            fi
+          done
+      - name: Deploy the tested source to the configured staging Vercel project
+        # Vercel's local builder is incompatible with pnpm monorepos outside Vercel infrastructure.
+        # Remote deployment builds this exact checked-out commit on Vercel instead.
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: pnpm dlx --allow-build=esbuild vercel@51.7.0 deploy --prod --yes --token "$VERCEL_TOKEN"
       - run: pnpm --filter @learnspace/shared build
       - name: Hosted smoke through the deployed worker and authenticated web app
         run: pnpm discovery:smoke

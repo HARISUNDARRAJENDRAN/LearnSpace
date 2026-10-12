@@ -140,12 +140,16 @@ test("production rate limiting uses an atomic Redis counter and fails closed on 
     "UPSTASH_REDIS_REST_TOKEN",
     "KV_REST_API_URL",
     "KV_REST_API_TOKEN",
+    "REDIS_URL",
+    "KV_URL",
   ] as const;
   const previous = keys.map((key) => process.env[key]);
   const previousFetch = globalThis.fetch;
   process.env.AUTH_SECRET = secret;
   process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
   mutableEnv.NODE_ENV = "production";
+  delete process.env.REDIS_URL;
+  delete process.env.KV_URL;
   process.env.UPSTASH_REDIS_REST_URL = "https://redis.invalid";
   process.env.UPSTASH_REDIS_REST_TOKEN = "test-only-token";
   let unavailable = false;
@@ -153,7 +157,7 @@ test("production rate limiting uses an atomic Redis counter and fails closed on 
   globalThis.fetch = async (_input, init) => {
     if (unavailable) throw new Error("Redis unavailable");
     commands.push(JSON.parse(String(init?.body)) as unknown[]);
-    return Response.json({ result: [3, 41] });
+    return Response.json([{ result: [3, 41] }]);
   };
 
   try {
@@ -167,8 +171,10 @@ test("production rate limiting uses an atomic Redis counter and fails closed on 
       (error: unknown) => error instanceof AuthError && error.status === 429 && error.retryAfterSeconds === 41,
     );
     assert.equal(commands.length, 1);
-    assert.equal(commands[0]?.[0], "EVAL");
-    assert.match(String(commands[0]?.[1]), /INCR[\s\S]*EXPIRE/);
+    const redisCommand = commands[0]?.[0];
+    assert.ok(Array.isArray(redisCommand));
+    assert.equal(redisCommand[0], "EVAL");
+    assert.match(String(redisCommand[1]), /INCR[\s\S]*EXPIRE/);
 
     unavailable = true;
     await assert.rejects(

@@ -121,15 +121,16 @@ class DeploymentTests(unittest.TestCase):
     def test_import_cannot_modify_existing_resources(self):
         self.check_import("Modify")
 
-    def test_trust_is_limited_to_immutable_repository_and_main(self):
+    def test_trust_is_limited_to_staging_environment_on_main(self):
         trust = json.loads((ROOT / "github-oidc-trust.json").read_text())
         statement = trust["Statement"][0]
         conditions = statement["Condition"]["StringEquals"]
         self.assertEqual(conditions["token.actions.githubusercontent.com:aud"], "sts.amazonaws.com")
         self.assertEqual(
             conditions["token.actions.githubusercontent.com:sub"],
-            "repo:HARISUNDARRAJENDRAN@144145752/LearnSpace@1350314110:ref:refs/heads/main",
+            "repo:HARISUNDARRAJENDRAN@144145752/LearnSpace@1350314110:environment:staging",
         )
+        self.assertEqual(conditions["token.actions.githubusercontent.com:ref"], "refs/heads/main")
         self.assertNotIn("*", json.dumps(trust))
 
     def test_deployer_reads_only_the_two_discovery_secrets(self):

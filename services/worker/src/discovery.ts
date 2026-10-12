@@ -541,29 +541,52 @@ async function claimJob(sql: SqlClient, workerId: string): Promise<JobRow | null
 }
 
 async function reclaimExpiredJobs(sql: SqlClient): Promise<number> {
-  return sql.begin(async (tx) => {
-    const rows = await tx<{ id: string; run_id: string | null; terminal: boolean }[]>`
+  const rows = await sql.begin(async (tx) => {
+    const rows = await tx<{
+      id: string;
+      job_type: string;
+      payload: postgres.JSONValue;
+      trace_id: string | null;
+      run_id: string | null;
+      terminal: boolean;
+    }[]>`
       UPDATE ops.jobs
       SET status = CASE
+          WHEN attempts >= max_attempts AND job_type = 'resource.delete_objects' THEN 'pending'::ops.job_status
+          WHEN attempts >= max_attempts AND job_type = 'resource.ingest_pdf' THEN 'running'::ops.job_status
           WHEN attempts >= max_attempts THEN 'dead'::ops.job_status
           ELSE 'pending'::ops.job_status
         END,
         available_at = CASE
+          WHEN attempts >= max_attempts AND job_type = 'resource.delete_objects' THEN now() + interval '1 hour'
           WHEN attempts >= max_attempts THEN available_at
           ELSE now() + make_interval(secs => LEAST(3600::double precision, 30::double precision * power(2::double precision, GREATEST(0, attempts - 1))))
         END,
-        finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
-        last_error_code = 'DISCOVERY_LEASE_EXPIRED',
+        attempts = CASE WHEN attempts >= max_attempts AND job_type = 'resource.delete_objects' THEN 0 ELSE attempts END,
+        finished_at = CASE
+          WHEN attempts >= max_attempts AND job_type = 'resource.delete_objects' THEN NULL
+          WHEN attempts >= max_attempts AND job_type <> 'resource.ingest_pdf' THEN now()
+          ELSE finished_at
+        END,
+        last_error_code = CASE
+          WHEN job_type = 'resource.delete_objects' THEN 'RESOURCE_DELETION_FAILED'
+          ELSE 'DISCOVERY_LEASE_EXPIRED'
+        END,
         last_error_detail = 'Worker lease expired before completion',
         lease_owner = NULL,
-        lease_expires_at = NULL,
+        lease_expires_at = CASE
+          WHEN attempts >= max_attempts AND job_type = 'resource.ingest_pdf' THEN now() + interval '2 minutes'
+          ELSE NULL
+        END,
         heartbeat_at = NULL,
         updated_at = now()
       WHERE queue = 'discovery'
         AND status = 'running'
         AND lease_expires_at IS NOT NULL
         AND lease_expires_at < now()
-      RETURNING id, payload->>'source_picker_run_id' AS run_id, attempts >= max_attempts AS terminal
+      RETURNING id, job_type, CASE WHEN job_type = 'resource.ingest_pdf' THEN payload ELSE NULL END AS payload,
+        trace_id, payload->>'source_picker_run_id' AS run_id,
+        attempts >= max_attempts AS terminal
     `;
     for (const row of rows) {
       if (!row.terminal || !row.run_id) continue;
@@ -573,8 +596,20 @@ async function reclaimExpiredJobs(sql: SqlClient): Promise<number> {
         WHERE id = ${row.run_id} AND status IN ('queued', 'running')
       `;
     }
-    return rows.length;
+    return rows;
   });
+  for (const row of rows) {
+    if (!row.terminal || row.job_type !== "resource.ingest_pdf") continue;
+    const payload = objectValue(row.payload);
+    if (!payload) throw new Error(`terminal document job ${row.id} has invalid JSON payload`);
+    await markUploadedPdfFailed(sql, { id: row.id, payload, trace_id: row.trace_id });
+    await sql`
+      UPDATE ops.jobs
+      SET status = 'dead', finished_at = now(), lease_expires_at = NULL, updated_at = now()
+      WHERE id = ${row.id} AND status = 'running' AND attempts >= max_attempts
+    `;
+  }
+  return rows.length;
 }
 
 async function callAgent(agentUrl: string, token: string, job: JobRow): Promise<CandidateBatch> {
@@ -772,7 +807,8 @@ async function persistAudit(sql: SqlClient, job: JobRow, batch: CandidateBatch):
 async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promise<void> {
   await sql`
     UPDATE ops.jobs
-    SET status = 'done', result = ${sql.json(result)}, finished_at = now(), lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
+    SET status = 'done', result = ${sql.json(result)}, last_error_code = NULL, last_error_detail = NULL,
+      finished_at = now(), lease_owner = NULL, lease_expires_at = NULL, updated_at = now()
     WHERE id = ${job.id}
   `;
 }
@@ -807,21 +843,22 @@ async function markSourcePickerRefresh(sql: SqlClient, job: JobRow, resourceIds:
 async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<void> {
   const detail = error instanceof Error ? error.message.slice(0, 500) : "discovery worker failed";
   const retryDelaySeconds = Math.min(3600, 30 * 2 ** Math.max(0, job.attempts - 1));
+  const terminal = job.attempts >= job.max_attempts;
+  const retryDeletion = terminal && job.job_type === "resource.delete_objects";
+  if (terminal && job.job_type === "resource.ingest_pdf") await markUploadedPdfFailed(sql, job);
   await sql`
     UPDATE ops.jobs
-    SET status = (CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'pending' END)::ops.job_status,
-      last_error_code = ${job.job_type.startsWith("resource.") ? "RESOURCE_INGESTION_FAILED" : "DISCOVERY_REFRESH_FAILED"},
+    SET status = ${terminal && !retryDeletion ? "dead" : "pending"}::ops.job_status,
+      attempts = CASE WHEN ${retryDeletion} THEN 0 ELSE attempts END,
+      last_error_code = ${job.job_type === "resource.delete_objects" ? "RESOURCE_DELETION_FAILED" : job.job_type.startsWith("resource.") ? "RESOURCE_INGESTION_FAILED" : "DISCOVERY_REFRESH_FAILED"},
       last_error_detail = ${detail},
-      available_at = now() + make_interval(secs => ${retryDelaySeconds}),
-      finished_at = CASE WHEN attempts >= max_attempts THEN now() ELSE finished_at END,
+      available_at = CASE WHEN ${retryDeletion} THEN now() + interval '1 hour' ELSE now() + make_interval(secs => ${retryDelaySeconds}) END,
+      finished_at = CASE WHEN ${terminal && !retryDeletion} THEN now() WHEN ${retryDeletion} THEN NULL ELSE finished_at END,
       lease_owner = NULL,
       lease_expires_at = NULL,
       updated_at = now()
     WHERE id = ${job.id}
   `;
-  if (job.job_type === "resource.ingest_pdf" && job.attempts >= job.max_attempts) {
-    await markUploadedPdfFailed(sql, job);
-  }
   const runId = stringValue(job.payload.source_picker_run_id);
   if (runId && job.attempts >= job.max_attempts) {
     await sql`

@@ -87,7 +87,7 @@ Configure these staging-environment secrets before dispatch:
 - `AWS_DISCOVERY_AGENT_ROLE_ARN` — an IAM role trusted by GitHub OIDC
 - `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`
 - `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`
-- `STAGING_VERCEL_PROJECT_ID` — must identify the `learnspace-staging` project
+- `VERCEL_PROJECT_ID` — must identify the `learnspace-staging` project
 - `VERCEL_ORG_ID`, `VERCEL_TOKEN`
 - `STAGING_DATABASE_MIGRATOR_URL`, `STAGING_DATABASE_WORKER_URL`
 - `STAGING_DISCOVERY_AGENT_URL`, `STAGING_INTERNAL_SERVICE_TOKEN`
@@ -113,7 +113,9 @@ bash infra/aws/discovery-agent/configure-github-secrets.sh
 ```
 
 `github-oidc-trust.json` binds the deploy role to LearnSpace's immutable owner
-and repository IDs on `main`, with audience `sts.amazonaws.com`. This
+and repository IDs in the `staging` environment on `main`, with audience
+`sts.amazonaws.com`. Restrict the GitHub `staging` environment to the `main`
+branch. This
 repository was created after GitHub enabled immutable OIDC subject claims.
 The role's `github-deploy-policy.json` scopes deployment to the staging stack,
 ECR repository, Lambda, execution role, API Gateway API, and the two secrets.

@@ -2,6 +2,7 @@ import { getAuthSecret } from "./config";
 import { hashIpAddress } from "./crypto";
 import { AuthError } from "./errors";
 import { getClientIp } from "./request";
+import { redisCommands } from "@learnspace/shared/recommendation-cache";
 
 type RateLimitInput = {
   request: Request;
@@ -38,29 +39,9 @@ function memoryIncrement(key: string, windowSeconds: number): Counter {
 }
 
 async function redisIncrement(key: string, windowSeconds: number): Promise<Counter> {
-  const url = (
-    process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL
-  )?.replace(/\/+$/, "");
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
-  if (!url || !token) {
-    throw new Error("Upstash Redis is not configured");
-  }
-
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(["EVAL", redisIncrementScript, "1", key, String(windowSeconds)]),
-    cache: "no-store",
-    signal: AbortSignal.timeout(3000),
-  });
-  if (!response.ok) {
-    throw new Error(`Upstash increment failed with ${response.status}`);
-  }
-
-  const body: unknown = await response.json();
-  const result = body && typeof body === "object" && "result" in body
-    ? (body as { result: unknown }).result
-    : null;
+  const result = (await redisCommands([
+    ["EVAL", redisIncrementScript, "1", key, String(windowSeconds)],
+  ]))?.[0];
   if (
     !Array.isArray(result) || typeof result[0] !== "number" ||
     typeof result[1] !== "number" || result[1] < 0

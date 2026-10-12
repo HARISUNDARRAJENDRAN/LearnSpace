@@ -314,19 +314,22 @@ test("Google takeover clears the unverified password credential", async ({ page 
   await expect(page.getByRole("alert").filter({ hasText: "Email or password is incorrect." })).toBeVisible();
 });
 
-test("auth login rate limit returns HTTP 429", async ({ request }) => {
+test("auth login rate limit returns HTTP 429", async ({ page }) => {
   const limitedEmail = `rate-${Date.now()}@example.test`;
   const rateIp = `e2e-rate-${Date.now()}`;
-  let lastResponse = await request.post("/api/auth/login", {
-    headers: { origin: "http://localhost:3101", "x-real-ip": rateIp },
-    data: { email: limitedEmail, password: "wrong-password" },
-  });
-  for (let attempt = 1; attempt < 9; attempt += 1) {
-    lastResponse = await request.post("/api/auth/login", {
-      headers: { origin: "http://localhost:3101", "x-real-ip": rateIp },
-      data: { email: limitedEmail, password: "wrong-password" },
+  await page.goto("/");
+  const login = () => page.evaluate(async ({ email, ip }) => {
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": ip },
+      body: JSON.stringify({ email, password: "wrong-password" }),
     });
+    return { status: response.status, retryAfter: response.headers.get("retry-after") };
+  }, { email: limitedEmail, ip: rateIp });
+  let lastResponse = await login();
+  for (let attempt = 1; attempt < 9; attempt += 1) {
+    lastResponse = await login();
   }
-  expect(lastResponse.status()).toBe(429);
-  expect(lastResponse.headers()["retry-after"]).toBeTruthy();
+  expect(lastResponse.status).toBe(429);
+  expect(lastResponse.retryAfter).toBeTruthy();
 });

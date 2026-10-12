@@ -3,7 +3,11 @@ import test from "node:test";
 import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult, sourcePickerJobPayload } from "./discovery.js";
 import { extractPdfChunks, hasPdfHeader } from "./document-ingestion.js";
 import { DISCOVERY_SMOKE_SYSTEM_ACCOUNT, hasSmokeAccountMarker } from "./discovery-smoke-provision.js";
-import { signPrivateUpload } from "@learnspace/shared/private-storage";
+import {
+  PRIVATE_UPLOAD_DELETE_GRACE_SECONDS,
+  PRIVATE_UPLOAD_URL_TTL_SECONDS,
+  signPrivateUpload,
+} from "@learnspace/shared/private-storage";
 
 test("discovery jobs are scoped to one canonical concept", () => {
   const payload = discoveryPayload(
@@ -85,7 +89,10 @@ test("presigned PDF uploads are content-bound and cannot be overwritten", async 
   try {
     const signed = await signPrivateUpload("pending/user/resource/version/random.pdf", 123);
     assert.equal(signed.headers["If-None-Match"], "*");
-    const requiredHeaders = new URL(signed.url).searchParams.get("X-Amz-SignedHeaders")?.split(";") ?? [];
+    const uploadUrl = new URL(signed.url);
+    assert.equal(uploadUrl.searchParams.get("X-Amz-Expires"), String(PRIVATE_UPLOAD_URL_TTL_SECONDS));
+    assert.ok(PRIVATE_UPLOAD_DELETE_GRACE_SECONDS > PRIVATE_UPLOAD_URL_TTL_SECONDS);
+    const requiredHeaders = uploadUrl.searchParams.get("X-Amz-SignedHeaders")?.split(";") ?? [];
     assert.ok(requiredHeaders.includes("content-length"));
     assert.ok(requiredHeaders.includes("content-type"));
     assert.ok(requiredHeaders.includes("if-none-match"));

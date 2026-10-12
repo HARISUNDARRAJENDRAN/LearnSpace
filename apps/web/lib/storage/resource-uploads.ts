@@ -6,6 +6,7 @@ import { AuthError } from "../auth/errors";
 import {
   headPrivateObject,
   MAX_PRIVATE_DOCUMENT_BYTES,
+  PRIVATE_UPLOAD_DELETE_GRACE_SECONDS,
   pendingDocumentKey,
   privateDocumentKey,
   signPrivateDownload,
@@ -183,8 +184,13 @@ export async function deleteDocument(userId: string, resourceId: string) {
       .innerJoin(resourceVersions, eq(resourceVersions.id, resourceAssets.resourceVersionId))
       .where(eq(resourceVersions.resourceId, resourceId));
     const upload = uploadMetadata(resource.metadata);
+    const pendingPrefix = upload?.versionId ? `pending/${userId}/${resourceId}/${upload.versionId}/` : "";
+    const pendingObjectKey = upload?.pendingObjectKey.startsWith(pendingPrefix)
+      && /^[0-9a-f-]{36}\.pdf$/i.test(upload.pendingObjectKey.slice(pendingPrefix.length))
+      ? upload.pendingObjectKey
+      : null;
     const objectKeys = [...new Set([
-      ...(upload?.pendingObjectKey ? [upload.pendingObjectKey] : []),
+      ...(pendingObjectKey ? [pendingObjectKey] : []),
       ...(upload?.versionId ? [privateDocumentKey(userId, resourceId, upload.versionId)] : []),
       ...versions.flatMap((version) => [version.rawObjectKey, version.normalizedObjectKey].filter((key): key is string => Boolean(key))),
       ...assets.map((asset) => asset.objectKey),
@@ -199,6 +205,9 @@ export async function deleteDocument(userId: string, resourceId: string) {
       userId,
       correlationId: randomUUID(),
       payload: { resourceId, objectKeys },
+      availableAt: pendingObjectKey
+        ? new Date(Math.max(Date.now(), resource.createdAt.getTime() + PRIVATE_UPLOAD_DELETE_GRACE_SECONDS * 1000))
+        : new Date(),
     });
     return { ok: true };
   });

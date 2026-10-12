@@ -11,6 +11,8 @@ import { awsCredentialsProvider } from "@vercel/oidc-aws-credentials-provider";
 import { z } from "zod";
 
 export const MAX_PRIVATE_DOCUMENT_BYTES = 25 * 1024 * 1024;
+export const PRIVATE_UPLOAD_URL_TTL_SECONDS = 300;
+export const PRIVATE_UPLOAD_DELETE_GRACE_SECONDS = PRIVATE_UPLOAD_URL_TTL_SECONDS + 60;
 
 const storageSettings = z.object({
   S3_BUCKET: z.string().min(3),
@@ -77,7 +79,7 @@ export async function signPrivateUpload(key: string, byteSize: number) {
     ContentLength: byteSize,
     IfNoneMatch: "*",
   }), {
-    expiresIn: 300,
+    expiresIn: PRIVATE_UPLOAD_URL_TTL_SECONDS,
     signableHeaders: new Set(["content-length", "content-type", "if-none-match"]),
   });
   return { url, headers };

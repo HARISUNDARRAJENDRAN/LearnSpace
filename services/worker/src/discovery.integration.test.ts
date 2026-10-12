@@ -47,6 +47,8 @@ test(
     const failedJobId = randomUUID();
     const leaseRunId = randomUUID();
     const leaseJobId = randomUUID();
+    const deletionJobId = randomUUID();
+    const deletionResourceId = randomUUID();
     const instantRunId = randomUUID();
     const instantOutboxId = randomUUID();
     const instantTraceId = `instant-source-picker-${randomUUID()}`;
@@ -276,6 +278,16 @@ test(
         VALUES
           (${leaseJobId}, 'discovery', 'discovery.refresh_concept', ${migrator.json({ query_text: "Lease expiry search", source_kind: "video", source_picker_run_id: leaseRunId })}, 'running', 1, 1, now() - interval '1 minute', ${`discovery:source-picker:${leaseRunId}`}, ${`lease-${leaseRunId}`}, ${`lease-${leaseRunId}`})
       `;
+      await migrator`
+        INSERT INTO ops.jobs
+          (id, queue, job_type, payload, status, attempts, max_attempts, lease_expires_at, trace_id)
+        VALUES
+          (${deletionJobId}, 'discovery', 'resource.delete_objects', ${migrator.json({
+            userId,
+            resourceId: deletionResourceId,
+            objectKeys: [`private/${userId}/${deletionResourceId}/${randomUUID()}/source.pdf`],
+          })}, 'running', 1, 1, now() - interval '1 minute', ${`delete-lease-${deletionJobId}`})
+      `;
       const reclaimed = await runDiscoveryWorker();
       assert.equal(reclaimed.status, "idle");
       const [reclaimedRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
@@ -283,6 +295,16 @@ test(
       `;
       assert.equal(reclaimedRun?.status, "failed");
       assert.equal(reclaimedRun?.context_snapshot.refreshStatus, "failed");
+      const [retriedDeletion] = await migrator<{ status: string; attempts: number; delayed: boolean; last_error_code: string }[]>`
+        SELECT status, attempts, available_at > now() + interval '59 minutes' AS delayed, last_error_code
+        FROM ops.jobs WHERE id = ${deletionJobId}
+      `;
+      assert.deepEqual(retriedDeletion, {
+        status: "pending",
+        attempts: 0,
+        delayed: true,
+        last_error_code: "RESOURCE_DELETION_FAILED",
+      });
     } finally {
       restoreEnv("DISCOVERY_AGENT_URL", previousAgentUrl);
       restoreEnv("INTERNAL_SERVICE_TOKEN", previousToken);
@@ -298,7 +320,7 @@ test(
         await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (SELECT id FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL)`;
         await migrator`DELETE FROM catalog.resources WHERE provider = 'youtube' AND external_id IN ${migrator(youtubeIds)} AND owner_user_id IS NULL`;
       }
-      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}, ${`lease-${leaseRunId}`}) OR id IN (${failedJobId}, ${leaseJobId}) OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`}, ${`discovery:source-picker:${leaseRunId}`})`;
+      await migrator`DELETE FROM ops.jobs WHERE trace_id IN (${traceId}, ${`existing-${traceId}`}, ${`failed-${failedRunId}`}, ${instantTraceId}, ${`lease-${leaseRunId}`}, ${`delete-lease-${deletionJobId}`}) OR id IN (${failedJobId}, ${leaseJobId}, ${deletionJobId}) OR dedup_key IN (${`discovery:source-picker:${runId}`}, ${`discovery:source-picker-persist:${instantRunId}`}, ${`discovery:source-picker:${leaseRunId}`})`;
       await migrator`DELETE FROM ops.outbox_events WHERE id IN (${outboxId}, ${instantOutboxId})`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
       await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN (SELECT id FROM catalog.resources WHERE owner_user_id = ${userId})`;

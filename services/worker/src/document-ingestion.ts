@@ -4,6 +4,7 @@ import postgres from "postgres";
 import {
   deletePrivateObject,
   MAX_PRIVATE_DOCUMENT_BYTES,
+  PRIVATE_UPLOAD_DELETE_GRACE_SECONDS,
   privateDocumentKey,
   putPrivateObject,
   readPrivateObject,
@@ -113,16 +114,13 @@ export async function ingestUploadedPdf(sql: SqlClient, job: DocumentJob): Promi
     WHERE id = ${resourceId} AND owner_user_id = ${userId} AND provider = 'user_upload' AND type = 'pdf'
   `;
   if (!resource) throw new Error("Document upload record is unavailable");
-  const existingUpload = uploadMetadata(resource.metadata);
   if (resource.deleted_at) {
-    if (existingUpload?.pendingObjectKey.startsWith(pendingPrefix)) await deletePrivateObject(existingUpload.pendingObjectKey);
-    await deletePrivateObject(privateKey);
     return { resourceId, status: "deleted" };
   }
   if (resource.current_version_id === versionId) {
-    if (existingUpload?.pendingObjectKey.startsWith(pendingPrefix)) await deletePrivateObject(existingUpload.pendingObjectKey);
     return { resourceId, status: "ready" };
   }
+  const existingUpload = uploadMetadata(resource.metadata);
   const upload = existingUpload;
   if (
     !upload
@@ -142,8 +140,8 @@ export async function ingestUploadedPdf(sql: SqlClient, job: DocumentJob): Promi
   const extracted = await extractPdfChunks(source.bytes);
 
   const ready = await sql.begin(async (tx) => {
-    const [current] = await tx<{ metadata: JsonObject; deleted_at: Date | null; current_version_id: string | null }[]>`
-      SELECT metadata, deleted_at, current_version_id
+    const [current] = await tx<{ metadata: JsonObject; deleted_at: Date | null; current_version_id: string | null; created_at: Date }[]>`
+      SELECT metadata, deleted_at, current_version_id, created_at
       FROM catalog.resources
       WHERE id = ${resourceId} AND owner_user_id = ${userId} AND provider = 'user_upload' AND type = 'pdf'
       FOR UPDATE
@@ -197,11 +195,17 @@ export async function ingestUploadedPdf(sql: SqlClient, job: DocumentJob): Promi
           updated_at = now()
       WHERE id = ${resourceId} AND owner_user_id = ${userId}
     `;
+    await tx`
+      INSERT INTO ops.outbox_events
+        (aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id, available_at)
+      VALUES
+        ('resource', ${resourceId}, 'resource.file_deletion_requested', 1, ${userId},
+          ${tx.json({ resourceId, objectKeys: [upload.pendingObjectKey] })}, ${job.trace_id},
+          ${new Date(current.created_at.getTime() + PRIVATE_UPLOAD_DELETE_GRACE_SECONDS * 1000)})
+    `;
     return true;
   });
 
-  if (!ready) await deletePrivateObject(privateKey);
-  await deletePrivateObject(upload.pendingObjectKey);
   return { resourceId, status: ready ? "ready" : "deleted", pageCount: extracted.pageCount, chunkCount: extracted.chunks.length };
 }
 
@@ -215,13 +219,12 @@ export async function deleteUploadedObjects(sql: SqlClient, job: DocumentJob): P
   if (!Array.isArray(objectKeys) || objectKeys.length > 500 || objectKeys.some((key) => typeof key !== "string")) {
     throw new Error("Document deletion object list is invalid");
   }
-  const [resource] = await sql<{ id: string }[]>`
-    SELECT id FROM catalog.resources WHERE id = ${resourceId} AND owner_user_id = ${userId} AND provider = 'user_upload'
-  `;
-  if (!resource) return { resourceId, status: "deleted" };
-  const allowedPrefixes = [`pending/${userId}/${resourceId}/`, `private/${userId}/${resourceId}/`];
+  const privatePrefix = `private/${userId}/${resourceId}/`;
+  const pendingPrefix = `pending/${userId}/${resourceId}/`;
   for (const key of objectKeys as string[]) {
-    if (!allowedPrefixes.some((prefix) => key.startsWith(prefix))) throw new Error("Document deletion contains an unauthorized object key");
+    const pendingParts = key.startsWith(pendingPrefix) ? key.slice(pendingPrefix.length).split("/") : [];
+    const isPendingKey = pendingParts.length === 2 && UUID.test(pendingParts[0] ?? "") && /^[0-9a-f-]{36}\.pdf$/i.test(pendingParts[1] ?? "");
+    if (!key.startsWith(privatePrefix) && !isPendingKey) throw new Error("Document deletion contains an unauthorized object key");
     await deletePrivateObject(key);
   }
   return { resourceId, status: "deleted", objectCount: objectKeys.length };
@@ -229,17 +232,20 @@ export async function deleteUploadedObjects(sql: SqlClient, job: DocumentJob): P
 
 export async function markUploadedPdfFailed(sql: SqlClient, job: DocumentJob): Promise<void> {
   const { userId, resourceId, versionId } = jobIds(job);
-  const cleanup = await sql.begin(async (tx) => {
-    const [resource] = await tx<{ metadata: JsonObject; deleted_at: Date | null; current_version_id: string | null }[]>`
-      SELECT metadata, deleted_at, current_version_id FROM catalog.resources
+  await sql.begin(async (tx) => {
+    const [resource] = await tx<{ metadata: JsonObject; deleted_at: Date | null; current_version_id: string | null; created_at: Date }[]>`
+      SELECT metadata, deleted_at, current_version_id, created_at FROM catalog.resources
       WHERE id = ${resourceId} AND owner_user_id = ${userId} AND provider = 'user_upload' AND type = 'pdf'
       FOR UPDATE
     `;
-    if (!resource) return null;
-    if (resource.deleted_at) return { pendingObjectKey: null, deletePrivate: true };
-    if (resource.current_version_id === versionId) return { pendingObjectKey: null, deletePrivate: false };
+    if (!resource || resource.deleted_at || resource.current_version_id === versionId) return;
     const upload = uploadMetadata(resource.metadata);
-    if (!upload || upload.versionId !== versionId || upload.state !== "queued") return null;
+    if (!upload || upload.versionId !== versionId || upload.state !== "queued") return;
+    const pendingPrefix = `pending/${userId}/${resourceId}/${versionId}/`;
+    const pendingObjectKey = upload.pendingObjectKey.startsWith(pendingPrefix)
+      && /^[0-9a-f-]{36}\.pdf$/i.test(upload.pendingObjectKey.slice(pendingPrefix.length))
+      ? upload.pendingObjectKey
+      : null;
     await tx`
       UPDATE catalog.resources
       SET status = 'failed', metadata = ${tx.json({
@@ -248,8 +254,13 @@ export async function markUploadedPdfFailed(sql: SqlClient, job: DocumentJob): P
       })}, updated_at = now()
       WHERE id = ${resourceId} AND owner_user_id = ${userId}
     `;
-    return { pendingObjectKey: upload.pendingObjectKey, deletePrivate: true };
+    const availableAt = new Date(Math.max(Date.now(), resource.created_at.getTime() + PRIVATE_UPLOAD_DELETE_GRACE_SECONDS * 1000));
+    await tx`
+      INSERT INTO ops.outbox_events
+        (aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id, available_at)
+      VALUES
+        ('resource', ${resourceId}, 'resource.file_deletion_requested', 1, ${userId},
+          ${tx.json({ resourceId, objectKeys: [privateDocumentKey(userId, resourceId, versionId), ...(pendingObjectKey ? [pendingObjectKey] : [])] })}, ${job.trace_id}, ${availableAt})
+    `;
   });
-  if (cleanup?.pendingObjectKey?.startsWith(`pending/${userId}/${resourceId}/${versionId}/`)) await deletePrivateObject(cleanup.pendingObjectKey);
-  if (cleanup?.deletePrivate) await deletePrivateObject(privateDocumentKey(userId, resourceId, versionId));
 }
