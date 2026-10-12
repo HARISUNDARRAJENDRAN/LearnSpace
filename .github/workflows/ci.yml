@@ -82,15 +82,17 @@ jobs:
       - run: pnpm --filter @learnspace/web run test:e2e:production
       - name: Verify auth layouts against production server
         run: |
-          PORT=3200 pnpm --filter @learnspace/web run start:standalone > /tmp/learnspace-next.log 2>&1 &
+          APP_URL=https://learnspace.invalid AUTH_SECRET=ci-auth-layout-secret-long-enough-to-pass-validation \
+            PORT=3200 pnpm --filter @learnspace/web run start:standalone > /tmp/learnspace-next.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid"' EXIT
           for _attempt in {1..30}; do
-            if curl --fail --silent http://localhost:3200/login > /dev/null; then break; fi
+            if curl --fail --silent --header 'x-learnspace-desktop: 1' http://localhost:3200/login > /dev/null; then break; fi
             sleep 1
           done
-          curl --fail --silent http://localhost:3200/login > /dev/null
-          BASE_URL=http://localhost:3200 pnpm --filter @learnspace/web run verify:auth-layout
+          curl --fail --silent --header 'x-learnspace-desktop: 1' http://localhost:3200/login > /dev/null
+          APP_URL=https://learnspace.invalid BASE_URL=http://localhost:3200 \
+            pnpm --filter @learnspace/web run verify:auth-layout
       - run: pnpm run db:ledger > before
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
