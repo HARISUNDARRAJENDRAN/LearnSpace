@@ -16,6 +16,8 @@ try {
   const browserLoginRedirect = new URL(browserApp.headers().location);
   assert.equal(browserLoginRedirect.origin, appOrigin);
   assert.equal(browserLoginRedirect.pathname, "/login");
+  const anonymousApi = await publicPage.request.get(`${baseUrl}/api/v1/discovery/home`);
+  assert.equal(anonymousApi.status(), 401, "public browser access must not bypass API authentication");
   const publicOAuth = await publicPage.request.get(`${baseUrl}/api/auth/google`, { maxRedirects: 0 });
   assert.equal(publicOAuth.status(), 307, "ordinary browser Google sign-in must be available");
   assert.equal(new URL(publicOAuth.headers().location).origin, appOrigin);
