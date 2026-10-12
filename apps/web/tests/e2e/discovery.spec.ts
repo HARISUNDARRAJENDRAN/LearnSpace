@@ -200,10 +200,12 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
 
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
-  await expect(page.getByRole("main", { name: "Learning analytics dashboard" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Learning Overview", exact: true })).toBeVisible();
+  await expect(page.getByRole("main", { name: "Your learning Home" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome back, Discovery!", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your Learning Activity", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Continue Learning", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Learning Progress", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent Activity", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Learning Activity & Progress Trends", exact: true })).toBeVisible();
   const browserErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

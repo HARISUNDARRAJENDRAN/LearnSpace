@@ -102,7 +102,7 @@ test("populated Home unifies learning and research and fits the reference viewpo
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.setViewportSize({ width: 1360, height: 768 });
-  await page.goto("/app", { waitUntil: "networkidle" });
+  await page.goto("/app", { waitUntil: "domcontentloaded" });
   for (const name of ["Continue Learning", "Learning Progress", "Your Learning Activity", "Quick Stats"]) await expect(page.getByRole("heading", { name })).toBeVisible();
   await expect(page.locator(".home-session-card")).toHaveCount(3);
   await expect(page.locator(".home-session-card").filter({ hasText: "Home E2E Python lesson" })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
@@ -115,7 +115,7 @@ test("populated Home unifies learning and research and fits the reference viewpo
 });
 
 test("Home filters, activity periods and progress scopes respond without losing resume links", async ({ page }) => {
-  await page.goto("/app", { waitUntil: "networkidle" });
+  await page.goto("/app", { waitUntil: "domcontentloaded" });
   const filters = page.getByRole("group", { name: "Learning status" });
   await filters.getByRole("button", { name: "Completed", exact: true }).click();
   await expect(page.locator(".home-session-card")).toHaveCount(0);
@@ -129,7 +129,7 @@ test("Home filters, activity periods and progress scopes respond without losing 
 });
 
 test("Home retains source discovery focus and opens the shared search palette", async ({ page }) => {
-  await page.goto("/app", { waitUntil: "networkidle" });
+  await page.goto("/app", { waitUntil: "domcontentloaded" });
   const startLearning = page.getByRole("button", { name: "Start learning" });
   await startLearning.click();
   const sourceDialog = page.getByRole("dialog", { name: "Learn any topic from the best videos" });
@@ -143,7 +143,7 @@ test("Home retains source discovery focus and opens the shared search palette", 
 test("Home remains readable without horizontal page overflow on smaller screens", async ({ page }) => {
   for (const viewport of [{ width: 1024, height: 768 }, { width: 768, height: 900 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
-    await page.goto("/app", { waitUntil: "networkidle" });
+    await page.goto("/app", { waitUntil: "domcontentloaded" });
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await expect(page.locator(".home-session-card").first()).toBeVisible();
     await page.getByRole("heading", { name: "Quick Stats" }).scrollIntoViewIfNeeded();
