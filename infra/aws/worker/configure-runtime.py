@@ -15,7 +15,10 @@ def main():
     )
     runtime = json.loads(current.stdout)
     runtime["DATABASE_WORKER_URL"] = os.environ["DATABASE_WORKER_URL"]
-    required = ("DATABASE_WORKER_URL", "OPENAI_API_KEY", "KV_REST_API_URL", "KV_REST_API_TOKEN")
+    required = (
+        "DATABASE_WORKER_URL", "DATABASE_AI_URL", "OPENAI_API_KEY",
+        "KV_REST_API_URL", "KV_REST_API_TOKEN",
+    )
     if any(not runtime.get(key) for key in required):
         raise RuntimeError("Worker runtime is missing a required credential")
     with tempfile.NamedTemporaryFile(mode="w") as secret:

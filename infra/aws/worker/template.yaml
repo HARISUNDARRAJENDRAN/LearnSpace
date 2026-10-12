@@ -212,6 +212,8 @@ Resources:
           Secrets:
             - Name: DATABASE_WORKER_URL
               ValueFrom: !Sub '${RuntimeSecretArn}:DATABASE_WORKER_URL::'
+            - Name: DATABASE_AI_URL
+              ValueFrom: !Sub '${RuntimeSecretArn}:DATABASE_AI_URL::'
             - Name: OPENAI_API_KEY
               ValueFrom: !Sub '${RuntimeSecretArn}:OPENAI_API_KEY::'
             - Name: KV_REST_API_URL

@@ -17,7 +17,8 @@ spec.loader.exec_module(runtime)
 class DeploymentTests(unittest.TestCase):
     def test_runtime_preserves_credentials_and_rejects_incomplete_configuration(self):
         credentials = {"OPENAI_API_KEY": "private-key", "KV_REST_API_URL": "https://redis.test",
-                       "KV_REST_API_TOKEN": "private-token", "DATABASE_WORKER_URL": "old"}
+                       "KV_REST_API_TOKEN": "private-token", "DATABASE_WORKER_URL": "old",
+                       "DATABASE_AI_URL": "postgres://ai.test"}
         writes = []
 
         def aws(args, **kwargs):
@@ -32,6 +33,10 @@ class DeploymentTests(unittest.TestCase):
                 patch.object(runtime.subprocess, "run", side_effect=aws):
             runtime.main()
             self.assertEqual(writes, [{**credentials, "DATABASE_WORKER_URL": "new"}])
+            del credentials["DATABASE_AI_URL"]
+            with self.assertRaisesRegex(RuntimeError, "required credential"):
+                runtime.main()
+            credentials["DATABASE_AI_URL"] = "postgres://ai.test"
             del credentials["OPENAI_API_KEY"]
             with self.assertRaisesRegex(RuntimeError, "required credential"):
                 runtime.main()
@@ -88,6 +93,7 @@ elif args[:2] == ['ecs', 'describe-task-definition']:
         template = (ROOT / "template.yaml").read_text()
         self.assertNotIn("AWS::IAM::OIDCProvider", template)
         self.assertIn("VercelOidcProviderArn", template)
+        self.assertIn("Name: DATABASE_AI_URL", template)
 
 
 if __name__ == "__main__":
