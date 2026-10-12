@@ -10,11 +10,15 @@ try {
   const landing = await publicPage.goto(`${baseUrl}/`);
   assert.equal(landing.status(), 200, "the public landing page must remain browser-accessible");
   const browserLogin = await publicPage.goto(`${baseUrl}/login`);
-  assert.equal(browserLogin.status(), 404, "ordinary browsers must not access the product UI");
-  const browserApp = await publicPage.goto(`${baseUrl}/app`);
-  assert.equal(browserApp.status(), 404, "ordinary browsers must not access the application routes");
+  assert.equal(browserLogin.status(), 200, "ordinary browsers must be able to sign in");
+  const browserApp = await publicPage.request.get(`${baseUrl}/app`, { maxRedirects: 0 });
+  assert.equal(browserApp.status(), 307, "unauthenticated browser users must be redirected to sign in");
+  const browserLoginRedirect = new URL(browserApp.headers().location);
+  assert.equal(browserLoginRedirect.origin, appOrigin);
+  assert.equal(browserLoginRedirect.pathname, "/login");
   const publicOAuth = await publicPage.request.get(`${baseUrl}/api/auth/google`, { maxRedirects: 0 });
-  assert.equal(publicOAuth.status(), 404, "ordinary browser auth routes must remain unavailable");
+  assert.equal(publicOAuth.status(), 307, "ordinary browser Google sign-in must be available");
+  assert.equal(new URL(publicOAuth.headers().location).origin, appOrigin);
   const desktopOAuth = await publicPage.request.get(
     `${baseUrl}/api/auth/google?desktop_flow=00000000-0000-4000-8000-000000000001`,
     { maxRedirects: 0 },
@@ -30,7 +34,6 @@ try {
   const desktopHeaders = { "x-learnspace-desktop": "1" };
   const context = await browser.newContext({
     reducedMotion: "reduce",
-    extraHTTPHeaders: desktopHeaders,
   });
   const page = await context.newPage();
   const errors = [];
@@ -51,15 +54,14 @@ try {
       await expect(submit).toBeInViewport({ ratio: 1 });
     }
   }
-  const desktopApp = await page.request.get(`${baseUrl}/app`, {
+  const unauthenticatedApp = await page.request.get(`${baseUrl}/app`, {
     maxRedirects: 0,
-    headers: desktopHeaders,
   });
-  assert.equal(desktopApp.status(), 307, "desktop app routes must redirect unauthenticated users to login");
-  const desktopLogin = new URL(desktopApp.headers().location);
-  assert.equal(desktopLogin.origin, appOrigin);
-  assert.equal(desktopLogin.pathname, "/login");
-  assert.equal(desktopLogin.searchParams.get("next"), "/app");
+  assert.equal(unauthenticatedApp.status(), 307, "app routes must redirect unauthenticated users to login");
+  const appLogin = new URL(unauthenticatedApp.headers().location);
+  assert.equal(appLogin.origin, appOrigin);
+  assert.equal(appLogin.pathname, "/login");
+  assert.equal(appLogin.searchParams.get("next"), "/app");
 
   const sameOriginMutation = await page.request.post(`${baseUrl}/api/auth/logout`, {
     headers: { ...desktopHeaders, origin: appOrigin },
@@ -79,7 +81,7 @@ try {
   );
   assert.equal(invalidDesktopFlow.status(), 403, "only the exact desktop handoff routes may omit Origin");
   assert.deepEqual(errors, []);
-  console.log("Browser gating, desktop auth surfaces, and all five auth layouts passed.");
+  console.log("Browser and desktop auth surfaces, CSRF checks, and all five auth layouts passed.");
 } finally {
   await browser.close();
 }

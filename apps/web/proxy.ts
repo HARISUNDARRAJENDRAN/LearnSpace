@@ -1,9 +1,8 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { getAppBaseUrl } from "./lib/auth/config";
 
 const sessionCookieName = "learnspace_session";
 const desktopHandoffPostPath = /^\/api\/auth\/desktop\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(?:\/complete)?$/i;
-const desktopFlowPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function hasSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
@@ -17,20 +16,6 @@ function hasSameOrigin(request: NextRequest): boolean {
 
 export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
-  const desktopFlow = request.nextUrl.searchParams.get("desktop_flow");
-  const isBrowserOauth = request.method === "GET" && (
-    pathname === "/api/auth/google/callback" ||
-    (pathname === "/api/auth/google" && desktopFlow !== null && desktopFlowPattern.test(desktopFlow))
-  );
-
-  if (
-    process.env.AUTH_TEST_MODE !== "true" &&
-    request.headers.get("x-learnspace-desktop") !== "1" &&
-    !isBrowserOauth
-  ) {
-    return new NextResponse("Not Found", { status: 404 });
-  }
-
   if (
     pathname.startsWith("/api/") &&
     ["POST", "PUT", "PATCH", "DELETE"].includes(request.method) &&

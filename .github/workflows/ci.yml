@@ -60,7 +60,8 @@ jobs:
           docker exec learnspace-backend-smoke python -c "import os; assert os.getuid() == 10001"
           docker exec learnspace-frontend-smoke node -e "if (process.getuid() !== 1001) process.exit(1)"
           [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/)" == 200 ]]
-          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/login)" == 404 ]]
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/login)" == 200 ]]
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/app)" == 307 ]]
           [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header 'x-learnspace-desktop: 1' http://localhost:13000/login)" == 200 ]]
           [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header 'x-learnspace-desktop: 1' http://localhost:13000/app)" == 307 ]]
           echo "Production image startup and desktop-route smoke checks passed."
