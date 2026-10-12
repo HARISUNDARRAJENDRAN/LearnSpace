@@ -40,6 +40,30 @@ jobs:
           docker build --file Dockerfile --tag learnspace-frontend:ci .
           docker build --file Dockerfile.backend --tag learnspace-backend:ci .
           docker run --rm --entrypoint node learnspace-backend:ci --input-type=module -e "import '/worker/dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
+          [[ "$(docker inspect --format '{{.Config.User}}' learnspace-frontend:ci)" == nextjs ]]
+          [[ "$(docker inspect --format '{{.Config.User}}' learnspace-backend:ci)" == learnspace ]]
+          cleanup() {
+            docker rm --force learnspace-frontend-smoke learnspace-backend-smoke > /dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name learnspace-backend-smoke --publish 18080:8080 \
+            --env LEARNSPACE_BACKEND_MODE=api --env INTERNAL_SERVICE_TOKEN=ci-smoke-token \
+            learnspace-backend:ci > /dev/null
+          docker run --detach --name learnspace-frontend-smoke --no-healthcheck --publish 13000:3000 \
+            --env APP_URL=https://learnspace.invalid learnspace-frontend:ci > /dev/null
+          for _attempt in {1..30}; do
+            if curl --fail --silent http://localhost:18080/readyz > /dev/null && \
+              curl --fail --silent http://localhost:13000/ > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://localhost:18080/readyz | jq -e '.status == "ready"' > /dev/null
+          docker exec learnspace-backend-smoke python -c "import os; assert os.getuid() == 10001"
+          docker exec learnspace-frontend-smoke node -e "if (process.getuid() !== 1001) process.exit(1)"
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/)" == 200 ]]
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:13000/login)" == 404 ]]
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header 'x-learnspace-desktop: 1' http://localhost:13000/login)" == 200 ]]
+          [[ "$(curl --silent --output /dev/null --write-out '%{http_code}' --header 'x-learnspace-desktop: 1' http://localhost:13000/app)" == 307 ]]
+          echo "Production image startup and desktop-route smoke checks passed."
 
   database:
     runs-on: ubuntu-latest
