@@ -8,7 +8,7 @@ function hasSameOrigin(request: NextRequest): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   try {
-    return new URL(origin).origin === request.nextUrl.origin;
+    return new URL(origin).origin === getAppBaseUrl(request);
   } catch {
     return false;
   }
