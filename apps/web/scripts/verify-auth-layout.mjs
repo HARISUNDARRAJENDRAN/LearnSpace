@@ -3,7 +3,11 @@ import { chromium, expect } from "@playwright/test";
 
 const browser = await chromium.launch();
 try {
-  const page = await browser.newPage({ reducedMotion: "reduce" });
+  const context = await browser.newContext({
+    extraHTTPHeaders: { "x-learnspace-desktop": "1" },
+    reducedMotion: "reduce",
+  });
+  const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   for (const width of [390, 1280, 1440]) {
