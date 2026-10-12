@@ -152,7 +152,9 @@ class DeploymentTests(unittest.TestCase):
 
     def test_vercel_oidc_provider_is_shared_and_read_only(self):
         policy = json.loads((ROOT / "github-deploy-policy.json").read_text())
-        statement = next(s for s in policy["Statement"] if s["Sid"] == "ReadSharedVercelOidcProvider")
+        statement = next(
+            s for s in policy["Statement"] if s["Sid"] == "ReadSharedVercelOidcProvider"
+        )
         self.assertEqual(statement["Action"], "iam:GetOpenIDConnectProvider")
         self.assertEqual(
             statement["Resource"], "arn:aws:iam::934685482023:oidc-provider/oidc.vercel.com"
@@ -163,11 +165,20 @@ class DeploymentTests(unittest.TestCase):
         policy = json.loads((ROOT / "github-deploy-policy.json").read_text())
         task_role = next(s for s in policy["Statement"] if s["Sid"] == "PassWorkerTaskRole")
         self.assertEqual(task_role["Action"], "iam:PassRole")
-        self.assertEqual(task_role["Resource"], "arn:aws:iam::934685482023:role/learnspace-worker-staging-task")
-        self.assertEqual(task_role["Condition"]["StringEquals"]["iam:PassedToService"], "ecs-tasks.amazonaws.com")
+        self.assertEqual(
+            task_role["Resource"],
+            "arn:aws:iam::934685482023:role/learnspace-worker-staging-task",
+        )
+        self.assertEqual(
+            task_role["Condition"]["StringEquals"]["iam:PassedToService"],
+            "ecs-tasks.amazonaws.com",
+        )
 
         bucket = next(s for s in policy["Statement"] if s["Sid"] == "ManageStagingDocumentBucket")
-        self.assertEqual(bucket["Resource"], "arn:aws:s3:::learnspace-private-documents-staging-934685482023-*")
+        self.assertEqual(
+            bucket["Resource"],
+            "arn:aws:s3:::learnspace-private-documents-staging-934685482023-*",
+        )
         self.assertNotIn("s3:*", bucket["Action"])
         self.assertNotIn("s3:GetObject", bucket["Action"])
         self.assertNotIn("s3:PutObject", bucket["Action"])
