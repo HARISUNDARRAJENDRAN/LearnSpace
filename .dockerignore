@@ -21,6 +21,8 @@ test-results
 
 .env
 .env.*
+**/.env
+**/.env.*
 
 .venv
 **/.venv
