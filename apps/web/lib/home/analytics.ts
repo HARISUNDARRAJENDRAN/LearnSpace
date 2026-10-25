@@ -1,24 +1,21 @@
 import type { HomeActivityDay, LearnHomeData } from "./service";
 
-export type AnalyticsTone = "lavender" | "light-lavender" | "green" | "pink" | "yellow";
-export type TrendPeriod = "Day" | "Month" | "Year";
-export type TrendPoint = { label: string; title: string; seconds: number; segments: number[]; resources: number; completed: number };
-export type HomeAnalyticsData = {
-  learningOverview: { seconds: number; activeDays: number; changePct: number | null; bars: { label: string; seconds: number }[] };
-  studyDistribution: { label: string; percent: number; seconds: number; tone: AnalyticsTone }[];
-  continueWatching: LearnHomeData["continueWatching"];
-  weeklyProgress: { label: string; seconds: number; resources: number; completed: number; segments: number[] }[];
-  activityTrends: Record<TrendPeriod, TrendPoint[]>;
+export type HomeRhythmPeriod = "week" | "month" | "all";
+export type HomeStats = { studySeconds: number; activeDays: number; started: number; completed: number };
+export type HomeBucket = { start: string; stats: HomeStats };
+export type HomePeriod = { score: number; previousScore: number | null; days: number; current: HomeStats; previous: HomeStats | null; series: HomeBucket[] };
+export type HomeMixItem = { label: string; seconds: number; percent: number };
+export type HomePulse = {
+  periods: Record<HomeRhythmPeriod, HomePeriod>;
+  streak: number;
+  totals: { started: number; completed: number; inProgress: number; studySeconds: number };
+  firstDay: string | null;
+  today: string;
+  formats: HomeMixItem[];
 };
 
-function seconds(day: HomeActivityDay): number {
+function studySeconds(day: HomeActivityDay): number {
   return day.focusSeconds + day.practiceSeconds + day.researchSeconds;
-}
-
-function summarize(days: HomeActivityDay[]) {
-  const sum = (key: keyof Omit<HomeActivityDay, "day">) => days.reduce((total, day) => total + day[key], 0);
-  const segments = [sum("focusSeconds"), sum("practiceSeconds"), sum("researchSeconds")];
-  return { seconds: segments.reduce((total, value) => total + value, 0), segments, resources: sum("resources"), completed: sum("completed") };
 }
 
 // These ISO calendar dates already reflect the learner's timezone.
@@ -28,70 +25,66 @@ function addDays(day: string, amount: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function labelDate(day: string, options: Intl.DateTimeFormatOptions): string {
-  return new Intl.DateTimeFormat("en", { ...options, timeZone: "UTC" }).format(new Date(`${day}T00:00:00Z`));
+function addMonths(day: string, amount: number): string {
+  const date = new Date(`${day.slice(0, 7)}-01T00:00:00Z`);
+  date.setUTCMonth(date.getUTCMonth() + amount);
+  return date.toISOString().slice(0, 10);
 }
 
-function trendPoints(days: HomeActivityDay[], today: string, period: TrendPeriod): TrendPoint[] {
-  const keys = [...new Set(days.map((day) => period === "Day" ? day.day : period === "Month" ? day.day.slice(0, 7) : day.day.slice(0, 4)))];
-  const current = period === "Day" ? today : period === "Month" ? today.slice(0, 7) : today.slice(0, 4);
-  const first = keys[0];
-  if (!first) return [];
-  const buckets: string[] = [];
-  if (period === "Day") {
-    for (let day = first > addDays(today, -6) ? first : addDays(today, -6); day <= today; day = addDays(day, 1)) buckets.push(day);
-  } else if (period === "Month") {
-    const date = new Date(`${current}-01T00:00:00Z`);
-    date.setUTCMonth(date.getUTCMonth() - 11);
-    for (let month = date.toISOString().slice(0, 7); month <= current; date.setUTCMonth(date.getUTCMonth() + 1), month = date.toISOString().slice(0, 7)) {
-      if (month >= first) buckets.push(month);
-    }
-  } else {
-    for (let year = Number(first); year <= Number(current); year++) buckets.push(String(year));
-  }
-  return buckets.map((bucket) => {
-    const date = period === "Day" ? bucket : period === "Month" ? `${bucket}-01` : `${bucket}-01-01`;
-    return {
-      label: period === "Year" ? bucket : labelDate(date, period === "Day" ? { weekday: "short" } : { month: "short" }),
-      title: period === "Year" ? bucket : labelDate(date, period === "Day" ? { month: "short", day: "numeric", year: "numeric" } : { month: "long", year: "numeric" }),
-      ...summarize(days.filter((day) => day.day.startsWith(bucket))),
-    };
-  });
+function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 }
 
-export function createHomeAnalytics(home: LearnHomeData): HomeAnalyticsData {
+export function createHomePulse(home: LearnHomeData): HomePulse {
   const { today } = home.activity;
   const days = home.activity.days.filter((day) => day.day <= today).toSorted((left, right) => left.day.localeCompare(right.day));
-  const totals = summarize(days);
-  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
-  const weekStart = addDays(today, -((weekday + 6) % 7));
-  const lastWeekStart = addDays(weekStart, -7);
-  const thisWeek = summarize(days.filter((day) => day.day >= weekStart));
-  const lastWeek = summarize(days.filter((day) => day.day >= lastWeekStart && day.day < weekStart));
-  const bars = Array.from({ length: 4 }, (_, index) => {
-    const start = addDays(weekStart, (index - 3) * 7);
-    const end = addDays(start, 7);
-    return { label: index === 3 ? "This week" : `Week of ${labelDate(start, { month: "short", day: "numeric" })}`, seconds: summarize(days.filter((day) => day.day >= start && day.day < end)).seconds };
-  });
-  const distribution = [
-    { label: "Videos", seconds: days.reduce((sum, day) => sum + day.videoSeconds, 0), tone: "lavender" },
-    { label: "Research", seconds: days.reduce((sum, day) => sum + day.paperSeconds, 0), tone: "green" },
-    { label: "Practice", seconds: totals.segments[1] ?? 0, tone: "pink" },
-    { label: "Other study", seconds: days.reduce((sum, day) => sum + day.otherSeconds, 0), tone: "yellow" },
-  ] as const;
+  const byDay = new Map(days.map((day) => [day.day, day]));
+  const secondsOn = (day: string) => { const entry = byDay.get(day); return entry ? studySeconds(entry) : 0; };
+  const sum = (list: HomeActivityDay[], value: (day: HomeActivityDay) => number) => list.reduce((total, day) => total + value(day), 0);
+  const stats = (from: string, to: string): HomeStats => {
+    const list = days.filter((day) => day.day >= from && day.day <= to);
+    return { studySeconds: sum(list, studySeconds), activeDays: list.filter((day) => studySeconds(day) > 0).length, started: sum(list, (day) => day.resources), completed: sum(list, (day) => day.completed) };
+  };
+  // The previous span covers the same number of elapsed days, so a half-finished week compares fairly.
+  const daily = (from: string, count: number): HomeBucket[] => Array.from({ length: count }, (_, index) => { const day = addDays(from, index); return { start: day, stats: stats(day, day) }; });
+  const period = (from: string, series: HomeBucket[], previousFrom?: string): HomePeriod => {
+    const length = daysBetween(from, today) + 1;
+    const current = stats(from, today);
+    if (!previousFrom) return { score: Math.round(current.activeDays / length * 100), previousScore: null, days: length, current, previous: null, series };
+    const end = addDays(previousFrom, length - 1);
+    // A short previous month must not run into this one (31 March vs February).
+    const previousTo = end < from ? end : addDays(from, -1);
+    const previous = stats(previousFrom, previousTo);
+    return { score: Math.round(current.activeDays / length * 100), previousScore: Math.round(previous.activeDays / (daysBetween(previousFrom, previousTo) + 1) * 100), days: length, current, previous, series };
+  };
+
+  const weekStart = addDays(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7));
+  const monthStart = `${today.slice(0, 7)}-01`;
+  const first = days.find((day) => studySeconds(day) > 0 || day.resources > 0)?.day ?? null;
+  // All time shows at most the last twelve months, one bucket per month.
+  const months: HomeBucket[] = [];
+  const oldest = addMonths(monthStart, -11);
+  for (let start = first && first > oldest ? `${first.slice(0, 7)}-01` : oldest; start <= monthStart; start = addMonths(start, 1)) months.push({ start, stats: stats(start, addDays(addMonths(start, 1), -1)) });
+
+  // A streak survives until the day ends, so an unstudied today still counts yesterday's run.
+  let streak = 0;
+  for (let day = secondsOn(today) > 0 ? today : addDays(today, -1); secondsOn(day) > 0; day = addDays(day, -1)) streak++;
+
+  const formatTotals: [string, number][] = [["Videos", sum(days, (day) => day.videoSeconds)], ["Papers", sum(days, (day) => day.paperSeconds)], ["Practice", sum(days, (day) => day.practiceSeconds)], ["Other study", sum(days, (day) => day.otherSeconds)]];
+  const formatSum = formatTotals.reduce((total, [, seconds]) => total + seconds, 0);
+  const started = sum(days, (day) => day.resources);
+  const completed = sum(days, (day) => day.completed);
+
   return {
-    learningOverview: {
-      seconds: totals.seconds,
-      activeDays: days.filter((day) => seconds(day) > 0).length,
-      changePct: lastWeek.seconds > 0 ? Math.round((thisWeek.seconds - lastWeek.seconds) / lastWeek.seconds * 100) : null,
-      bars: bars.filter((bar) => bar.seconds > 0).length >= 2 ? bars : [],
+    periods: {
+      week: period(weekStart, daily(weekStart, 7), addDays(weekStart, -7)),
+      month: period(monthStart, daily(monthStart, daysBetween(monthStart, today) + 1), addMonths(monthStart, -1)),
+      all: first ? period(first, months) : { score: 0, previousScore: null, days: 0, current: { studySeconds: 0, activeDays: 0, started: 0, completed: 0 }, previous: null, series: months },
     },
-    studyDistribution: distribution.filter((item) => item.seconds > 0).map((item) => ({ ...item, percent: item.seconds / totals.seconds * 100 })),
-    continueWatching: home.continueWatching,
-    weeklyProgress: [
-      { label: "Weekly", ...thisWeek }, { label: "Last week", ...lastWeek },
-      { label: "Monthly", ...summarize(days.filter((day) => day.day.startsWith(today.slice(0, 7)))) },
-    ],
-    activityTrends: { Day: trendPoints(days, today, "Day"), Month: trendPoints(days, today, "Month"), Year: trendPoints(days, today, "Year") },
+    streak,
+    totals: { started, completed, inProgress: Math.max(0, started - completed), studySeconds: sum(days, studySeconds) },
+    firstDay: first,
+    today,
+    formats: formatTotals.filter(([, seconds]) => seconds > 0).map(([label, seconds]) => ({ label, seconds, percent: seconds / formatSum * 100 })),
   };
 }

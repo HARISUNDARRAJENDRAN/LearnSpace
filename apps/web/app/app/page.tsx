@@ -14,6 +14,7 @@ export default async function ApplicationPage() {
   // page entry too so prefetch never consumes or bypasses the first visit.
   if (!isApplicationPrefetch(await headers())
     && await recordFirstApplicationVisit(currentSession.user.id)) redirect("/app/discover");
-  const data = await loadHomeData(currentSession.user.id);
-  return <HomeDashboard {...data} />;
+  const { home } = await loadHomeData(currentSession.user.id);
+  const name = currentSession.user.displayName?.trim().split(/\s+/)[0] || currentSession.user.email.split("@")[0] || "there";
+  return <HomeDashboard home={home} name={name} />;
 }

@@ -28,6 +28,15 @@ const geistFont = localFont({
   preload: false,
 });
 
+// Home's display and text face; only pages that use it download it.
+const homeFont = localFont({
+  src: "../public/fonts/PlusJakartaSans-Variable.woff2",
+  weight: "200 800",
+  variable: "--font-home",
+  display: "swap",
+  preload: false,
+});
+
 const editorialFont = localFont({
   src: "../node_modules/@fontsource/source-serif-4/files/source-serif-4-latin-400-normal.woff2",
   weight: "400",
@@ -47,7 +56,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={`${appFont.variable} ${geistFont.variable} ${editorialFont.variable}`} data-scroll-behavior="smooth">
+    <html lang="en" className={`${appFont.variable} ${geistFont.variable} ${homeFont.variable} ${editorialFont.variable}`} data-scroll-behavior="smooth">
       <body>{children}</body>
     </html>
   );
