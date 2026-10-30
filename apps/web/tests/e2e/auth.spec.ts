@@ -246,7 +246,7 @@ test("Google registration goes straight to onboarding, then returning login goes
 });
 
 test("Google rejects invalid state and redirects errors to the public login URL", async ({ request }) => {
-  for (const cookie of ["", "learnspace_oauth_state=expected.%2Fapp"]) {
+  for (const cookie of ["", "learnspace_oauth_state=expected..%2Fapp"]) {
     const response = await request.get("/api/auth/google/callback?state=unexpected&code=unused", {
       headers: { cookie },
       maxRedirects: 0,
@@ -254,6 +254,39 @@ test("Google rejects invalid state and redirects errors to the public login URL"
     expect(response.status()).toBe(307);
     expect(response.headers().location).toBe("http://localhost:3101/login?error=google-invalid-callback");
     expect(response.headers()["set-cookie"]).not.toContain("learnspace_session=");
+  }
+});
+
+test("desktop Google sign-in hands the session to the app link, not the browser", async ({ playwright }) => {
+  await clearGoogleTestUser();
+  const nonce = randomUUID().replaceAll("-", "");
+  const browser = await playwright.request.newContext({ baseURL: "http://localhost:3101" });
+  const app = await playwright.request.newContext({ baseURL: "http://localhost:3101" });
+  try {
+    // The system browser runs the OAuth round trip with its own state cookie.
+    const location = (response: { headers(): Record<string, string> }) => response.headers().location ?? "";
+    let response = await browser.get(`/api/auth/google?next=%2Fapp&desktop=${nonce}`, { maxRedirects: 0 });
+    response = await browser.get(location(response), { maxRedirects: 0 });
+    response = await browser.get(location(response), { maxRedirects: 0 });
+    expect(response.status()).toBe(307);
+    expect(response.headers()["set-cookie"]).not.toContain("learnspace_session=");
+    const handoff = new URL(location(response));
+    expect(`${handoff.protocol}//${handoff.host}`).toBe("learnspace://auth");
+    expect(handoff.searchParams.get("state")).toBe(nonce);
+
+    // The desktop window exchanges the code for its own session cookie.
+    response = await app.get(`/api/auth/desktop?code=${encodeURIComponent(handoff.searchParams.get("code") ?? "")}`, {
+      maxRedirects: 0,
+    });
+    expect(response.status()).toBe(307);
+    expect(response.headers().location).toBe("http://localhost:3101/onboarding");
+    expect(response.headers()["set-cookie"]).toContain("learnspace_session=");
+
+    response = await app.get("/api/auth/desktop?code=forged", { maxRedirects: 0 });
+    expect(response.headers().location).toBe("http://localhost:3101/login?error=google-failed");
+  } finally {
+    await browser.dispose();
+    await app.dispose();
   }
 });
 

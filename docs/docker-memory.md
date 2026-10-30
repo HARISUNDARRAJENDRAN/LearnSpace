@@ -32,17 +32,15 @@ Raw measurements: [docker-memory.json](benchmarks/docker-memory.json).
 
 | Service | Container limit | Node heap limit |
 | --- | ---: | ---: |
-| Web development | 1536 MiB | 1024 MiB |
-| Worker | 512 MiB | 384 MiB |
-| AI API | 768 MiB | — |
+| Web development (also installs, migrates, and seeds) | 1536 MiB | 1024 MiB |
+| Backend (discovery agent + worker) | 1024 MiB | 384 MiB (worker) |
 | PostgreSQL | 256 MiB | — |
-| Redis | 128 MiB | — |
-| Installer/migrations, exits before app startup | 768 MiB | 384 MiB |
 
-These are ceilings, not reservations. The running application ceilings total
-3.125 GiB. Override them through `WEB_MEMORY_LIMIT`, `WORKER_MEMORY_LIMIT`,
-`AI_MEMORY_LIMIT`, `POSTGRES_MEMORY_LIMIT`, `REDIS_MEMORY_LIMIT`, or
-`MIGRATE_MEMORY_LIMIT` when workloads require it.
+These are ceilings, not reservations; they total 2.75 GiB. Override them
+through `WEB_MEMORY_LIMIT`, `BACKEND_MEMORY_LIMIT`, or `POSTGRES_MEMORY_LIMIT`
+when workloads require it. Local Compose no longer runs Redis; without a Redis
+URL every cache caller computes results directly instead.
+On 2026-10-30 the three warm containers used approximately 945 MiB.
 
 The warm-page check reported no OOM kills or container restarts. This does
 not establish a maximum for every development route or optional enrichment
@@ -50,5 +48,4 @@ tool. Docker Desktop's VM, filesystem cache, and image builds consume memory
 outside these application-container figures. Container limits do not cap
 BuildKit image builds.
 
-No database volumes were deleted. Application data remains in PostgreSQL;
-Redis contains disposable cached recommendation state.
+No database volumes were deleted. Application data remains in PostgreSQL.

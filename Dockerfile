@@ -16,6 +16,7 @@ FROM base AS dependencies
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json .npmrc ./
 COPY patches ./patches
+COPY apps/desktop/package.json apps/desktop/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
@@ -103,9 +104,49 @@ USER learnspace
 
 CMD ["node", "dist/index.js", "--loop"]
 
-# Compose uses this target for the local development containers. It keeps the
-# source tree available for Next.js and the worker while the production targets
-# above remain suitable for standalone images.
+# Local Compose runs the discovery agent and worker in one container. Cloud
+# deployments keep them apart: the agent via Dockerfile.lambda and the worker
+# via the `worker` target above.
+FROM python:3.13-slim-bookworm AS backend
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_HTTP_TIMEOUT=180 \
+    UV_CONCURRENT_DOWNLOADS=4 \
+    PATH=/service/.venv/bin:$PATH \
+    NODE_ENV=production \
+    CURRICULUM_PATH=/service/worker/data/curriculum.csv
+
+WORKDIR /service
+
+COPY --from=base /usr/local/bin/node /usr/local/bin/node
+COPY services/ai-backend/pyproject.toml services/ai-backend/uv.lock ./
+
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --timeout 120 uv==0.11.28 \
+    && uv sync --frozen --no-dev \
+    && groupadd --system --gid 10001 learnspace \
+    && useradd --system --uid 10001 --gid learnspace --home-dir /service --shell /usr/sbin/nologin learnspace
+
+COPY --chown=learnspace:learnspace services/ai-backend/app ./app
+COPY --from=worker-build --chown=learnspace:learnspace /worker-runtime ./worker
+COPY --from=worker-build /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv ./worker/data/curriculum.csv
+COPY infra/docker/backend.sh /usr/local/bin/learnspace-backend
+
+USER learnspace
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=5s --retries=12 --start-period=15s \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"
+
+CMD ["learnspace-backend"]
+
+# Compose uses this target for the local web container. It keeps the source
+# tree and migration tooling available for Next.js while the production
+# targets above remain suitable for standalone images.
 FROM source AS development
 
 EXPOSE 3000

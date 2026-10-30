@@ -35,7 +35,7 @@
     "@learnspace/shared": "workspace:*",
     "drizzle-orm": "0.45.2",
     "postgres": "3.4.9",
-    "zod": "4.5.2"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/node": "26.4.0",

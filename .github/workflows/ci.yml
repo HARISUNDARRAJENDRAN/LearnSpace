@@ -28,13 +28,23 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run lint
       - run: pnpm run build
+      - run: pnpm --filter @learnspace/desktop test
       - name: Verify the packaged worker runtime
         run: |
           docker build --target worker --tag learnspace-worker:ci .
           docker run --rm --entrypoint node learnspace-worker:ci --input-type=module -e "import './dist/discovery.js'; import { access } from 'node:fs/promises'; await access(process.env.CURRICULUM_PATH); if (process.getuid() === 0) throw new Error('worker must run without root');"
+      - name: Verify the local backend image
+        run: |
+          docker build --target backend --tag learnspace-backend:ci .
+          docker run --rm --entrypoint sh learnspace-backend:ci -c "python -c 'import app.main' && node --input-type=module -e \"await import('/service/worker/dist/discovery.js'); if (process.getuid() === 0) throw new Error('backend must run without root');\""
 
   database:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 56379:6379
     env:
       DATABASE_URL: postgres://learnspace_app:learnspace_app@localhost:55432/learnspace
       DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@localhost:55432/learnspace
@@ -59,7 +69,7 @@ jobs:
       - run: pnpm run lint
       - run: pnpm run build
       - run: pnpm run db:check
-      - run: docker compose up -d --wait postgres redis
+      - run: docker compose up -d --wait postgres
       - run: pnpm run db:migrate
       - run: pnpm run db:verify
       - run: pnpm run db:seed:dev

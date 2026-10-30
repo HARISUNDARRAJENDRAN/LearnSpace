@@ -1,10 +1,10 @@
 # LearnSpace
 
-LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, PostgreSQL + Drizzle persistence layer, discovery worker, and FastAPI discovery-agent service.
+LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, the Electron desktop app, PostgreSQL + Drizzle persistence layer, discovery worker, and FastAPI discovery-agent service.
 
 ## Repository layout
 
-- `apps/` deployable application boundaries
+- `apps/` deployable application boundaries: `web` (Next.js) and `desktop` (Electron)
 - `services/` worker and backend boundaries
 - `packages/db/` PostgreSQL schema, migrations, client, seeds, and verification
 - `packages/shared/` shared domain tuples and Zod contracts
@@ -14,10 +14,17 @@ LearnSpace is a session-centric learning, research, practice, and knowledge-rete
 
 ## Local development with Docker
 
-The root Compose file starts PostgreSQL/pgvector, Redis, the migration and
-development seed job, the Next.js web app, the discovery worker, and the AI
-backend. Provider-backed discovery is disabled by default, so no API keys are
-required for the first boot.
+The root Compose file runs three services:
+
+- `postgres` — PostgreSQL 16 with pgvector, holding all application data.
+- `web` — the Next.js UI and API. On start it installs dependencies, applies
+  migrations, verifies roles, and seeds development data, then serves the
+  mounted source with hot reload.
+- `backend` — the FastAPI discovery agent and the discovery worker in one
+  image. The container restarts if either process exits.
+
+Provider-backed discovery is disabled by default, so no API keys are required
+for the first boot.
 
 ```text
 docker compose up --build -d
@@ -43,13 +50,13 @@ do not use it for destructive local database work.
 Useful commands:
 
 ```text
-docker compose logs -f web worker ai
+docker compose logs -f web backend
 docker compose down
 docker compose down -v  # removes local Compose volumes, including the database
 ```
 
 Set `DISCOVERY_AGENTS_ENABLED=true` and provide `EXA_API_KEY` in `.env` to
-enable live discovery-provider calls. The AI backend remains reachable at
+enable live discovery-provider calls. The discovery agent remains reachable at
 <http://localhost:8080> for local health checks.
 
 The AWS deployment for the discovery agent is documented in
@@ -57,14 +64,46 @@ The AWS deployment for the discovery agent is documented in
 It stores the Exa key and worker token in Secrets Manager and deploys the
 existing Lambda container through ECR and CloudFormation.
 
-The root Dockerfile defaults to the standalone web image and also exposes a
-compiled worker target:
+The root Dockerfile defaults to the standalone web image. It also exposes the
+`backend` target used by Compose and the standalone `worker` target deployed to
+AWS (the agent itself deploys through `services/ai-backend/Dockerfile.lambda`):
 
 ```text
 docker build -t learnspace-web .
+docker build --target backend -t learnspace-backend .
 docker build --target worker -t learnspace-worker .
-docker build -f services/ai-backend/Dockerfile -t learnspace-ai services/ai-backend
 ```
+
+## Desktop app
+
+`apps/desktop` packages LearnSpace for Linux (AppImage, .deb), Windows (NSIS
+installer), and macOS (universal .dmg). LearnSpace is a server-rendered app
+backed by PostgreSQL, so the desktop app is a hardened window onto a
+deployment rather than a second frontend. It keeps navigation on the
+LearnSpace origin, opens other links in the system browser, and denies
+camera, microphone, location, and notification requests.
+
+Google refuses sign-in inside embedded app windows. In the desktop app,
+"Continue with Google" opens the system browser. On success the server
+returns the session through a single-purpose `learnspace://auth` link,
+encrypted and valid for 60 seconds, which only the app that started the
+sign-in accepts.
+
+```text
+pnpm --filter @learnspace/desktop start                          # run against the default deployment
+LEARNSPACE_URL=http://localhost:3000 pnpm --filter @learnspace/desktop start
+pnpm --filter @learnspace/desktop dist                           # package for the current OS into apps/desktop/release
+```
+
+The app opens `https://learnspace-staging.vercel.app` unless `LEARNSPACE_URL`
+names another HTTPS origin (plain HTTP is accepted only for localhost). Each
+installer must be built on its own OS. The `Desktop` workflow builds all three
+on GitHub Actions when a `desktop-v*` tag is pushed or the workflow is run by
+hand. Builds are unsigned, so macOS Gatekeeper and Windows SmartScreen warn on
+first launch until signing certificates are configured. Google sign-in
+returns to the app only from packaged builds, which register the
+`learnspace://` scheme; development runs can use email sign-in. Packaging the
+.deb on Arch Linux needs `libxcrypt-compat`.
 
 ## Host-based database workflow
 

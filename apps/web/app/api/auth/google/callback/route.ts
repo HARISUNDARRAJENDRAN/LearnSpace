@@ -18,6 +18,7 @@ import {
   setSessionCookie,
 } from "../../../../../lib/auth/cookies";
 import { safeEqualText } from "../../../../../lib/auth/crypto";
+import { desktopCallbackUrl, sealDesktopHandoff } from "../../../../../lib/auth/desktop-handoff";
 import { safeRedirectPath } from "../../../../../lib/auth/validation";
 
 const googleTokenResponseSchema = z.object({
@@ -57,17 +58,16 @@ export async function GET(request: NextRequest) {
     return clearState(loginRedirect(request, "google-invalid-callback"));
   }
 
-  const separator = stateCookie.indexOf(".");
-  if (separator < 1) {
+  // `<state>.<desktop nonce or empty>.<encoded next path>`
+  const stateParts = /^([^.]+)\.([^.]*)\.(.*)$/.exec(stateCookie);
+  if (!stateParts) {
     return clearState(loginRedirect(request, "google-invalid-callback"));
   }
 
-  const expectedState = stateCookie.slice(0, separator);
+  const [, expectedState = "", desktopNonce = "", encodedNext = ""] = stateParts;
   let next = "/app";
   try {
-    next = safeRedirectPath(
-      decodeURIComponent(stateCookie.slice(separator + 1)),
-    );
+    next = safeRedirectPath(decodeURIComponent(encodedNext));
   } catch {
     return clearState(loginRedirect(request, "google-invalid-callback"));
   }
@@ -138,6 +138,15 @@ export async function GET(request: NextRequest) {
       getAuthSecret(),
     );
     const destination = await getAuthenticatedDestination(user.id, next);
+    if (desktopNonce) {
+      const handoff = new URL(desktopCallbackUrl);
+      handoff.searchParams.set(
+        "code",
+        sealDesktopHandoff({ token: session.token, maxAge: session.maxAge, destination }, getAuthSecret()),
+      );
+      handoff.searchParams.set("state", desktopNonce);
+      return clearState(NextResponse.redirect(handoff));
+    }
     const response = NextResponse.redirect(new URL(destination, getAppBaseUrl(request)));
     setSessionCookie(response, session.token, session.maxAge);
     clearOauthStateCookie(response);

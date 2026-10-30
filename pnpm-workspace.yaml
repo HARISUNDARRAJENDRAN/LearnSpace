@@ -3,11 +3,11 @@ packages:
   - services/*
   - packages/*
 allowBuilds:
+  # Squirrel.Windows tooling; desktop releases use NSIS instead.
+  electron-winstaller: false
   esbuild: true
   sharp: true
   unrs-resolver: true
-minimumReleaseAgeExclude:
-  - zod@4.5.2
 patchedDependencies:
   braces@3.0.3: patches/braces@3.0.3.patch
 # No upstream release fixes this advisory. The checked-in patch bounds both
