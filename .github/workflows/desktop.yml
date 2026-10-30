@@ -32,6 +32,30 @@ jobs:
         env:
           # Builds are unsigned until signing certificates are configured.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Launch the packaged app
+        shell: bash
+        working-directory: apps/desktop
+        env:
+          LEARNSPACE_URL: https://example.com
+        run: |
+          case "$RUNNER_OS" in
+            Linux)
+              # Ubuntu 24.04 blocks the user namespaces Chromium's sandbox needs.
+              sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+              app=(xvfb-run -a release/linux-unpacked/learnspace) ;;
+            Windows) app=(release/win-unpacked/LearnSpace.exe) ;;
+            macOS) app=(release/mac-universal/LearnSpace.app/Contents/MacOS/LearnSpace) ;;
+          esac
+          "${app[@]}" --remote-debugging-port=9222 > app.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -s http://127.0.0.1:9222/json | grep -q '"url": "https://example.com/app"'; then
+              echo "LearnSpace opened its window on $RUNNER_OS"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat app.log
+          exit 1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: learnspace-desktop-${{ runner.os }}
