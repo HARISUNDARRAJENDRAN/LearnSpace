@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Bounded asynchronous discovery agents for LearnSpace"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "crewai==1.15.18",
-  "crewai-tools==1.15.18",
+  "crewai==1.15.33",
+  "crewai-tools==1.15.33",
   "fastapi==0.141.1",
   "httpx==0.28.1",
   "mangum==0.19.0",
