@@ -123,16 +123,16 @@ video/current-paper/foundational-paper calls before optional work. Keep
 returns the strict structured enrichment schema; raw validated Exa candidates
 remain the safe default.
 
-The optional `Discovery staging smoke` workflow runs manually or every six
-hours. It requires `STAGING_DATABASE_WORKER_URL`,
+The `deploy-worker` job in `.github/workflows/ci.yml` runs the hosted
+discovery smoke after every deploy from `main`. It requires `STAGING_DATABASE_WORKER_URL`,
 `STAGING_DATABASE_MIGRATOR_URL`, `STAGING_DISCOVERY_AGENT_URL`,
 `STAGING_INTERNAL_SERVICE_TOKEN`, `STAGING_DISCOVERY_SMOKE_EMAIL`, and
 `STAGING_DISCOVERY_SMOKE_PASSWORD`. It creates a refresh job for the canonical
 `ai-machine-learning` concept, executes the real worker-to-agent path, verifies
 a persisted candidate, logs in as the completed staging learner, and confirms
 the candidate appears in the Home API before cleaning up with the migrator
-connection. It is separate from pull-request CI and waits for the continuous
-hosted worker to process the job; it does not start a transient worker.
+connection. It waits for the continuous hosted worker to process the job; it
+does not start a transient worker.
 
 The worker never needs `DATABASE_MIGRATOR_URL`; migrations remain a separate
 controlled job.

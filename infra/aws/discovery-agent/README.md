@@ -79,14 +79,14 @@ by the service token.
 
 ## GitHub Actions
 
-`.github/workflows/discovery-agent-deploy.yml` is manual by design. Configure
-these repository secrets, then run it from the Actions tab:
+The `deploy-agent` job in `.github/workflows/ci.yml` deploys the agent after
+every green push to `main`. It needs these repository secrets:
 
 - `AWS_DISCOVERY_AGENT_ROLE_ARN` — an IAM role trusted by GitHub OIDC
 - `AWS_DISCOVERY_AGENT_EXA_API_KEY_SECRET_ARN`
 - `AWS_DISCOVERY_AGENT_INTERNAL_TOKEN_SECRET_ARN`
 
-The workflow uses the same deploy script and never stores the provider key in
+The job uses the same deploy script and never stores the provider key in
 GitHub Actions.
 
 With GitHub CLI authenticated as a repository administrator and AWS CLI
