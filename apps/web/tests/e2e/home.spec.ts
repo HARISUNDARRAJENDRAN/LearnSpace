@@ -43,8 +43,8 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     expect(entered[0]?.first_application_visit_at).toBeTruthy();
     await page.getByRole("link", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByText("Your learning starts here.")).toBeVisible();
-    await expect(page.locator(".analytics-bubble, .analytics-ring-arc, .analytics-trend-dot")).toHaveCount(0);
+    await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Find your next lesson" })).toBeVisible();
     await page.reload();
     await expect(page).toHaveURL(/\/app$/);
     const laterSession = await createSession(fresh.userId, { userAgent: "home-return-visit" }, process.env.AUTH_SECRET ?? "");
@@ -52,7 +52,7 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     await page.context().addCookies([{ name: sessionCookieName, value: laterSession.token, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
     await page.goto("/app");
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByText("Your learning starts here.")).toBeVisible();
+    await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
     const after = await database`SELECT first_application_visit_at FROM identity.user_settings WHERE user_id = ${fresh.userId}`;
     expect(after[0]?.first_application_visit_at).toEqual(entered[0]?.first_application_visit_at);
     await page.addInitScript(() => {
@@ -87,130 +87,31 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     expect(recorded[0]?.seconds).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Pause fixture video" }).click();
     await page.getByRole("link", { name: "Home", exact: true }).click();
-    await expect(page.locator(".analytics-overview-metric .analytics-duration")).toHaveText(/\d+ sec/);
-    await expect(page.locator(".analytics-ring-value")).toHaveText(/\d+ sec/);
-    await expect(page.locator(".analytics-distribution-stats")).toContainText("Videos");
-    await expect(page.locator(".analytics-trends .analytics-empty")).toBeVisible();
+    const studyTime = page.locator(".home-metric").filter({ has: page.getByRole("heading", { name: "Study time" }) });
+    await expect(studyTime.locator("strong")).toHaveText(/\d+ sec/);
+    await expect(page.getByRole("region", { name: "Study mix" })).toContainText("Videos");
+    await expect(page.getByRole("region", { name: "This week" })).toContainText("Your best day was");
   } finally {
     await cleanupHomeFixture(database, fresh);
   }
 });
 
-test("populated Home renders analytics and continues the current video", async ({ page }) => {
+test("populated Home lists lessons and continues the current video", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
   await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Learning Overview" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Weekly Progress" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start learning" })).not.toBeFocused();
-  await expect(page.locator(".analytics-continue").getByRole("link", { name: "Resume", exact: true })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
-  await expect(page.getByRole("heading", { name: "Learning Activity & Progress Trends" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Hello, / })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Recent lessons" }).getByRole("button").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Continue: / })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
 });
 
-test("Home analytics controls open details and change chart periods", async ({ page }) => {
+test("Home period tabs and lesson filters toggle", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  const detailDialog = page.getByRole("dialog", { name: "Study Distribution" });
-  await page.getByRole("button", { name: "View Details" }).click();
-  await expect(detailDialog).toBeVisible();
-  await detailDialog.getByRole("button", { name: "Close details" }).click();
-  await expect(detailDialog).toBeHidden();
-  const progressPeriod = page.getByRole("combobox", { name: "Progress period" });
-  await progressPeriod.selectOption("1");
-  await expect(page.locator(".analytics-ring-value")).toHaveText("3 min");
-  const periods = page.getByRole("group", { name: "Trend period" });
-  await periods.getByRole("button", { name: "Day" }).click();
-  await expect(periods.getByRole("button", { name: "Day" })).toHaveAttribute("aria-pressed", "true");
-  const startLearning = page.getByRole("button", { name: "Start learning" });
-  await startLearning.click();
-  const sourceDialog = page.getByRole("dialog", { name: "Learn any topic from the best videos" });
-  await expect(sourceDialog).toBeVisible();
-  await sourceDialog.getByRole("button", { name: "Close source discovery" }).click();
-  await expect(startLearning).toBeFocused();
-});
-
-test("Home charts keep donut and bubble focus synchronized without a click outline", async ({ page }) => {
-  await page.goto("/app", { waitUntil: "networkidle" });
-
-  const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
-  const practiceSegment = page.locator(".analytics-ring-segment.tone-green");
-  const researchSegment = page.locator(".analytics-ring-segment.tone-light-lavender");
-  for (const [label, activeSegment, mutedSegment] of [
-    ["Focus", focusSegment, practiceSegment],
-    ["Practice", practiceSegment, focusSegment],
-    ["Research", researchSegment, practiceSegment],
-  ] as const) {
-    await page.locator(".analytics-ring-legend button").filter({ hasText: label }).hover();
-    await expect(activeSegment).toHaveClass(/is-active/);
-    await expect(mutedSegment).toHaveClass(/is-muted/);
-  }
-
-  const focusPoint = await focusSegment.locator(".analytics-ring-hit-target").evaluate((element) => {
-    const path = element as SVGPathElement;
-    const svg = path.ownerSVGElement;
-    if (!svg) throw new Error("Donut segment is missing its SVG");
-    const point = svg.createSVGPoint();
-    const midpoint = path.getPointAtLength(path.getTotalLength() / 2);
-    point.x = midpoint.x;
-    point.y = midpoint.y;
-    const matrix = svg.getScreenCTM();
-    if (!matrix) throw new Error("Donut segment is missing its screen transform");
-    const coordinates = point.matrixTransform(matrix);
-    return { x: coordinates.x, y: coordinates.y };
-  });
-  await page.mouse.move(focusPoint.x, focusPoint.y);
-  await expect(focusSegment).toHaveClass(/is-active/);
-
-  const videos = page.locator('.analytics-bubble[data-category="Videos"]');
-  const research = page.locator('.analytics-bubble[data-category="Research"]');
-  await videos.hover();
-  await expect(videos).toHaveClass(/is-active/);
-  await expect(research).toHaveClass(/is-muted/);
-  await videos.click();
-  await expect(videos).toHaveCSS("outline-style", "none");
-  await page.mouse.move(0, 0);
-  await videos.focus();
-  await page.keyboard.press("Enter");
-  await expect(videos).toHaveClass(/is-active/);
-});
-
-test("touch taps toggle donut and bubble focus", async ({ browser }) => {
-  const context = await browser.newContext({
-    baseURL: "http://localhost:3101",
-    hasTouch: true,
-    viewport: { width: 390, height: 844 },
-  });
-  try {
-    await context.addCookies([{ name: sessionCookieName, value: fixture.sessionToken, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
-    const page = await context.newPage();
-    await page.setExtraHTTPHeaders({ "x-real-ip": `playwright-home-touch-${randomUUID()}` });
-    await page.goto("/app", { waitUntil: "networkidle" });
-
-    const focusSegment = page.locator(".analytics-ring-segment.tone-lavender");
-    const hitTarget = focusSegment.locator(".analytics-ring-hit-target");
-    await hitTarget.scrollIntoViewIfNeeded();
-    const focusPoint = await hitTarget.evaluate((element) => {
-      const path = element as SVGPathElement;
-      const svg = path.ownerSVGElement;
-      if (!svg) throw new Error("Donut segment is missing its SVG");
-      const point = svg.createSVGPoint();
-      const midpoint = path.getPointAtLength(path.getTotalLength() / 2);
-      point.x = midpoint.x;
-      point.y = midpoint.y;
-      const matrix = svg.getScreenCTM();
-      if (!matrix) throw new Error("Donut segment is missing its screen transform");
-      const coordinates = point.matrixTransform(matrix);
-      return { x: coordinates.x, y: coordinates.y };
-    });
-    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
-    await expect(focusSegment).toHaveClass(/is-active/);
-    await page.touchscreen.tap(focusPoint.x, focusPoint.y);
-    await expect(focusSegment).not.toHaveClass(/is-active/);
-
-    const videos = page.locator('.analytics-bubble[data-category="Videos"]');
-    await videos.locator("circle").tap();
-    await expect(videos).toHaveClass(/is-active/);
-    await videos.locator("circle").tap();
-    await expect(videos).not.toHaveClass(/is-active/);
-  } finally {
-    await context.close();
-  }
+  const month = page.getByRole("group", { name: "Period" }).getByRole("button", { name: "This month" });
+  await month.click();
+  await expect(month).toHaveAttribute("aria-pressed", "true");
+  const completed = page.getByRole("button", { name: /Completed$/ });
+  await completed.click();
+  await expect(completed).toHaveAttribute("aria-pressed", "true");
+  await completed.click();
+  await expect(completed).toHaveAttribute("aria-pressed", "false");
 });

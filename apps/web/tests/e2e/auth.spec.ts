@@ -159,7 +159,7 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await completeOnboarding(page, true);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/app$/);
-  await expect(page.getByText("Your learning starts here.")).toBeVisible();
+  await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
   await page.waitForLoadState("load");
