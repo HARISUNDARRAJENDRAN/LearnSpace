@@ -2,7 +2,7 @@
 // in the system browser, and how browser-based Google sign-in returns.
 
 export const appProtocol = "learnspace";
-const defaultAppUrl = "https://learnspace-staging.vercel.app";
+const defaultAppUrl = "https://learn-space.app";
 
 export function appOrigin(value: string | undefined): string {
   const url = new URL(value || defaultAppUrl);

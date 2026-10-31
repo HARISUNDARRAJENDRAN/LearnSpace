@@ -5,7 +5,7 @@ import { appOrigin, externalUrl, googleSignInUrl, handoffUrl, isAppUrl } from ".
 const origin = "https://learnspace.example";
 
 test("the app origin must be HTTPS except on localhost", () => {
-  assert.equal(appOrigin(undefined), "https://learnspace-staging.vercel.app");
+  assert.equal(appOrigin(undefined), "https://learn-space.app");
   assert.equal(appOrigin("https://learnspace.example/app?x=1"), origin);
   assert.equal(appOrigin("http://localhost:3000"), "http://localhost:3000");
   assert.throws(() => appOrigin("http://learnspace.example"));
