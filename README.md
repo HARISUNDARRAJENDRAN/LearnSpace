@@ -53,16 +53,36 @@ enable live discovery-provider calls. The discovery agent remains reachable at
 
 ## Self-hosting
 
-Production runs the same three services from built images on any machine
-with Docker, plus a Cloudflare Tunnel container as the only public entrance.
-Nothing listens beyond loopback, so no router ports need opening.
+Production runs the web and backend services from built images on any
+machine with Docker, plus a Cloudflare Tunnel container as the only public
+entrance. Nothing listens beyond loopback, so no router ports need opening.
+PostgreSQL is hosted externally (any PostgreSQL 15+ with pgvector, such as a
+Supabase project).
 
-1. In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a
-   tunnel on a domain you manage there, give it a public hostname that points
-   at `http://web:3000`, and copy the tunnel token.
-2. Put the settings in the ignored root `.env.production` file:
+1. Create the database roles and extensions once, as the database's admin
+   user, with a strong password for each role:
 
    ```text
+   DATABASE_ADMIN_URL=... LEARNSPACE_MIGRATOR_PASSWORD=... LEARNSPACE_APP_PASSWORD=... \
+   LEARNSPACE_AUTH_PASSWORD=... LEARNSPACE_AI_PASSWORD=... LEARNSPACE_WORKER_PASSWORD=... \
+   LEARNSPACE_RUNNER_PASSWORD=... LEARNSPACE_READONLY_PASSWORD=... pnpm db:bootstrap:remote
+   ```
+
+   On Supabase, connect through the Supavisor pooler (the direct host is
+   IPv6-only): user `<role>.<project-ref>`, port 5432 for session mode and
+   6543 for transaction mode. Turn off the Data API, since the app reaches
+   PostgreSQL directly.
+2. In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a
+   tunnel on a domain you manage there, give it a public hostname that points
+   at `http://web:3000`, and copy the tunnel token.
+3. Put the settings in the ignored root `.env.production` file:
+
+   ```text
+   DATABASE_MIGRATOR_URL=...    # learnspace_migrator, session mode (migrations take a lock)
+   DATABASE_URL=...             # learnspace_app, transaction mode
+   DATABASE_AUTH_URL=...        # learnspace_auth, transaction mode
+   DATABASE_WORKER_URL=...      # learnspace_worker, transaction mode
+   DATABASE_AI_URL=...          # learnspace_ai, transaction mode
    APP_URL=https://learnspace.example.com
    AUTH_SECRET=...              # openssl rand -base64 48
    INTERNAL_SERVICE_TOKEN=...   # openssl rand -base64 32
@@ -73,14 +93,13 @@ Nothing listens beyond loopback, so no router ports need opening.
    EMAIL_FROM=LearnSpace <noreply@learnspace.example.com>
    ```
 
-3. Start it, and run the same command after each `git pull` to deploy:
+4. Start it, and run the same command after each `git pull` to deploy:
 
    ```text
    docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
    ```
 
-A migration job runs before the web server starts. Back up the database with
-`docker compose -p learnspace-production exec postgres pg_dump -U postgres learnspace > backup.sql`.
+A migration job applies pending migrations before the web server starts.
 
 ## Desktop app
 

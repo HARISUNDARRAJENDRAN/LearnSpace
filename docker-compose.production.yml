@@ -2,14 +2,14 @@
 #   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
 # Its own project name keeps it apart from the development stack and its data.
 # Nothing is published beyond loopback; Cloudflare Tunnel is the public entrance.
-# shortcut: database roles keep the fixed passwords from infra/postgres/init, which
-# is safe only while Postgres stays unpublished; rotate them before exposing it.
+# PostgreSQL is hosted externally; .env.production holds one URL per database role.
 
 name: learnspace-production
 
 services:
+  # Development's local database; production never starts it.
   postgres:
-    ports: !reset []
+    profiles: ["local-database"]
 
   # Applies pending migrations once, before the web server starts.
   migrate:
@@ -18,11 +18,9 @@ services:
       dockerfile: Dockerfile
       target: tools
     environment:
-      DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@postgres:5432/learnspace
+      DATABASE_MIGRATOR_URL: "${DATABASE_MIGRATOR_URL:?set DATABASE_MIGRATOR_URL}"
     command: ["sh", "-c", "pnpm db:migrate && pnpm db:verify"]
-    depends_on:
-      postgres:
-        condition: service_healthy
+    depends_on: !reset {}
     restart: "no"
 
   web:
@@ -31,6 +29,12 @@ services:
     command: !reset null
     volumes: !reset []
     environment:
+      DATABASE_MIGRATOR_URL: !reset null
+      DATABASE_URL: "${DATABASE_URL:?set DATABASE_URL}"
+      DATABASE_AUTH_URL: "${DATABASE_AUTH_URL:?set DATABASE_AUTH_URL}"
+      DATABASE_WORKER_URL: "${DATABASE_WORKER_URL:?set DATABASE_WORKER_URL}"
+      # Transaction-mode poolers cannot keep prepared statements across requests.
+      DB_PREPARED_STATEMENTS: "false"
       APP_URL: "${APP_URL:?set APP_URL to the public https:// address}"
       GOOGLE_REDIRECT_URI: "${APP_URL}/api/auth/google/callback"
       AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET}"
@@ -38,7 +42,7 @@ services:
       AUTH_SECURE_COOKIES: "true"
       # One web process, so in-memory rate-limit counters are complete.
       AUTH_RATE_LIMIT_BACKEND: memory
-    depends_on:
+    depends_on: !override
       migrate:
         condition: service_completed_successfully
     ports: !override
@@ -46,6 +50,8 @@ services:
 
   backend:
     environment:
+      DATABASE_WORKER_URL: "${DATABASE_WORKER_URL:?set DATABASE_WORKER_URL}"
+      DATABASE_AI_URL: "${DATABASE_AI_URL:?set DATABASE_AI_URL}"
       INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}"
     ports: !reset []
 
