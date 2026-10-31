@@ -60,7 +60,7 @@ Nothing listens beyond loopback, so no router ports need opening.
 1. In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a
    tunnel on a domain you manage there, give it a public hostname that points
    at `http://web:3000`, and copy the tunnel token.
-2. Put the settings in the ignored root `.env` file:
+2. Put the settings in the ignored root `.env.production` file:
 
    ```text
    APP_URL=https://learnspace.example.com
@@ -76,11 +76,11 @@ Nothing listens beyond loopback, so no router ports need opening.
 3. Start it, and run the same command after each `git pull` to deploy:
 
    ```text
-   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
    ```
 
 A migration job runs before the web server starts. Back up the database with
-`docker compose exec postgres pg_dump -U postgres learnspace > backup.sql`.
+`docker compose -p learnspace-production exec postgres pg_dump -U postgres learnspace > backup.sql`.
 
 ## Desktop app
 

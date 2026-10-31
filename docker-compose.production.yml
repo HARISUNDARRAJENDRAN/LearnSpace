@@ -1,8 +1,11 @@
 # Self-hosted production, layered on docker-compose.yml:
-#   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
+# Its own project name keeps it apart from the development stack and its data.
 # Nothing is published beyond loopback; Cloudflare Tunnel is the public entrance.
 # shortcut: database roles keep the fixed passwords from infra/postgres/init, which
 # is safe only while Postgres stays unpublished; rotate them before exposing it.
+
+name: learnspace-production
 
 services:
   postgres:
