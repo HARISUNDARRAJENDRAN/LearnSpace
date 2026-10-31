@@ -91,22 +91,27 @@ test("malformed JSON is reported as a client error", async () => {
   );
 });
 
-test("Vercel rate-limit identity prefers the trusted forwarded client IP", () => {
-  const previousVercel = process.env.VERCEL;
-  process.env.VERCEL = "1";
+test("production rate-limit identity trusts only the Cloudflare client IP", () => {
+  const previousEnv = process.env.NODE_ENV;
+  const previousTestMode = process.env.AUTH_TEST_MODE;
+  Object.assign(process.env, { NODE_ENV: "production" });
+  delete process.env.AUTH_TEST_MODE;
 
   try {
-    const request = new Request("https://learnspace.example", {
-      headers: {
-        "x-real-ip": "spoofed-value",
-        "x-vercel-forwarded-for": "trusted-value",
-        "x-forwarded-for": "untrusted-value",
-      },
-    });
-    assert.equal(getClientIp(request), "trusted-value");
+    const headers = { "x-real-ip": "spoofed-value", "x-forwarded-for": "untrusted-value" };
+    assert.equal(getClientIp(new Request("https://learnspace.example", { headers })), "unknown");
+    assert.equal(
+      getClientIp(
+        new Request("https://learnspace.example", {
+          headers: { ...headers, "cf-connecting-ip": "trusted-value" },
+        }),
+      ),
+      "trusted-value",
+    );
   } finally {
-    if (previousVercel === undefined) delete process.env.VERCEL;
-    else process.env.VERCEL = previousVercel;
+    Object.assign(process.env, { NODE_ENV: previousEnv });
+    if (previousTestMode === undefined) delete process.env.AUTH_TEST_MODE;
+    else process.env.AUTH_TEST_MODE = previousTestMode;
   }
 });
 

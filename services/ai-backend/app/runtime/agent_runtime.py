@@ -1,5 +1,4 @@
 import asyncio
-import os
 from datetime import timedelta
 from typing import Protocol, cast
 
@@ -78,22 +77,6 @@ class AgentRuntime:
         if cached is not None:
             return self._cached_batch(request, cached, trace_id)
         stale = await self.flow.cache.get_stale(key)
-        if os.getenv("AWS_LAMBDA_FUNCTION_NAME"):
-            # Lambda freezes the event loop after returning. Finish provider
-            # work and cache writes in this invocation; Next.js still returns
-            # its partial response within the independent interactive budget.
-            try:
-                batch = await asyncio.wait_for(
-                    self._fetch_instant(request), timeout=self.settings.request_timeout_seconds
-                )
-                await self._cache_instant(request, key, batch)
-                return batch
-            except Exception as error:
-                if stale is not None:
-                    return self._cached_batch(request, stale, trace_id)
-                return DiscoveryCandidateBatch(
-                    trace_id=trace_id, failures=[f"instant:{type(error).__name__}"]
-                )
         if stale is not None:
             if key not in self._instant_refreshes or self._instant_refreshes[key].done():
                 task = asyncio.create_task(self._refresh_instant(request, key))

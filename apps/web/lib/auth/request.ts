@@ -11,22 +11,15 @@ export async function readJson(request: Request): Promise<unknown> {
 
 export function getClientIp(request: Request): string {
   const realIp = request.headers.get("x-real-ip")?.trim();
-  const vercelForwardedFor = request.headers.get("x-vercel-forwarded-for")?.trim();
   const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
 
-  if (process.env.AUTH_TEST_MODE === "true") {
-    return realIp || vercelForwardedFor || forwardedFor || "unknown";
-  }
-
-  if (process.env.VERCEL === "1") {
-    return vercelForwardedFor || realIp || "unknown";
-  }
-
-  if (process.env.NODE_ENV !== "production") {
+  if (process.env.AUTH_TEST_MODE === "true" || process.env.NODE_ENV !== "production") {
     return realIp || forwardedFor || "unknown";
   }
 
-  return "unknown";
+  // Production is reachable only through Cloudflare Tunnel, which sets this
+  // header itself; the server port is published on loopback only.
+  return request.headers.get("cf-connecting-ip")?.trim() || "unknown";
 }
 
 export function getSessionContext(request: Request): SessionContext {

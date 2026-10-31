@@ -86,27 +86,7 @@ HEALTHCHECK --interval=10s --timeout=5s --retries=12 --start-period=20s \
 
 CMD ["node", "apps/web/server.js"]
 
-FROM node:${NODE_VERSION}-bookworm-slim AS worker
-
-ENV NODE_ENV=production
-
-WORKDIR /app
-
-RUN groupadd --system --gid 1001 learnspace \
-    && useradd --system --uid 1001 --gid learnspace --create-home learnspace
-
-COPY --from=worker-build --chown=learnspace:learnspace /worker-runtime ./
-COPY --from=worker-build /workspace/apps/web/public/data/learnspace_youtube_curriculum_master.csv ./data/curriculum.csv
-
-ENV CURRICULUM_PATH=/app/data/curriculum.csv
-
-USER learnspace
-
-CMD ["node", "dist/index.js", "--loop"]
-
-# Local Compose runs the discovery agent and worker in one container. Cloud
-# deployments keep them apart: the agent via Dockerfile.lambda and the worker
-# via the `worker` target above.
+# The discovery agent and the discovery worker run together in one container.
 FROM python:3.13-slim-bookworm AS backend
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

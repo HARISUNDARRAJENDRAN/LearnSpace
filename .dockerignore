@@ -10,8 +10,6 @@ dist
 **/*.tsbuildinfo
 .next*
 **/.next*
-.vercel
-**/.vercel
 out
 **/out
 .turbo

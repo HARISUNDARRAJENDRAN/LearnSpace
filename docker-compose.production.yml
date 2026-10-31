@@ -1,0 +1,57 @@
+# Self-hosted production, layered on docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+# Nothing is published beyond loopback; Cloudflare Tunnel is the public entrance.
+# shortcut: database roles keep the fixed passwords from infra/postgres/init, which
+# is safe only while Postgres stays unpublished; rotate them before exposing it.
+
+services:
+  postgres:
+    ports: !reset []
+
+  # Applies pending migrations once, before the web server starts.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: tools
+    environment:
+      DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@postgres:5432/learnspace
+    command: ["sh", "-c", "pnpm db:migrate && pnpm db:verify"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  web:
+    build:
+      target: web
+    command: !reset null
+    volumes: !reset []
+    environment:
+      APP_URL: "${APP_URL:?set APP_URL to the public https:// address}"
+      GOOGLE_REDIRECT_URI: "${APP_URL}/api/auth/google/callback"
+      AUTH_SECRET: "${AUTH_SECRET:?set AUTH_SECRET}"
+      INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}"
+      AUTH_SECURE_COOKIES: "true"
+      # One web process, so in-memory rate-limit counters are complete.
+      AUTH_RATE_LIMIT_BACKEND: memory
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
+
+  backend:
+    environment:
+      INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:?set INTERNAL_SERVICE_TOKEN}"
+    ports: !reset []
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}"
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped

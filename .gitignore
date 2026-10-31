@@ -3,7 +3,6 @@ dist/
 build/
 .next*/
 out/
-.vercel/
 coverage/
 .turbo/
 /.pnpm-store/

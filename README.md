@@ -37,15 +37,7 @@ rebuilding the image. Verification and password-reset links are returned by
 the local UI because email delivery is disabled by default.
 
 Compose uses safe local defaults. Put any local-only overrides in the ignored
-root `.env` file. For an intentional staging-like run, use the Vercel project
-environment without writing production secrets into the repository:
-
-```text
-pnpm dlx vercel env run --environment=production --project=learnspace-staging -- pnpm --filter @learnspace/web dev
-```
-
-That command connects the app to the staging services configured in Vercel;
-do not use it for destructive local database work.
+root `.env` file.
 
 Useful commands:
 
@@ -59,20 +51,36 @@ Set `DISCOVERY_AGENTS_ENABLED=true` and provide `EXA_API_KEY` in `.env` to
 enable live discovery-provider calls. The discovery agent remains reachable at
 <http://localhost:8080> for local health checks.
 
-The AWS deployment for the discovery agent is documented in
-[`infra/aws/discovery-agent/README.md`](infra/aws/discovery-agent/README.md).
-It stores the Exa key and worker token in Secrets Manager and deploys the
-existing Lambda container through ECR and CloudFormation.
+## Self-hosting
 
-The root Dockerfile defaults to the standalone web image. It also exposes the
-`backend` target used by Compose and the standalone `worker` target deployed to
-AWS (the agent itself deploys through `services/ai-backend/Dockerfile.lambda`):
+Production runs the same three services from built images on any machine
+with Docker, plus a Cloudflare Tunnel container as the only public entrance.
+Nothing listens beyond loopback, so no router ports need opening.
 
-```text
-docker build -t learnspace-web .
-docker build --target backend -t learnspace-backend .
-docker build --target worker -t learnspace-worker .
-```
+1. In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a
+   tunnel on a domain you manage there, give it a public hostname that points
+   at `http://web:3000`, and copy the tunnel token.
+2. Put the settings in the ignored root `.env` file:
+
+   ```text
+   APP_URL=https://learnspace.example.com
+   AUTH_SECRET=...              # openssl rand -base64 48
+   INTERNAL_SERVICE_TOKEN=...   # openssl rand -base64 32
+   CLOUDFLARE_TUNNEL_TOKEN=...
+   GOOGLE_CLIENT_ID=...         # authorize $APP_URL/api/auth/google/callback
+   GOOGLE_CLIENT_SECRET=...
+   RESEND_API_KEY=...           # email sign-up returns 503 without these two
+   EMAIL_FROM=LearnSpace <noreply@learnspace.example.com>
+   ```
+
+3. Start it, and run the same command after each `git pull` to deploy:
+
+   ```text
+   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+   ```
+
+A migration job runs before the web server starts. Back up the database with
+`docker compose exec postgres pg_dump -U postgres learnspace > backup.sql`.
 
 ## Desktop app
 
@@ -95,8 +103,8 @@ LEARNSPACE_URL=http://localhost:3000 pnpm --filter @learnspace/desktop start
 pnpm --filter @learnspace/desktop dist                           # package for the current OS into apps/desktop/release
 ```
 
-The app opens `https://learnspace-staging.vercel.app` unless `LEARNSPACE_URL`
-names another HTTPS origin (plain HTTP is accepted only for localhost). Each
+The app opens the deployment in `defaultAppUrl` (`apps/desktop/src/links.ts`)
+unless `LEARNSPACE_URL` names another HTTPS origin (plain HTTP is accepted only for localhost). Each
 installer must be built on its own OS. The `Desktop` workflow builds all three
 on GitHub Actions when a `desktop-v*` tag is pushed or the workflow is run by
 hand. Builds are unsigned, so macOS Gatekeeper and Windows SmartScreen warn on
