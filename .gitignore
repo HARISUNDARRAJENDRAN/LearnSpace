@@ -59,6 +59,3 @@ Thumbs.db
 # Local benchmark and CI scratch output.
 /before
 /after
-apps/desktop/release/
-# electron-builder resources (the app icon), not build output.
-!apps/desktop/build/

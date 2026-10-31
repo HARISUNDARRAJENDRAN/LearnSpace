@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOpaqueToken, hashToken, hashPassword, verifyPassword } from "../lib/auth/crypto";
 import { getAppBaseUrl, getGoogleConfig } from "../lib/auth/config";
-import { openDesktopHandoff, parseDesktopNonce, sealDesktopHandoff } from "../lib/auth/desktop-handoff";
 import { AuthError } from "../lib/auth/errors";
 import { enforceRateLimit } from "../lib/auth/rate-limit";
 import { getClientIp, readJson } from "../lib/auth/request";
@@ -39,28 +38,6 @@ test("redirect targets remain local application paths", () => {
   assert.equal(safeRedirectPath("/\t/example.com/app"), "/app");
   assert.equal(safeRedirectPath("/app/./discover"), "/app/discover");
   assert.equal(safeRedirectPath("/onboarding"), "/onboarding");
-});
-
-test("desktop sign-in handoffs are sealed, short-lived, and keep local destinations", () => {
-  const handoff = { token: "session-token", maxAge: 3600, destination: "/app?tab=review" };
-  const code = sealDesktopHandoff(handoff, secret, 1_000);
-
-  assert.ok(!Buffer.from(code, "base64url").toString("latin1").includes("session-token"));
-  assert.deepEqual(openDesktopHandoff(code, secret, 1_000), handoff);
-  assert.equal(openDesktopHandoff(code, secret, 61_001), null);
-  assert.equal(openDesktopHandoff(code, `${secret}-rotated`, 1_000), null);
-  const tampered = `${code.slice(0, 40)}${code[40] === "A" ? "B" : "A"}${code.slice(41)}`;
-  assert.equal(openDesktopHandoff(tampered, secret, 1_000), null);
-  assert.equal(openDesktopHandoff("", secret), null);
-  assert.equal(
-    openDesktopHandoff(sealDesktopHandoff({ ...handoff, destination: "https://example.com" }, secret, 1_000), secret, 1_000)
-      ?.destination,
-    "/app",
-  );
-  assert.equal(parseDesktopNonce("a".repeat(43)), "a".repeat(43));
-  assert.equal(parseDesktopNonce("short"), "");
-  assert.equal(parseDesktopNonce("has.dot-aaaaaaaaaaaaaaaaaaaaaa"), "");
-  assert.equal(parseDesktopNonce(null), "");
 });
 
 test("Google's callback must share the public application origin", () => {

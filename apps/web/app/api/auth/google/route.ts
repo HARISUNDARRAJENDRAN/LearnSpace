@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getAppBaseUrl, getGoogleConfig, getGoogleOAuthEndpoints } from "../../../../lib/auth/config";
 import { createOpaqueToken } from "../../../../lib/auth/crypto";
 import { setOauthStateCookie } from "../../../../lib/auth/cookies";
-import { parseDesktopNonce } from "../../../../lib/auth/desktop-handoff";
 import { AuthError, authErrorResponse } from "../../../../lib/auth/errors";
 import { enforceRateLimit } from "../../../../lib/auth/rate-limit";
 import { safeRedirectPath } from "../../../../lib/auth/validation";
@@ -39,8 +38,7 @@ export async function GET(request: NextRequest) {
     const endpoints = getGoogleOAuthEndpoints();
     const state = createOpaqueToken();
     const next = safeRedirectPath(request.nextUrl.searchParams.get("next") ?? undefined);
-    const desktopNonce = parseDesktopNonce(request.nextUrl.searchParams.get("desktop"));
-    const stateCookieValue = `${state}.${desktopNonce}.${encodeURIComponent(next)}`;
+    const stateCookieValue = `${state}.${encodeURIComponent(next)}`;
     const authorizationUrl = new URL(endpoints.authorizationUrl);
     authorizationUrl.searchParams.set("client_id", google.clientId);
     authorizationUrl.searchParams.set("redirect_uri", google.redirectUri);

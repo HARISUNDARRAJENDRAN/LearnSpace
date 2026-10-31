@@ -1,10 +1,10 @@
 # LearnSpace
 
-LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, the Electron desktop app, PostgreSQL + Drizzle persistence layer, discovery worker, and FastAPI discovery-agent service.
+LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, PostgreSQL + Drizzle persistence layer, discovery worker, and FastAPI discovery-agent service.
 
 ## Repository layout
 
-- `apps/` deployable application boundaries: `web` (Next.js) and `desktop` (Electron)
+- `apps/web/` the Next.js web app
 - `services/` worker and backend boundaries
 - `packages/db/` PostgreSQL schema, migrations, client, seeds, and verification
 - `packages/shared/` shared domain tuples and Zod contracts
@@ -100,37 +100,6 @@ Supabase project).
    ```
 
 A migration job applies pending migrations before the web server starts.
-
-## Desktop app
-
-`apps/desktop` packages LearnSpace for Linux (AppImage, .deb), Windows (NSIS
-installer), and macOS (universal .dmg). LearnSpace is a server-rendered app
-backed by PostgreSQL, so the desktop app is a hardened window onto a
-deployment rather than a second frontend. It keeps navigation on the
-LearnSpace origin, opens other links in the system browser, and denies
-camera, microphone, location, and notification requests.
-
-Google refuses sign-in inside embedded app windows. In the desktop app,
-"Continue with Google" opens the system browser. On success the server
-returns the session through a single-purpose `learnspace://auth` link,
-encrypted and valid for 60 seconds, which only the app that started the
-sign-in accepts.
-
-```text
-pnpm --filter @learnspace/desktop start                          # run against the default deployment
-LEARNSPACE_URL=http://localhost:3000 pnpm --filter @learnspace/desktop start
-pnpm --filter @learnspace/desktop dist                           # package for the current OS into apps/desktop/release
-```
-
-The app opens the deployment in `defaultAppUrl` (`apps/desktop/src/links.ts`)
-unless `LEARNSPACE_URL` names another HTTPS origin (plain HTTP is accepted only for localhost). Each
-installer must be built on its own OS. The `Desktop` workflow builds all three
-on GitHub Actions when a `desktop-v*` tag is pushed or the workflow is run by
-hand. Builds are unsigned, so macOS Gatekeeper and Windows SmartScreen warn on
-first launch until signing certificates are configured. Google sign-in
-returns to the app only from packaged builds, which register the
-`learnspace://` scheme; development runs can use email sign-in. Packaging the
-.deb on Arch Linux needs `libxcrypt-compat`.
 
 ## Host-based database workflow
 

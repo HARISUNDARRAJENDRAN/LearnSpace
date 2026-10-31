@@ -3,8 +3,6 @@ packages:
   - services/*
   - packages/*
 allowBuilds:
-  # Squirrel.Windows tooling; desktop releases use NSIS instead.
-  electron-winstaller: false
   esbuild: true
   sharp: true
   unrs-resolver: true
