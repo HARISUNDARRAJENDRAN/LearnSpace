@@ -143,6 +143,7 @@ test("signup → interests → Discover preview → full feed → topic controls
         await db`DELETE FROM agent.tool_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
         await db`DELETE FROM agent.agent_steps WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
         await db`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
+        await db`DELETE FROM study.schedule_items WHERE user_id = ${userId}`;
         await db`DELETE FROM identity.users WHERE id = ${userId}`;
       }
       await db`DELETE FROM catalog.resource_concepts WHERE resource_id = ANY(${resources}::uuid[])`;

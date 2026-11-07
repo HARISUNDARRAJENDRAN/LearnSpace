@@ -14,6 +14,7 @@ import "../styles/source-discovery.css";
 import "../styles/product.css";
 import "../styles/study.css";
 import "../styles/onboarding.css";
+import "../styles/motion.css";
 
 const appFont = localFont({
   src: "../public/fonts/InterVariable.woff2",

@@ -108,6 +108,7 @@ test.afterAll(async () => {
     await db`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN ${db(runIds)}`;
     await db`DELETE FROM discovery.recommendation_runs WHERE id IN ${db(runIds)}`;
   }
+  if (userIds.length > 0) await db`DELETE FROM study.schedule_items WHERE user_id IN ${db(userIds)}`;
   await db`DELETE FROM catalog.library_items WHERE resource_id IN ${db(resourceIds)}`;
   await db`DELETE FROM catalog.collection_items WHERE id IN ${db([collectionVideoItemId, collectionPaperItemId])}`;
   await db`DELETE FROM catalog.collection_sections WHERE id = ${collectionSectionId}`;
@@ -138,7 +139,8 @@ async function completeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
-  await page.getByRole("button", { name: "Start learning" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/app/);
 }
 

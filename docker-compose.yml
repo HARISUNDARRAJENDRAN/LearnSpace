@@ -24,14 +24,14 @@ services:
   # Next.js UI and API. Installs dependencies, migrates and seeds the
   # database, then serves the mounted source with hot reload.
   web:
-    mem_limit: ${WEB_MEMORY_LIMIT:-2560m}
+    mem_limit: ${WEB_MEMORY_LIMIT:-1536m}
     build:
       context: .
       dockerfile: Dockerfile
       target: development
     environment:
-      # next dev restarts itself near this heap cap and recompiles every page, so leave webpack room.
-      NODE_OPTIONS: --max-old-space-size=2048
+      # Turbopack compiles natively, outside the JS heap; next dev restarts itself near this cap.
+      NODE_OPTIONS: --max-old-space-size=1024
       NEXT_TELEMETRY_DISABLED: "1"
       DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@postgres:5432/learnspace
       DATABASE_URL: postgres://learnspace_app:learnspace_app@postgres:5432/learnspace

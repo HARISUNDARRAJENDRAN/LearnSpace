@@ -70,6 +70,7 @@ test.afterAll(async () => {
     await db`DELETE FROM discovery.recommendation_impressions WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM discovery.recommendation_runs WHERE user_id IN ${db(userIds)}`;
+    await db`DELETE FROM study.schedule_items WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM identity.users WHERE id IN ${db(userIds)}`;
   }
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(resourceIds)}`;

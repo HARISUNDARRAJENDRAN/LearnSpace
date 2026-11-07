@@ -1,6 +1,3 @@
-/* biome-ignore lint/suspicious/noUnknownAtRules: Tailwind expands this directive during the CSS build. */
-@tailwind utilities;
-
 :root {
 	/* LearnSpace design tokens: see design.md */
 	--ls-bg: #fff;
@@ -103,4 +100,16 @@ input,
 textarea,
 select {
   font-family: inherit;
+}
+
+/* Visually hidden, still read by screen readers. */
+.sr-only {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+	border: 0;
 }

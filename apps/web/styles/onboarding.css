@@ -443,17 +443,6 @@
 	translate: -2px 0;
 }
 
-.sr-only {
-	position: absolute;
-	width: 1px;
-	height: 1px;
-	padding: 0;
-	overflow: hidden;
-	clip: rect(0, 0, 0, 0);
-	white-space: nowrap;
-	border: 0;
-}
-
 /* Short phones: keep the step count for screen readers and show only the dashes. */
 /* Last step: what to study right now, which becomes the first calendar item. */
 .onboarding-first {

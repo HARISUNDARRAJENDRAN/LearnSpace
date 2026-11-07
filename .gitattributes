@@ -12,7 +12,5 @@ infra/migrations/drizzle/0008_wide_jack_power.sql text eol=crlf
 infra/migrations/drizzle/0009_whole_dragon_man.sql text eol=crlf
 infra/migrations/drizzle/0010_lucky_leech.sql text eol=crlf
 
-# Unified diffs encode empty context lines as a single space.
-patches/*.patch whitespace=-blank-at-eol
 # Shell scripts run inside Linux containers, including from Windows checkouts.
 *.sh text eol=lf

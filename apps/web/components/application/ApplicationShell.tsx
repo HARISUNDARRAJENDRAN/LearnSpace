@@ -6,6 +6,7 @@ import { useCallback, useState } from "react";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
 import { AppSidebar, type RecentSession } from "./AppSidebar";
 import { SearchPalette } from "./SearchPalette";
+import { SmoothScroll } from "./SmoothScroll";
 
 type ApplicationUser = {
   email: string;
@@ -38,6 +39,7 @@ export function ApplicationShell({ user, recentSessions, children }: { user: App
         <div className="application-body">{children}</div>
       </div>
       <SearchPalette isOpen={searchOpen} mode={searchMode} onClose={closeSearch} />
+      <SmoothScroll />
     </div>
   );
 }

@@ -156,6 +156,7 @@ test.describe("authenticated app shell visual regression", () => {
         WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id = ${userId})
       `;
       await database`DELETE FROM discovery.recommendation_runs WHERE user_id = ${userId}`;
+      await database`DELETE FROM study.schedule_items WHERE user_id = ${userId}`;
       await database`DELETE FROM identity.users WHERE id = ${userId}`;
       await database.end({ timeout: 5 });
     }

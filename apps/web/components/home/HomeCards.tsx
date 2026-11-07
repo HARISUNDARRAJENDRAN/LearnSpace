@@ -2,7 +2,7 @@
 
 import { ArrowUpRight, CalendarPlus, FileText, Flame, X } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { formatLearningDuration } from "../../lib/home/duration";
 import type { HomeLesson } from "../../lib/home/service";
 import { youtubeThumbnailSources } from "../../lib/home/thumbnail";
@@ -111,18 +111,45 @@ export function Medal({ rank, size = 56, dim = false }: { rank: Rank; size?: num
   </svg>;
 }
 
+// Ticks a number up to its new value when it changes, so XP the observer awards visibly counts in.
+function useCountUp(value: number) {
+  const [shown, setShown] = useState(value);
+  const current = useRef(value);
+  useEffect(() => {
+    const start = current.current;
+    if (start === value || matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      current.current = value;
+      setShown(value);
+      return;
+    }
+    const began = performance.now();
+    let frame = 0;
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - began) / 700);
+      current.current = Math.round(start + (value - start) * (1 - (1 - progress) ** 3));
+      setShown(current.current);
+      if (progress < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame);
+  }, [value]);
+  return shown;
+}
+
 export function LevelCard({ progression }: { progression: Progression }) {
   const { xp, level, rank, levelXp, nextLevelXp, weekXp, todayXp, streak, earned } = progression;
+  const shownXp = useCountUp(xp);
+  const shownToday = useCountUp(todayXp);
   const span = nextLevelXp === null ? 1 : nextLevelXp - levelXp;
   const into = nextLevelXp === null ? 1 : xp - levelXp;
   const percent = Math.round(into / span * 100);
-  return <Card title="Level & rank" className="home-level" action={<span className="home-streak" title="Days in a row with study"><Flame aria-hidden="true" />{streak}-day streak</span>}>
+  return <Card title="Level & rank" className="home-level" action={<span className={`home-streak${streak > 0 ? " is-live" : ""}`} title="Days in a row with study"><Flame aria-hidden="true" />{streak}-day streak</span>}>
     <div className="home-level-hero">
       <Medal rank={rank} size={72} />
       <div>
         <p className="home-level-rank">{rank}</p>
         <h3>Level {level}</h3>
-        <p className="home-level-xp"><b>{xp.toLocaleString("en")}</b> XP total</p>
+        <p className="home-level-xp"><b>{shownXp.toLocaleString("en")}</b> XP total</p>
       </div>
     </div>
     <div className="home-level-progress">
@@ -133,7 +160,7 @@ export function LevelCard({ progression }: { progression: Progression }) {
       <Medal rank={name} size={26} dim={RANKS.indexOf(rank) < index} /><span>{name}</span>
     </li>)}</ol>
     <dl className="home-level-stats">
-      <div><dt>Today</dt><dd>+{todayXp}</dd></div>
+      <div><dt>Today</dt><dd>+{shownToday}</dd></div>
       <div><dt>Last 7 days</dt><dd>+{weekXp}</dd></div>
       <div><dt>From plan</dt><dd>{earned.plan_watch + earned.plan_read + earned.plan_practice + earned.plan_review}</dd></div>
     </dl>

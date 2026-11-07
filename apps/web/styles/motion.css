@@ -1,0 +1,54 @@
+/* App motion. Only opacity, translate, scale and rotate animate, so the compositor runs it off the main thread.
+   Hover lifts use `translate` and reveals use `transform`, so the two compose instead of overriding each other. */
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Each new page fades in as it arrives. Opacity only: a transform would re-anchor fixed descendants mid-fade. */
+  .application-body > * { animation: app-enter 240ms var(--motion-ease-out) backwards; }
+
+  /* Cards rise into place as they scroll into view. Scroll-driven, so it needs no JS and costs nothing off-screen. */
+  @supports (animation-timeline: view()) {
+    .application-page :is(.discovery-card, .discover-category-card, .collection-card, .research-card, .discover-playlist-row, .profile-achievements li, .profile-page > .home-card) {
+      animation: app-rise linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 45%;
+    }
+  }
+
+  /* Cards lift under the pointer and settle when pressed. */
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row) {
+    transition: translate 220ms var(--motion-ease-out), box-shadow 220ms var(--motion-ease-out);
+  }
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row):hover {
+    translate: 0 -3px;
+    box-shadow: 0 10px 24px -14px rgb(0 0 0 / .22);
+  }
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row):active {
+    translate: 0 -1px;
+    box-shadow: 0 4px 12px -8px rgb(0 0 0 / .2);
+  }
+
+  /* Every button and link presses down a pixel. */
+  .application-page :is(button, a, [role="button"]):not(:disabled):active { translate: 0 1px; }
+
+  /* The level card stays alive: the medal turns toward the pointer, the XP bar glints, and a live streak flickers. */
+  .home-level-hero .home-medal { transition: rotate 320ms var(--motion-ease-out), scale 320ms var(--motion-ease-out); }
+  .home-level-hero:hover .home-medal { rotate: -10deg; scale: 1.06; }
+  .home-meter.is-xp i { position: relative; overflow: hidden; }
+  .home-meter.is-xp i::after {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgb(255 255 255 / .55) 50%, transparent 70%);
+    content: "";
+    translate: -100% 0;
+    animation: app-glint 4s ease-in-out 1.2s infinite;
+  }
+  .home-streak.is-live svg { transform-origin: 50% 85%; animation: app-flicker 1.4s ease-in-out infinite alternate; }
+}
+
+@keyframes app-enter { from { opacity: 0; } }
+@keyframes app-rise { from { opacity: 0; transform: translateY(18px) scale(.98); } }
+@keyframes app-glint { 0% { translate: -100% 0; } 30%, 100% { translate: 100% 0; } }
+@keyframes app-flicker { from { scale: 1; rotate: -4deg; } to { scale: 1.12; rotate: 4deg; } }
+
+/* The page behind a modal dialog stays still while the dialog is open. */
+html:has(dialog:modal) { overflow: hidden; }

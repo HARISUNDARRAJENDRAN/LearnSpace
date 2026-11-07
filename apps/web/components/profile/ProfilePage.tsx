@@ -36,7 +36,7 @@ export function ProfilePage({ user, profile }: { user: ProfileUser; profile: Lea
     </section>
 
     <section className="home-card home-level profile-standing" aria-label="Where you stand">
-      <header className="home-card-head"><h2>Where you stand</h2><span className="home-streak" title="Days in a row with study"><Flame aria-hidden="true" />{streak}-day streak</span></header>
+      <header className="home-card-head"><h2>Where you stand</h2><span className={`home-streak${streak > 0 ? " is-live" : ""}`} title="Days in a row with study"><Flame aria-hidden="true" />{streak}-day streak</span></header>
       <div className="home-level-hero">
         <Medal rank={rank} size={88} />
         <div>

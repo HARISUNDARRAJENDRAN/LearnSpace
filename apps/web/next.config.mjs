@@ -9,8 +9,6 @@ const nextConfig = {
   devIndicators: false,
   experimental: {
     useTypeScriptCli: false,
-    webpackMemoryOptimizations: true,
-    webpackBuildWorker: true,
     preloadEntriesOnStart: false,
   },
   onDemandEntries: {
@@ -22,18 +20,6 @@ const nextConfig = {
   transpilePackages: ["@learnspace/db", "@learnspace/shared"],
   // YouTube already serves sized thumbnails; resizing them again would spend image-optimization quota for no gain.
   images: { unoptimized: true },
-  webpack(config) {
-    config.resolve.extensions = [
-      ".ts",
-      ".tsx",
-      ...config.resolve.extensions.filter((extension) => extension !== ".ts" && extension !== ".tsx"),
-    ];
-    config.resolve.extensionAlias = {
-      ...config.resolve.extensionAlias,
-      ".js": [".ts", ".tsx", ".js"],
-    };
-    return config;
-  },
 };
 
 export default nextConfig;

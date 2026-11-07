@@ -136,6 +136,7 @@ async function clearGoogleTestUser(): Promise<void> {
       await database`DELETE FROM ops.outbox_events WHERE user_id IN ${database(userIds)}`;
       await database`DELETE FROM ops.idempotency_records WHERE user_id IN ${database(userIds)}`;
       await database`DELETE FROM activity.activity_events WHERE user_id IN ${database(userIds)}`;
+      await database`DELETE FROM study.schedule_items WHERE user_id IN ${database(userIds)}`;
     }
     await database`DELETE FROM identity.users WHERE lower(email) = lower(${googleEmail})`;
   } finally {

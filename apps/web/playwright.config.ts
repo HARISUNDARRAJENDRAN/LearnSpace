@@ -40,7 +40,7 @@ export default defineConfig({
     {
       command: productionServer
         ? "corepack pnpm run start:standalone"
-        : "corepack pnpm exec next dev --webpack --hostname 0.0.0.0 --port 3101",
+        : "corepack pnpm exec next dev --hostname 0.0.0.0 --port 3101",
       url: "http://localhost:3101",
       env: { PORT: "3101", HOSTNAME: "0.0.0.0" },
       timeout: 120_000,

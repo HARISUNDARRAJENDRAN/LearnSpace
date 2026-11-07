@@ -25,8 +25,6 @@ apps/web/playwright.config.d.ts
 apps/web/playwright.config.d.ts.map
 apps/web/proxy.d.ts
 apps/web/proxy.d.ts.map
-apps/web/tailwind.config.d.ts
-apps/web/tailwind.config.d.ts.map
 # Local environment files and secrets.
 .env
 .env.*
