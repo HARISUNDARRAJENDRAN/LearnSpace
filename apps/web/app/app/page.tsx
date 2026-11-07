@@ -1,9 +1,12 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { HomeDashboard } from "../../components/home/HomeDashboard";
 import { getCurrentSession } from "../../lib/auth/session";
 import { loadHomeData } from "../../lib/home/load";
 import { isApplicationPrefetch, recordFirstApplicationVisit } from "../../lib/onboarding/service";
+
+export const metadata: Metadata = { title: "Home | LearnSpace" };
 
 export const dynamic = "force-dynamic";
 

@@ -1,6 +1,9 @@
+import type { Metadata } from "next";
 import { ResearchPage } from "../../../components/application/ProductPages";
 import { requireCompletedSession } from "../../../lib/discovery/access";
 import { getResearchPage } from "../../../lib/research/service";
+
+export const metadata: Metadata = { title: "Research | LearnSpace" };
 
 export const dynamic = "force-dynamic";
 

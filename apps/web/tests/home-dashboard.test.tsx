@@ -87,6 +87,11 @@ test("without material, a day's study is shared among its items by kind", () => 
     r: [33, false],
     p: [0, false],
   });
+  // A suggestion for the same video, accepted later in the day, must not take minutes the earlier session already earned.
+  const linked = reconcileDay([{ ...hour("later", "watch", 19), resourceId: "video" }, hour("first", "watch", 18)], [studied("video", 2)]);
+  assert.deepEqual([linked.get("first")?.progressPct, linked.get("later")?.progressPct], [3, 0]);
+  const finished = reconcileDay([hour("first", "watch", 18), { ...hour("later", "watch", 19), resourceId: "video" }], [{ ...studied("video", 2), finished: true }]);
+  assert.deepEqual([finished.get("first")?.progressPct, finished.get("later")?.done], [3, true]);
 });
 
 test("dates read and write as dd/mm/yyyy and reject impossible days", () => {

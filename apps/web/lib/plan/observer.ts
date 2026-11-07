@@ -44,26 +44,25 @@ const readingTypes = new Set(["paper", "pdf", "webpage", "note"]);
 const pool = (type: string) => type === "video" ? "video" : readingTypes.has(type) ? "reading" : "other";
 const kindPools: Record<PlanKind, ("video" | "reading" | "other")[]> = { watch: ["video"], read: ["reading"], practice: ["other", "video", "reading"], review: ["other", "video", "reading"] };
 
-// Shares one day's study among that day's items in start order, so the same minutes never complete two items.
+// Shares one day's study among that day's items in start order, so the same minutes never count twice.
+// An item tied to a material draws on that material's time; any other item draws on what its kind allows.
 export function reconcileDay(items: DayItem[], evidence: Evidence[]): Map<string, { progressPct: number; done: boolean; note: string | null }> {
-  const left = { video: 0, reading: 0, other: 0 };
-  for (const entry of evidence) left[pool(entry.type)] += entry.seconds;
+  const left = new Map(evidence.map((entry) => [entry.resourceId, entry.seconds]));
   const verdicts = new Map<string, { progressPct: number; done: boolean; note: string | null }>();
-  // Items tied to a material claim that material's time first.
-  for (const item of items.filter((entry) => entry.resourceId)) {
-    const match = evidence.find((entry) => entry.resourceId === item.resourceId);
-    verdicts.set(item.id, reconcileStudyItem(item, match));
-    if (match) left[pool(match.type)] -= Math.min(match.seconds, plannedSeconds(item));
-  }
-  for (const item of items.filter((entry) => !entry.resourceId).toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime())) {
+  for (const item of items.toSorted((a, b) => a.startsAt.getTime() - b.startsAt.getTime())) {
     const planned = plannedSeconds(item);
+    const sources = item.resourceId
+      ? evidence.filter((entry) => entry.resourceId === item.resourceId)
+      : kindPools[item.kind].flatMap((name) => evidence.filter((entry) => pool(entry.type) === name));
     let seconds = 0;
-    for (const source of kindPools[item.kind]) {
-      const take = Math.max(0, Math.min(left[source], planned - seconds));
-      left[source] -= take;
+    for (const source of sources) {
+      const take = Math.max(0, Math.min(left.get(source.resourceId) ?? 0, planned - seconds));
+      left.set(source.resourceId, (left.get(source.resourceId) ?? 0) - take);
       seconds += take;
     }
-    verdicts.set(item.id, reconcileStudyItem(item, seconds > 0 ? { resourceId: "", title: "", type: "", seconds, finished: false } : undefined));
+    // Finishing the material completes its item even when earlier items used the minutes.
+    const finished = item.resourceId ? sources.find((source) => source.finished) : undefined;
+    verdicts.set(item.id, reconcileStudyItem(item, finished ?? (seconds > 0 ? { resourceId: "", title: "", type: "", seconds, finished: false } : undefined)));
   }
   return verdicts;
 }
