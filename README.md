@@ -1,6 +1,6 @@
 # LearnSpace
 
-LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, PostgreSQL + Drizzle persistence layer, discovery worker, and FastAPI discovery-agent service.
+LearnSpace is a session-centric learning, research, practice, and knowledge-retention platform. The repository contains the Next.js web app, the PostgreSQL + Drizzle persistence layer, and the discovery worker.
 
 ## Repository layout
 
@@ -20,11 +20,11 @@ The root Compose file runs three services:
 - `web` — the Next.js UI and API. On start it installs dependencies, applies
   migrations, verifies roles, and seeds development data, then serves the
   mounted source with hot reload.
-- `backend` — the FastAPI discovery agent and the discovery worker in one
-  image. The container restarts if either process exits.
+- `backend` — the discovery worker. It finds videos and papers through Exa,
+  keeps YouTube metrics fresh and maintains recommendations.
 
-Provider-backed discovery is disabled by default, so no API keys are required
-for the first boot.
+Discovery needs API keys, so without them the first boot works on the seeded
+catalog alone.
 
 ```text
 docker compose up --build -d
@@ -47,59 +47,98 @@ docker compose down
 docker compose down -v  # removes local Compose volumes, including the database
 ```
 
-Set `DISCOVERY_AGENTS_ENABLED=true` and provide `EXA_API_KEY` in `.env` to
-enable live discovery-provider calls. The discovery agent remains reachable at
-<http://localhost:8080> for local health checks.
+Provide `EXA_API_KEY` in `.env` to discover new videos and papers: the worker
+searches per topic in the background, and the source picker searches
+instantly from the web app. Background refreshes stop at
+`EXA_DAILY_CALL_CAP` Exa calls per UTC day (default 1000), and the worker runs
+`DISCOVERY_WORKER_CONCURRENCY` jobs at once (default 3), so a new learner's
+topics are discovered in parallel.
 
-## Self-hosting
+Provide `YOUTUBE_API_KEY` (a Google Cloud key restricted to YouTube Data API
+v3) to let the worker fetch video duration, statistics and channel stats, gate
+Shorts, live, private and non-embeddable videos, and score quality. It spends
+1 quota unit per 50 videos or channels, capped per Pacific day by
+`YOUTUBE_DAILY_QUOTA_CAP` (default 9000 of YouTube's 10000). Metrics older than
+`YOUTUBE_METRICS_MAX_AGE_DAYS` (default 7) are refreshed; statistics older than
+30 days are deleted, as YouTube's API policy requires. To enrich existing videos
+at once, run `pnpm --filter @learnspace/worker youtube:backfill`.
 
-Production runs the web and backend services from built images on any
-machine with Docker, plus a Cloudflare Tunnel container as the only public
-entrance. Nothing listens beyond loopback, so no router ports need opening.
-PostgreSQL is hosted externally (any PostgreSQL 15+ with pgvector, such as a
-Supabase project).
+## Manual disposable E2E login
 
-1. Create the database roles and extensions once, as the database's admin
-   user, with a strong password for each role:
+Run `pnpm e2e:manual` to start a loopback-only test app at
+<http://localhost:3101/login>. It creates a separate local PostgreSQL database,
+resets and seeds it, then recreates a verified test account with an empty
+onboarding profile. Use `manual-e2e@example.test` and
+`local-e2e-only-password`. Resend and Google OAuth are disabled in this local
+mode; registration automatically follows the local verification route and
+continues to onboarding. Press Ctrl+C to stop the app and remove the test
+database. Each start begins with a fresh account and onboarding state;
+production data is not used.
+
+## Production
+
+Production is the web app on Vercel and the discovery worker on Supabase,
+both against one Supabase PostgreSQL project.
+
+Create the database roles and extensions once, as the database's admin user,
+with a strong password for each role:
+
+```text
+DATABASE_ADMIN_URL=... LEARNSPACE_MIGRATOR_PASSWORD=... LEARNSPACE_APP_PASSWORD=... \
+LEARNSPACE_AUTH_PASSWORD=... LEARNSPACE_AI_PASSWORD=... LEARNSPACE_WORKER_PASSWORD=... \
+LEARNSPACE_RUNNER_PASSWORD=... LEARNSPACE_READONLY_PASSWORD=... pnpm db:bootstrap:remote
+```
+
+Connect through the Supavisor pooler (the direct host is IPv6-only): user
+`<role>.<project-ref>`, port 5432 for session mode and 6543 for transaction
+mode, with `?sslmode=require`. Turn off the Data API, since the app reaches
+PostgreSQL directly. Apply migrations before each deploy that adds one:
+`DATABASE_MIGRATOR_URL=... pnpm db:migrate && pnpm db:verify` (session mode).
+
+### Web app on Vercel
+
+The web app deploys to Vercel from this repository with the project's Root
+Directory set to `apps/web` and its function region set to Mumbai (`bom1`),
+next to the database; `apps/web/vercel.json` builds the workspace packages
+first. Auth rate limits are counted in PostgreSQL, so every function
+instance shares them.
+
+1. Set the project's environment variables: `DATABASE_URL` and
+   `DATABASE_AUTH_URL` (transaction mode), `DB_PREPARED_STATEMENTS=false`,
+   `DB_POOL_MAX=3`, `APP_URL`, `GOOGLE_REDIRECT_URI`
+   (`$APP_URL/api/auth/google/callback`), `AUTH_SECRET`,
+   `AUTH_SECURE_COOKIES=true`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+   `RESEND_API_KEY`, `EMAIL_FROM`, `EXA_API_KEY`, and optionally
+   `OPENAI_API_KEY` with `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
+2. Deploy: `pnpm dlx vercel@65.12.1 deploy --prod` from the repository root.
+
+### Discovery worker on Supabase
+
+In production the worker runs as a Supabase Edge Function (locally it is the
+`backend` service). Postgres calls it through pg_net when a discovery
+request commits, and pg_cron calls it every five minutes for housekeeping.
+Each call works through the queue for up to 100 seconds and leaves the rest
+for the next call.
+
+1. Bundle and deploy the function from the repository root:
 
    ```text
-   DATABASE_ADMIN_URL=... LEARNSPACE_MIGRATOR_PASSWORD=... LEARNSPACE_APP_PASSWORD=... \
-   LEARNSPACE_AUTH_PASSWORD=... LEARNSPACE_AI_PASSWORD=... LEARNSPACE_WORKER_PASSWORD=... \
-   LEARNSPACE_RUNNER_PASSWORD=... LEARNSPACE_READONLY_PASSWORD=... pnpm db:bootstrap:remote
+   pnpm --filter @learnspace/shared build
+   pnpm --filter @learnspace/worker bundle:edge
+   pnpm dlx supabase@3.0.0 functions deploy discovery-worker --remote=<project-ref> --use-api
    ```
 
-   On Supabase, connect through the Supavisor pooler (the direct host is
-   IPv6-only): user `<role>.<project-ref>`, port 5432 for session mode and
-   6543 for transaction mode. Turn off the Data API, since the app reaches
-   PostgreSQL directly.
-2. In the Cloudflare dashboard (Zero Trust → Networks → Tunnels), create a
-   tunnel on a domain you manage there, give it a public hostname that points
-   at `http://web:3000`, and copy the tunnel token.
-3. Put the settings in the ignored root `.env.production` file:
-
-   ```text
-   DATABASE_MIGRATOR_URL=...    # learnspace_migrator, session mode (migrations take a lock)
-   DATABASE_URL=...             # learnspace_app, transaction mode
-   DATABASE_AUTH_URL=...        # learnspace_auth, transaction mode
-   DATABASE_WORKER_URL=...      # learnspace_worker, transaction mode
-   DATABASE_AI_URL=...          # learnspace_ai, transaction mode
-   APP_URL=https://learnspace.example.com
-   AUTH_SECRET=...              # openssl rand -base64 48
-   INTERNAL_SERVICE_TOKEN=...   # openssl rand -base64 32
-   CLOUDFLARE_TUNNEL_TOKEN=...
-   GOOGLE_CLIENT_ID=...         # authorize $APP_URL/api/auth/google/callback
-   GOOGLE_CLIENT_SECRET=...
-   RESEND_API_KEY=...           # email sign-up returns 503 without these two
-   EMAIL_FROM=LearnSpace <noreply@learnspace.example.com>
-   ```
-
-4. Start it, and run the same command after each `git pull` to deploy:
-
-   ```text
-   docker compose --env-file .env.production -f docker-compose.yml -f docker-compose.production.yml up -d --build
-   ```
-
-A migration job applies pending migrations before the web server starts.
+2. Set its secrets (`pnpm dlx supabase@3.0.0 secrets set --remote=<project-ref> ...`):
+   `DATABASE_WORKER_URL` (learnspace_worker, transaction mode), a random
+   `WORKER_TRIGGER_SECRET` (`openssl rand -hex 32`), `EXA_API_KEY`,
+   `YOUTUBE_API_KEY`, and optionally `OPENAI_API_KEY` with
+   `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
+3. In the SQL editor, store the function URL and the same secret in Vault,
+   then run `supabase/setup.sql` (its header shows both `vault.create_secret`
+   calls).
+4. Sync the curated catalog after each curriculum change, since the function
+   has no file system: `pnpm --filter @learnspace/worker recommendations:backfill`
+   with `DATABASE_WORKER_URL` and `OPENAI_API_KEY` set.
 
 ## Host-based database workflow
 

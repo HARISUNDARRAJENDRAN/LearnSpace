@@ -68,21 +68,17 @@ test("malformed JSON is reported as a client error", async () => {
   );
 });
 
-test("production rate-limit identity trusts only the Cloudflare client IP", () => {
+test("production rate-limit identity trusts only the platform-set client IP", () => {
   const previousEnv = process.env.NODE_ENV;
   const previousTestMode = process.env.AUTH_TEST_MODE;
   Object.assign(process.env, { NODE_ENV: "production" });
   delete process.env.AUTH_TEST_MODE;
 
   try {
-    const headers = { "x-real-ip": "spoofed-value", "x-forwarded-for": "untrusted-value" };
-    assert.equal(getClientIp(new Request("https://learnspace.example", { headers })), "unknown");
+    const spoofed = { "x-forwarded-for": "untrusted-value" };
+    assert.equal(getClientIp(new Request("https://learnspace.example", { headers: spoofed })), "unknown");
     assert.equal(
-      getClientIp(
-        new Request("https://learnspace.example", {
-          headers: { ...headers, "cf-connecting-ip": "trusted-value" },
-        }),
-      ),
+      getClientIp(new Request("https://learnspace.example", { headers: { ...spoofed, "x-real-ip": "trusted-value" } })),
       "trusted-value",
     );
   } finally {
@@ -92,14 +88,12 @@ test("production rate-limit identity trusts only the Cloudflare client IP", () =
   }
 });
 
-test("rate limiting returns a retryable 429", async () => {
+test("rate limiting returns a retryable 429", { skip: process.env.DATABASE_AUTH_URL ? false : "DATABASE_AUTH_URL is required" }, async () => {
   const previous = {
     authSecret: process.env.AUTH_SECRET,
-    backend: process.env.AUTH_RATE_LIMIT_BACKEND,
     nodeEnv: process.env.NODE_ENV,
   };
   process.env.AUTH_SECRET = secret;
-  process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
   mutableEnv.NODE_ENV = "test";
 
   try {
@@ -122,13 +116,11 @@ test("rate limiting returns a retryable 429", async () => {
           windowSeconds: 60,
         }),
       (error: unknown) =>
-        error instanceof AuthError && error.status === 429 && error.retryAfterSeconds === 60,
+        error instanceof AuthError && error.status === 429 && error.retryAfterSeconds! > 55 && error.retryAfterSeconds! <= 60,
     );
   } finally {
     if (previous.authSecret === undefined) delete process.env.AUTH_SECRET;
     else process.env.AUTH_SECRET = previous.authSecret;
-    if (previous.backend === undefined) delete process.env.AUTH_RATE_LIMIT_BACKEND;
-    else process.env.AUTH_RATE_LIMIT_BACKEND = previous.backend;
     if (previous.nodeEnv === undefined) delete mutableEnv.NODE_ENV;
     else mutableEnv.NODE_ENV = previous.nodeEnv;
   }

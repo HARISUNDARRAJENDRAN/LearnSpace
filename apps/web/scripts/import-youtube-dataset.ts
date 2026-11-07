@@ -2,7 +2,7 @@ import postgres from "postgres";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { profileYoutubeDataset, datasetRows, normalizeYoutubeRow, type NormalizedYoutubeRow } from "@learnspace/shared/youtube-dataset";
-import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
+import { scoreYoutubeQuality, YOUTUBE_QUALITY_FEATURE_VERSION } from "@learnspace/shared/youtube-quality";
 
 const datasetName = "harisundarrajendran/educational-youtube-content";
 const allowedLicences = new Set([
@@ -142,6 +142,9 @@ async function importBatch(
       likeCount: row.likeCount,
       commentCount: row.commentCount,
       metricsCapturedAt: row.metricsCapturedAt,
+      channelSubscriberCount: null,
+      channelViewCount: null,
+      channelVideoCount: null,
     }, importedAt),
     conceptIds: resolveConcepts(row, conceptMap),
     resourceMetadata: {
@@ -317,7 +320,7 @@ async function importBatch(
 
     const qualityRows = preparedRows.map(({ row, quality }) => ({
       resource_id: idFor(row.youtubeId),
-      feature_version: "youtube-quality-v1",
+      feature_version: YOUTUBE_QUALITY_FEATURE_VERSION,
       captured_at: importedAt,
       bayesian_engagement: quality.bayesianEngagement,
       comment_quality: quality.commentQuality,

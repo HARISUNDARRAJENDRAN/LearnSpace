@@ -1,0 +1,5 @@
+project_id = "learnspace"
+
+# Postgres calls the worker with its own shared secret, not a Supabase JWT.
+[functions.discovery-worker]
+verify_jwt = false

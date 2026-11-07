@@ -215,8 +215,7 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 .application-mode-trigger:hover,
 .application-new-session:hover,
 .application-search-button:hover,
-.application-sidebar-collapse:hover,
-.application-footer-button:hover {
+.application-sidebar-collapse:hover {
   background: rgba(0,0,0,.045);
 }
 
@@ -617,94 +616,60 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 }
 
 .application-sidebar-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
-  height: 35px;
-  align-items: end;
   margin-top: 7px;
-  padding-top: 5px;
+  padding-top: 6px;
   border-top: 1px solid #e2e2df;
 }
 
-.application-footer-button {
+.application-profile-link {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  padding: 5px;
+  border-radius: 8px;
+  color: #424240;
+  text-decoration: none;
+}
+
+.application-profile-link:hover,
+.application-profile-link.is-active {
+  background: rgba(0,0,0,.045);
+}
+
+.application-profile-avatar {
   display: grid;
-  width: 29px;
-  height: 29px;
+  width: 30px;
+  height: 30px;
+  flex: none;
   place-items: center;
-  justify-self: start;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: #5b5b59;
-  cursor: pointer;
+  border-radius: 50%;
+  background: #f3e3c3;
+  color: #6b4a1b;
+  font-size: 12px;
+  font-weight: 600;
 }
 
-.application-sidebar-footer > .application-footer-button:nth-child(2) {
-  justify-self: center;
-}
-
-.application-account-control {
-  position: relative;
-  justify-self: end;
-}
-
-.application-account-menu {
-  position: absolute;
-  z-index: 40;
-  right: 0;
-  bottom: 35px;
+.application-profile-copy {
   display: grid;
-  width: 190px;
-  gap: 2px;
-  padding: 6px;
-  border: 1px solid rgba(0,0,0,.07);
-  border-radius: 12px;
-  background: rgba(255,255,255,.88);
-  box-shadow: 0 12px 36px rgba(0,0,0,.10), 0 2px 8px rgba(0,0,0,.04);
-  -webkit-backdrop-filter: blur(20px) saturate(1.25);
-  backdrop-filter: blur(20px) saturate(1.25);
+  min-width: 0;
 }
 
-.application-account-menu p {
+.application-profile-copy b,
+.application-profile-copy small {
   overflow: hidden;
-  margin: 3px 7px 4px;
-  color: #999996;
-  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.application-account-menu a,
-.application-account-menu button {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  gap: 7px;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: #424240;
-  font: inherit;
-  font-size: 12px;
-  text-decoration: none;
-  text-align: left;
-  cursor: pointer;
+.application-profile-copy b {
+  font-size: 12.5px;
+  font-weight: 600;
 }
 
-.application-account-menu a:hover,
-.application-account-menu button:hover {
-  background: rgba(0,0,0,.045);
-}
-
-.application-account-menu button:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
-.application-account-menu svg {
-  width: 14px;
-  height: 14px;
+.application-profile-copy small {
+  color: #999996;
+  font-size: 11px;
 }
 
 .application-main {
@@ -728,13 +693,13 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   background: #fff;
 }
 
-.application-main:has(.home-dashboard) { background: #fff; }
-.application-main:has(.home-dashboard) .application-header {
+.application-main:has(.home-page) { background: #fff; }
+.application-main:has(.home-page) .application-header {
   border-bottom: 0;
   background: #fff;
 }
 
-.application-main:has(.home-dashboard) .application-header,
+.application-main:has(.home-page) .application-header,
 .application-page--discover .application-header {
   height: 90px;
   min-height: 90px;
@@ -924,8 +889,13 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 .application-page.is-sidebar-collapsed .application-nav-link > span:last-child,
 .application-page.is-sidebar-collapsed .application-recent-link > span:last-child,
 .application-page.is-sidebar-collapsed .application-nav-section-heading > span:first-child,
-.application-page.is-sidebar-collapsed .application-recent-list {
+.application-page.is-sidebar-collapsed .application-recent-list,
+.application-page.is-sidebar-collapsed .application-profile-copy {
   display: none;
+}
+
+.application-page.is-sidebar-collapsed .application-profile-link {
+  justify-content: center;
 }
 
 .application-page.is-sidebar-collapsed .application-workspace-row {
@@ -969,20 +939,6 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 
 .application-page.is-sidebar-collapsed .application-nav-section-actions {
   display: none;
-}
-
-.application-page.is-sidebar-collapsed .application-footer-button {
-  justify-self: center;
-}
-
-.application-page.is-sidebar-collapsed .application-sidebar-footer {
-  grid-template-columns: 1fr;
-  height: auto;
-  gap: 2px;
-}
-
-.application-page.is-sidebar-collapsed .application-account-control {
-  justify-self: center;
 }
 
 .discovery-canvas {
@@ -1167,7 +1123,7 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   .application-search-results { max-height: calc(100dvh - 86px); }
   .application-menu-button { display: grid; margin-right: 0; }
   .application-header { height: 72px; min-height: 72px; padding: 0 12px; }
-  .application-main:has(.home-dashboard) .application-header,
+  .application-main:has(.home-page) .application-header,
   .application-page--discover .application-header { height: 90px; min-height: 90px; padding: 18px 12px 0; }
   .application-header-bottom { gap: 8px; }
   .application-header-start { gap: 8px; }

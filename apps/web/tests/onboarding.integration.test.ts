@@ -168,6 +168,17 @@ test(
       assert.equal(latestDraft.draft.persona, "researcher");
       assert.deepEqual(latestDraft.draft.learningIntents, ["read_papers"]);
 
+      // Picking three topics starts discovery before completion; re-saving the same topics does not.
+      const saveTopics = (draftRevision: number) => saveOnboardingDraft(user.id, { persona: "researcher", learningIntents: ["read_papers"], preferredFormats: [], preferredDuration: "no_preference", selfReportedLevel: "beginner", conceptIds: expandedConceptIds, draftRevision });
+      await saveTopics(7);
+      await saveTopics(8);
+      const draftRequests = await migrator<{ payload: { conceptIds: string[]; source: string } }[]>`
+        SELECT payload FROM ops.outbox_events
+        WHERE user_id = ${user.id} AND event_type = 'discovery.refresh_requested' AND payload->>'source' = 'onboarding-draft-v1'
+      `;
+      assert.equal(draftRequests.length, 1);
+      assert.deepEqual(draftRequests[0]?.payload.conceptIds, expandedConceptIds);
+
       await migrator`
         INSERT INTO discovery.user_concept_affinity
           (user_id, concept_id, score, confidence, positive_weight, negative_weight, feature_version, last_event_at)

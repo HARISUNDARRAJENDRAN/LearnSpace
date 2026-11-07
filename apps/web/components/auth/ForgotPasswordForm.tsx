@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 type ForgotResponse = {
   message?: string;
@@ -53,9 +51,10 @@ export function ForgotPasswordForm() {
         </a>
       ) : null}
       <form className="auth-form" onSubmit={submit}>
-        <label htmlFor="forgot-email">
-          <span>Email address</span>
-          <Input
+        <div className="auth-field">
+          <label htmlFor="forgot-email">Email address</label>
+          <input
+            className="auth-input"
             id="forgot-email"
             name="email"
             type="email"
@@ -65,10 +64,10 @@ export function ForgotPasswordForm() {
             placeholder="you@example.com"
             required
           />
-        </label>
-        <Button className="auth-submit" type="submit" disabled={isSubmitting}>
+        </div>
+        <button className="auth-submit" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Sending…" : "Send reset link"}
-        </Button>
+        </button>
       </form>
       <p className="auth-switch">
         Remembered it? <a href="/login">Go to login</a>

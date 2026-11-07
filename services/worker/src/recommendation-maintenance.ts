@@ -17,6 +17,12 @@ export async function recommendationMaintenance(db: ReturnType<typeof postgres>,
     const modified = (await stat(file)).mtimeMs;
     if (modified !== syncedAt) { await syncCuratedCatalog(db); syncedAt = modified; }
   } catch (error) { console.warn(JSON.stringify({ metric: "recommendation_catalog_sync_failure", error: error instanceof Error ? error.message : "catalog sync failed" })); }
+  await recommendationUpkeep(db, signal);
+}
+
+/** Profile projection and embedding backfill, without the curated-catalog file the serverless worker cannot read. */
+export async function recommendationUpkeep(db: ReturnType<typeof postgres>, signal?: AbortSignal) {
+  if (!semanticRecommendationsEnabled()) return;
   const provider = embeddingProvider();
   // Separate failures: delayed embeddings must not stop behavioural projection.
   await projectRecommendationProfiles(db, provider, [], signal);

@@ -98,7 +98,8 @@ async function completeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
-  await page.getByRole("button", { name: "Start learning" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/app/);
 }
 

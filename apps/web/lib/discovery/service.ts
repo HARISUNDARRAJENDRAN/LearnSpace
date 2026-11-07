@@ -1,6 +1,7 @@
 import { RECOMMENDATION_CONFIG as recommendationConfig, semanticRecommendationsEnabled } from "@learnspace/shared/recommendation-config";
 import { readRecommendationCache, writeRecommendationCache, invalidateRecommendations } from "@learnspace/shared/recommendation-cache";
 import { retrievalVector } from "@learnspace/shared/recommendation-model";
+import { YOUTUBE_QUALITY_FEATURE_VERSION } from "@learnspace/shared/youtube-quality";
 import { loadCompactProfile } from "./compact-profile";
 import { retrieveRecommendationCandidates } from "./candidates";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
@@ -371,7 +372,7 @@ export async function loadDiscoveryResources(
     tx
       .select({ resourceId: resourceQualitySnapshots.resourceId, finalQualityScore: resourceQualitySnapshots.finalQualityScore, freshnessPrior: resourceQualitySnapshots.freshnessPrior, sourceAuthority: resourceQualitySnapshots.sourceAuthority, completionRate: resourceQualitySnapshots.completionRate, retentionRate: resourceQualitySnapshots.retentionRate, capturedAt: resourceQualitySnapshots.capturedAt })
       .from(resourceQualitySnapshots)
-      .where(and(inArray(resourceQualitySnapshots.resourceId, ids), eq(resourceQualitySnapshots.featureVersion, "youtube-quality-v1")))
+      .where(and(inArray(resourceQualitySnapshots.resourceId, ids), eq(resourceQualitySnapshots.featureVersion, YOUTUBE_QUALITY_FEATURE_VERSION)))
       .orderBy(desc(resourceQualitySnapshots.capturedAt)),
   ]);
   const conceptsByResource = new Map<string, Array<{ id: string; name: string; relevance: number }>>();
@@ -517,12 +518,17 @@ function responseFromRanked(
   };
 }
 
+function strategyVersion(profile: LearnerProfile): string {
+  return profile.semanticRanking ? recommendationConfig.version : DISCOVERY_STRATEGY_VERSION;
+}
+
 async function findReusableRun(
   tx: Transaction,
   userId: string,
   now: Date,
   surface: "home" | "discover",
   fingerprints: { profileFingerprint: string; catalogFingerprint: string },
+  profile: LearnerProfile,
 ): Promise<typeof recommendationRuns.$inferSelect | null> {
   const minimumDate = new Date(now.getTime() - staleFeedTtlMs);
   const rows = await tx
@@ -533,7 +539,7 @@ async function findReusableRun(
       eq(recommendationRuns.surface, surface),
       eq(recommendationRuns.status, "completed"),
       gte(recommendationRuns.createdAt, minimumDate),
-      eq(recommendationRuns.strategyVersion, DISCOVERY_STRATEGY_VERSION),
+      eq(recommendationRuns.strategyVersion, strategyVersion(profile)),
       eq(recommendationRuns.featureVersion, DISCOVERY_FEATURE_VERSION),
       sql`${recommendationRuns.contextSnapshot}->>'profileFingerprint' = ${fingerprints.profileFingerprint}`,
       sql`${recommendationRuns.contextSnapshot}->>'catalogFingerprint' = ${fingerprints.catalogFingerprint}`,
@@ -600,7 +606,7 @@ async function generateRun(
   const [run] = await tx.insert(recommendationRuns).values({
     userId,
     surface,
-    strategyVersion: profileLoad.profile.semanticRanking ? recommendationConfig.version : DISCOVERY_STRATEGY_VERSION,
+    strategyVersion: strategyVersion(profileLoad.profile),
     featureVersion: DISCOVERY_FEATURE_VERSION,
     contextSnapshot: {
       conceptIds: profileLoad.profile.conceptIds,
@@ -665,7 +671,7 @@ async function getLegacyFeed(userId: string, surface: "home" | "discover" = "hom
     };
     const cached = surface === "home" ? await getCachedHomeFeed(userId, fingerprints) : null;
     if (cached) return { response: cached, fingerprints: null };
-    const reusableRun = await findReusableRun(tx, userId, now, surface, fingerprints);
+    const reusableRun = await findReusableRun(tx, userId, now, surface, fingerprints, profileLoad.profile);
     const activeSessionResources = await loadDiscoveryResources(tx, profileLoad.activeSessionResourceIds, userId);
     if (reusableRun) {
       const ranked = await loadRankedRun(tx, reusableRun);
@@ -734,9 +740,10 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
       timing.profile = performance.now() - profileStart;
       const fingerprints = {
         profileFingerprint: discoveryFingerprint({ revision, preferences: profileLoad.profile.conceptIds, topicId, generation: cache.generation, version: recommendationConfig.version, decayDay: new Date().toISOString().slice(0, 10) }),
-        catalogFingerprint: discoveryFingerprint({ generation: cache.catalogGeneration, version: recommendationConfig.version }),
+        // Read from the database, not the Redis generation, so newly discovered videos re-rank the feed with or without Redis.
+        catalogFingerprint: discoveryFingerprint({ catalog: await catalogFingerprint(tx), version: recommendationConfig.version }),
       };
-      const reusable = options.forceRefresh ? null : await findReusableRun(tx, userId, new Date(), "discover", fingerprints);
+      const reusable = options.forceRefresh ? null : await findReusableRun(tx, userId, new Date(), "discover", fingerprints, profileLoad.profile);
       if (reusable) return responseFromRanked(reusable.id, reusable.createdAt, profileLoad, await loadRankedRun(tx, reusable), [], false, recommendationConfig.resultCount);
       const candidateStart = performance.now();
       const interestIds = focusedIds.length ? focusedIds : [...new Set([...profileLoad.profile.conceptIds, ...profileLoad.emergingConceptIds, ...profileLoad.adjacentConceptIds, ...(profileLoad.profile.goalConceptIds ?? []), ...(profileLoad.profile.sessionConceptIds ?? [])])];

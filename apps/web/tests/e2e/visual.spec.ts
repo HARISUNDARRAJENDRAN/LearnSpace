@@ -79,6 +79,8 @@ test.describe("populated Home visual regression", () => {
 
   test("populated Home dashboard at desktop, laptop, tablet, narrow, and mobile breakpoints", async ({ page }) => {
     await page.context().addCookies([{ name: sessionCookieName, value: homeFixture.sessionToken, url: "http://localhost:3100", httpOnly: true, sameSite: "Lax" }]);
+    // The calendar draws the current week and a now-line, so pin the browser clock.
+    await page.clock.setFixedTime(new Date("2026-11-04T10:30:00"));
     for (const [name, viewport] of [
       ["desktop", desktop],
       ["laptop", laptop],
@@ -87,13 +89,17 @@ test.describe("populated Home visual regression", () => {
       ["mobile", mobile],
     ] as const) {
       await page.setViewportSize(viewport);
+      const observed = page.waitForResponse((response) => response.url().endsWith("/api/v1/plan/observe"));
       await page.goto("/app", { waitUntil: "networkidle" });
-      await expect(page.locator(".home-dashboard")).toBeVisible();
+      await expect(page.locator(".home-page")).toBeVisible();
+      await observed;
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await page.waitForFunction(() => [...document.images].every((image) => image.complete));
       await stabilize(page);
       await expect(page.locator(".application-main")).toHaveScreenshot(`home-populated-${name}.png`, {
         animations: "disabled",
+        // Suggested times come from the server's real clock.
+        mask: [page.locator(".home-next-item small")],
         caret: "hide",
         maxDiffPixels: 256,
       });

@@ -15,8 +15,8 @@ export default async function VerifyEmailPage({
   const status = first(params.status);
   return (
     <AuthShell
-      title="Check your inbox."
-      subtitle="One small step, then your learning space is ready."
+      title="Check your inbox"
+      subtitle="Confirm your email and your study space is ready."
     >
       <VerifyEmailClient
         email={first(params.email) ?? ""}

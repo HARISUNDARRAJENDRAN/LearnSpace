@@ -5,14 +5,16 @@
   "type": "module",
   "scripts": {
     "build": "tsc --build",
+    "bundle:edge": "node scripts/bundle-edge.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/discovery.test.ts src/discovery.integration.test.ts",
+    "test": "tsx --test src/discovery.test.ts src/discovery-lanes.test.ts src/youtube-metrics.test.ts src/discovery.integration.test.ts",
     "start": "node dist/index.js",
     "discovery:once": "tsx src/index.ts",
     "discovery:worker": "tsx src/index.ts --loop",
     "discovery:smoke": "tsx src/discovery-smoke.ts",
-    "recommendations:backfill": "tsx src/recommendation-backfill.ts"
+    "recommendations:backfill": "tsx src/recommendation-backfill.ts",
+    "youtube:backfill": "tsx src/youtube-backfill.ts"
   },
   "dependencies": {
     "@learnspace/shared": "workspace:*",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "26.4.0",
+    "esbuild": "0.28.2",
     "tsx": "4.23.12"
   },
   "files": [

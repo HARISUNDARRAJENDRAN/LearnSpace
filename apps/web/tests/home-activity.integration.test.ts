@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
 
-test("first entry is persistent, and measured Home activity is scoped and counted once", { skip: !process.env.DATABASE_MIGRATOR_URL }, async () => {
+test("first entry is persistent, and measured study time is scoped and counted once", { skip: !process.env.DATABASE_MIGRATOR_URL }, async () => {
   const [{ closeDb }, { createEmailUser }, { getLearnHome }, { getAuthenticatedDestination, recordFirstApplicationVisit }, { recordStudyFocus, studyFocusIntervalSchema }] = await Promise.all([
     import("@learnspace/db"), import("../lib/auth/repository"), import("../lib/home/service"), import("../lib/onboarding/service"), import("../lib/study/focus"),
   ]);
@@ -23,7 +23,11 @@ test("first entry is persistent, and measured Home activity is scoped and counte
     assert.equal(await getAuthenticatedDestination(owner.id), "/app");
     assert.equal(await getAuthenticatedDestination(owner.id, "/app/library"), "/app/library");
     assert.equal(await getAuthenticatedDestination(other.id), "/app/discover");
-    assert.deepEqual((await getLearnHome(owner.id)).activity.days, []);
+    // A learner who planned a first session while onboarding goes straight to it, not to Discover.
+    await database`INSERT INTO study.schedule_items (user_id, kind, title, starts_at) VALUES (${other.id}, 'watch', 'First session', now())`;
+    assert.equal(await recordFirstApplicationVisit(other.id), false);
+    assert.equal(await getAuthenticatedDestination(other.id), "/app");
+    assert.equal((await getLearnHome(owner.id)).progression.xp, 0);
 
     await database`UPDATE identity.users SET timezone = 'Asia/Kolkata' WHERE id = ${owner.id}`;
     await database`INSERT INTO catalog.resources (id, owner_user_id, type, provider, title, visibility, status) VALUES (${resourceId}, ${owner.id}, 'video', 'youtube', 'Activity fixture', 'private', 'ready')`;
@@ -35,16 +39,19 @@ test("first entry is persistent, and measured Home activity is scoped and counte
     assert.equal((await recordStudyFocus(owner.id, sessionId, interval)).seconds, 15);
     assert.equal((await recordStudyFocus(owner.id, sessionId, { ...interval, id: randomUUID(), startedAt: now - 40_000, endedAt: now - 25_000 })).seconds, 5);
     assert.equal((await recordStudyFocus(owner.id, sessionId, { ...interval, id: randomUUID(), startedAt: now - 50_000, endedAt: now - 35_000 })).seconds, 5);
+    const [measured] = await database<{ seconds: number }[]>`SELECT sum(duration_sec)::int AS seconds FROM study.focus_sessions WHERE user_id = ${owner.id}`;
+    assert.equal(measured?.seconds, 25);
     const home = await getLearnHome(owner.id);
-    assert.equal(home.activity.days.reduce((sum, day) => sum + day.focusSeconds, 0), 25);
-    assert.equal(home.activity.days.reduce((sum, day) => sum + day.videoSeconds, 0), 25);
-    assert.equal(home.activity.today, new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
-    assert.deepEqual((await getLearnHome(other.id)).activity.days, []);
+    // XP counts whole focused minutes, so 25 seconds earns nothing yet.
+    assert.equal(home.progression.xp, 0);
+    assert.equal(home.today, new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()));
+    assert.equal((await getLearnHome(other.id)).progression.xp, 0);
     await assert.rejects(() => recordStudyFocus(other.id, sessionId, { ...interval, id: randomUUID() }), /not available/);
     await assert.rejects(() => recordStudyFocus(owner.id, sessionId, { ...interval, id: randomUUID(), endedAt: now + 20_000, startedAt: now }), /recent active/);
     assert.equal(studyFocusIntervalSchema.safeParse({ ...interval, endedAt: interval.startedAt + 31_000 }).success, false);
     assert.equal(await getAuthenticatedDestination(owner.id), "/app");
   } finally {
+    await database`DELETE FROM study.schedule_items WHERE user_id IN ${database([owner.id, other.id])}`;
     await database`DELETE FROM activity.activity_events WHERE user_id IN ${database([owner.id, other.id])}`;
     await database`DELETE FROM ops.outbox_events WHERE user_id IN ${database([owner.id, other.id])}`;
     await database`DELETE FROM study.focus_sessions WHERE user_id IN ${database([owner.id, other.id])}`;

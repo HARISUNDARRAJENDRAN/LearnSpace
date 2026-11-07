@@ -8,8 +8,9 @@ if (!databaseUrl) {
 
 const parsed = new URL(databaseUrl);
 const allowedHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+const allowedPorts = new Set(["5432", "55432", "55433"]);
 
-if (!allowedHosts.has(parsed.hostname) || (parsed.port !== "" && parsed.port !== "5432" && parsed.port !== "55432")) {
+if (!allowedHosts.has(parsed.hostname) || (parsed.port !== "" && !allowedPorts.has(parsed.port))) {
   throw new Error("db:reset:local only accepts a local PostgreSQL URL");
 }
 

@@ -176,14 +176,11 @@ async function main(): Promise<void> {
         const fallbackCalls = typeof status.result?.fallbackCalls === "number"
           ? status.result.fallbackCalls
           : 0;
-        const enrichmentCalls = typeof status.result?.enrichmentCalls === "number"
-          ? status.result.enrichmentCalls
-          : 0;
         const requireProvider = process.env.DISCOVERY_SMOKE_REQUIRE_PROVIDER !== "false";
         if (resourceIds.size === 0) {
           throw new Error("staging discovery smoke completed without touched resource IDs");
         }
-        if (requireProvider && providerCalls + fallbackCalls + enrichmentCalls < 1) {
+        if (requireProvider && providerCalls + fallbackCalls < 1) {
           throw new Error("staging discovery smoke completed without live provider-call evidence");
         }
         const linkedResources = await linkedResourceCount(worker, concept.id, resourceIds);
@@ -212,8 +209,7 @@ async function main(): Promise<void> {
             linkedResources,
             providerCalls,
             fallbackCalls,
-            enrichmentCalls,
-            liveToolCalls: providerCalls + fallbackCalls + enrichmentCalls,
+            liveToolCalls: providerCalls + fallbackCalls,
             cacheHit: status.result?.cacheHit === true,
             homeRunId: home.runId,
             homeSelectedCandidate: home.contains,

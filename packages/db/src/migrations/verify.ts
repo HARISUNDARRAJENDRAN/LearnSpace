@@ -40,7 +40,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "catalog.collection_items": ["collection_items_visible_policy", "collection_items_owner_insert_policy", "collection_items_owner_update_policy", "collection_items_owner_delete_policy", "collection_items_worker_policy", "collection_items_worker_insert_policy", "collection_items_worker_update_policy"],
   "catalog.collection_enrollments": ["collection_enrollments_owner_policy", "collection_enrollments_owner_insert_policy", "collection_enrollments_owner_update_policy", "collection_enrollments_owner_delete_policy"],
   "catalog.video_details": ["video_details_visible_policy", "video_details_worker_policy"],
-  "catalog.video_metric_snapshots": ["video_metric_snapshots_visible_policy", "video_metric_snapshots_worker_policy"],
+  "catalog.video_metric_snapshots": ["video_metric_snapshots_visible_policy", "video_metric_snapshots_worker_policy", "video_metric_snapshots_worker_delete"],
+  "catalog.youtube_channels": ["youtube_channels_worker_select", "youtube_channels_worker_insert", "youtube_channels_worker_update", "youtube_channels_worker_delete"],
   "catalog.paper_details": ["paper_details_visible_policy", "paper_details_worker_policy"],
   "catalog.paper_authors": ["paper_authors_visible_policy", "paper_authors_worker_policy"],
   "catalog.paper_references": ["paper_references_visible_policy", "paper_references_worker_policy"],
@@ -103,6 +104,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "projection.session_summary": ["session_summary_owner_policy", "session_summary_worker_policy"],
   "ops.idempotency_records": ["idempotency_records_select_policy"],
   "ops.outbox_events": ["outbox_events_owner_policy", "outbox_events_owner_insert_policy", "outbox_events_worker_policy", "outbox_events_worker_update_policy"],
+  "ops.api_usage_daily": ["api_usage_daily_worker_select", "api_usage_daily_worker_insert", "api_usage_daily_worker_update"],
+  "ops.rate_limit_counters": ["rate_limit_counters_auth_select", "rate_limit_counters_auth_insert", "rate_limit_counters_auth_update", "rate_limit_counters_worker_delete", "rate_limit_counters_worker_select"],
   "ops.jobs": ["jobs_worker_policy", "jobs_worker_insert_policy", "jobs_worker_update_policy", "jobs_worker_delete_policy"],
 };
 
@@ -220,7 +223,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 82, `expected 82 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 85, `expected 85 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count
@@ -264,6 +267,7 @@ try {
       ('practice', 'exercise_attempts', 'exercise_attempts_binding_context_trg'),
       ('knowledge', 'mastery_signals', 'mastery_signals_source_trg'),
       ('ops', 'outbox_events', 'outbox_events_append_only_trg'),
+      ('ops', 'outbox_events', 'outbox_events_discovery_wake'),
       ('study', 'user_resource_progress', 'user_resource_progress_chunk_resource_trg'),
       ('practice', 'observer_diagnostics', 'observer_diagnostics_model_invocation_trg'),
       ('practice', 'hint_events', 'hint_events_model_invocation_trg'),
@@ -271,7 +275,7 @@ try {
     )
       AND NOT t.tgisinternal
   `;
-  await requireCondition(triggerRows.length === 10, "target integrity triggers are incomplete");
+  await requireCondition(triggerRows.length === 11, "target integrity triggers are incomplete");
 
   const validationFunctionRows = await sql<{ name: string; security_definer: boolean; settings: string[] | null }[]>`
     SELECT

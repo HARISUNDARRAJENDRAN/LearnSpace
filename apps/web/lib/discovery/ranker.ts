@@ -3,7 +3,7 @@ import { observedAffinity, personalizationWeights, type LearnerAffinity } from "
 export type { LearnerAffinity } from "./learner-model";
 
 export const DISCOVERY_STRATEGY_VERSION = "adaptive-learning-v1";
-export const DISCOVERY_FEATURE_VERSION = "discovery-v3";
+export const DISCOVERY_FEATURE_VERSION = "discovery-v5";
 
 export const DISCOVERY_EXPLORATION_CONFIG = {
   version: "exploration-v1",

@@ -6,10 +6,10 @@ import postgres from "postgres";
 const databaseAvailable = Boolean(process.env.DATABASE_URL && process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL);
 
 test(
-  "Learn Home reads scoped continuation and related videos",
+  "Learn Home reads scoped recent lessons and related videos",
   { skip: databaseAvailable ? false : "DATABASE_URL, DATABASE_AUTH_URL, and DATABASE_MIGRATOR_URL are required" },
   async () => {
-    const [{ closeDb }, { createEmailUser }, { getLearnHome }, { getHomeFeed }, { startOrResumeStudySession }] = await Promise.all([
+    const [{ closeDb, withUserTransaction }, { createEmailUser }, { getLearnHome, loadRelatedVideos }, { getHomeFeed }, { startOrResumeStudySession }] = await Promise.all([
       import("@learnspace/db"),
       import("../lib/auth/repository"),
       import("../lib/home/service"),
@@ -23,6 +23,7 @@ test(
     const pausedLearner = await createEmailUser({ email: `home-paused-${randomUUID()}@example.test`, displayName: "Paused Learner", passwordHash: "test-hash" });
     const otherLearner = await createEmailUser({ email: `home-other-${randomUUID()}@example.test`, displayName: "Other Learner", passwordHash: "test-hash" });
     const userIds = [owner.id, pausedLearner.id, otherLearner.id];
+    const conceptId = randomUUID();
     const resourceIds = {
       anchor: randomUUID(),
       olderSession: randomUUID(),
@@ -68,13 +69,13 @@ test(
     ] as const;
 
     try {
-      const concepts = await migrator<{ id: string; name: string }[]>`
-        SELECT id, name FROM knowledge.concepts
-        WHERE slug = 'ai-machine-learning' AND status = 'active'
-        LIMIT 1
+      // A test-owned concept, so real catalog videos on a shared topic cannot outrank the fixtures.
+      const [concept] = await migrator<{ id: string; name: string }[]>`
+        INSERT INTO knowledge.concepts (id, slug, name, kind, status)
+        VALUES (${conceptId}, ${`home-integration-${conceptId}`}, 'Home integration concept', 'topic', 'active')
+        RETURNING id, name
       `;
-      const concept = concepts[0];
-      if (!concept) throw new Error("AI concept is required for Home integration tests");
+      if (!concept) throw new Error("Home integration concept was not created");
 
       await migrator.begin(async (tx) => {
         for (const [resourceId, title, channelTitle, key] of videoDefinitions) {
@@ -159,23 +160,20 @@ test(
       });
 
       const home = await getLearnHome(owner.id);
-      assert.equal(home.continueWatching?.resourceId, resourceIds.anchor);
-      assert.equal(home.continueWatching?.sessionId, sessionIds.anchor);
-      assert.equal(home.continueWatching?.progressPct, 64);
-      assert.equal(home.continueWatching?.description, "A deterministic Home integration video.");
-      assert.equal(home.relatedAnchor?.resourceId, resourceIds.anchor);
-      assert.equal(home.relatedVideos[0]?.resourceId, resourceIds.relatedHigh);
-      assert.equal(home.relatedVideos.some((item) => item.resourceId === resourceIds.anchor), false);
-      assert.equal(home.relatedVideos.some((item) => item.resourceId === resourceIds.dismissed), false);
-      assert.equal(home.relatedVideos.some((item) => item.resourceId === resourceIds.paper), false);
-      assert.equal(new Set(home.relatedVideos.map((item) => item.resourceId)).size, home.relatedVideos.length);
+      // Most recently opened first, across videos and papers.
+      assert.deepEqual(home.recentLessons.slice(0, 2).map((lesson) => lesson.resourceId), [resourceIds.paper, resourceIds.anchor]);
+      assert.equal(home.recentLessons[1]?.progressPct, 64);
+      assert.equal(home.recentLessons.some((lesson) => [resourceIds.paused, resourceIds.other, resourceIds.deleted].some((id) => id === lesson.resourceId)), false);
+      assert.deepEqual(home.nextActions, []);
+      const related = await withUserTransaction(owner.id, (tx) => loadRelatedVideos(tx, owner.id, resourceIds.anchor));
+      assert.equal(related[0]?.resourceId, resourceIds.relatedHigh);
+      assert.equal(related.some((item) => item.resourceId === resourceIds.anchor), false);
+      assert.equal(related.some((item) => item.resourceId === resourceIds.dismissed), false);
+      assert.equal(related.some((item) => item.resourceId === resourceIds.paper), false);
+      assert.equal(new Set(related.map((item) => item.resourceId)).size, related.length);
 
-      const pausedHome = await getLearnHome(pausedLearner.id);
-      assert.equal(pausedHome.continueWatching?.resourceId, resourceIds.paused);
-      assert.equal(pausedHome.continueWatching?.progressPct, 48);
-
-      const otherHome = await getLearnHome(otherLearner.id);
-      assert.equal(otherHome.continueWatching?.resourceId, resourceIds.other);
+      assert.equal((await getLearnHome(pausedLearner.id)).recentLessons[0]?.resourceId, resourceIds.paused);
+      assert.equal((await getLearnHome(otherLearner.id)).recentLessons[0]?.resourceId, resourceIds.other);
       const ownerFeed = await getHomeFeed(owner.id);
       const recommendation = ownerFeed.sections.recommendedVideos[0];
       assert.ok(recommendation?.runId);
@@ -196,14 +194,6 @@ test(
         }),
         (error: unknown) => error instanceof Error && error.name === "AuthError" && "code" in error && error.code === "INVALID_RECOMMENDATION_CONTEXT",
       );
-      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.anchor}`;
-      assert.equal((await getLearnHome(owner.id)).continueWatching?.resourceId, resourceIds.olderSession);
-      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.olderSession}`;
-      const malformed = await getLearnHome(owner.id);
-      assert.equal(malformed.continueWatching?.resourceId, resourceIds.invalid);
-      assert.equal(malformed.continueWatching?.thumbnailUrl, null);
-      await migrator`UPDATE study.user_resource_progress SET progress_pct = 100, status = 'completed' WHERE user_id = ${owner.id} AND resource_id = ${resourceIds.invalid}`;
-      assert.equal((await getLearnHome(owner.id)).continueWatching, null);
     } finally {
       await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id IN ${migrator(userIds)} OR resource_id IN ${migrator(Object.values(resourceIds))}`;
@@ -220,6 +210,7 @@ test(
       await migrator`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(Object.values(resourceIds))}`;
       await migrator`DELETE FROM catalog.resources WHERE id IN ${migrator(Object.values(resourceIds))}`;
+      await migrator`DELETE FROM knowledge.concepts WHERE id = ${conceptId}`;
       await migrator`DELETE FROM identity.users WHERE id IN ${migrator(userIds)}`;
       await migrator.end({ timeout: 5 });
       await closeDb();

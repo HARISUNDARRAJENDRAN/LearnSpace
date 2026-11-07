@@ -24,13 +24,14 @@ services:
   # Next.js UI and API. Installs dependencies, migrates and seeds the
   # database, then serves the mounted source with hot reload.
   web:
-    mem_limit: ${WEB_MEMORY_LIMIT:-1536m}
+    mem_limit: ${WEB_MEMORY_LIMIT:-2560m}
     build:
       context: .
       dockerfile: Dockerfile
       target: development
     environment:
-      NODE_OPTIONS: --max-old-space-size=1024
+      # next dev restarts itself near this heap cap and recompiles every page, so leave webpack room.
+      NODE_OPTIONS: --max-old-space-size=2048
       NEXT_TELEMETRY_DISABLED: "1"
       DATABASE_MIGRATOR_URL: postgres://learnspace_migrator:learnspace_migrator@postgres:5432/learnspace
       DATABASE_URL: postgres://learnspace_app:learnspace_app@postgres:5432/learnspace
@@ -44,11 +45,10 @@ services:
       DB_STATEMENT_TIMEOUT_MS: "3000"
       DB_LOCK_TIMEOUT_MS: "500"
       APP_URL: "${APP_URL:-http://localhost:3000}"
-      DISCOVERY_AGENT_URL: http://backend:8080
-      INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:-local-development-internal-token}"
+      # The source picker searches Exa directly for instant results.
+      EXA_API_KEY: "${EXA_API_KEY:-}"
       AUTH_SECRET: "${AUTH_SECRET:-local-development-auth-secret-change-me-please}"
       AUTH_SECURE_COOKIES: "${AUTH_SECURE_COOKIES:-false}"
-      AUTH_RATE_LIMIT_BACKEND: "${AUTH_RATE_LIMIT_BACKEND:-memory}"
       AUTH_EXPOSE_VERIFICATION_LINK: "${AUTH_EXPOSE_VERIFICATION_LINK:-true}"
       GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}"
       GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET:-}"
@@ -90,7 +90,7 @@ services:
       start_period: 120s
     restart: unless-stopped
 
-  # Discovery agent (FastAPI) and discovery worker in one built image.
+  # Discovery worker: finds videos and papers through Exa and keeps YouTube metrics fresh.
   backend:
     mem_limit: ${BACKEND_MEMORY_LIMIT:-1024m}
     build:
@@ -100,34 +100,30 @@ services:
     environment:
       MALLOC_ARENA_MAX: "2"
       NODE_OPTIONS: --max-old-space-size=384
-      INTERNAL_SERVICE_TOKEN: "${INTERNAL_SERVICE_TOKEN:-local-development-internal-token}"
-      DISCOVERY_AGENT_URL: http://127.0.0.1:8080
       DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@postgres:5432/learnspace
-      DATABASE_AI_URL: postgres://learnspace_ai:learnspace_ai@postgres:5432/learnspace
-      DISCOVERY_AGENTS_ENABLED: "${DISCOVERY_AGENTS_ENABLED:-false}"
       EXA_API_KEY: "${EXA_API_KEY:-}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED: "${LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED:-true}"
-      DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED: "${DISCOVERY_YOUTUBE_ENRICHMENT_ENABLED:-false}"
-      DISCOVERY_YOUTUBE_EMBEDDER_PROVIDER: "${DISCOVERY_YOUTUBE_EMBEDDER_PROVIDER:-openai}"
-      DISCOVERY_YOUTUBE_EMBEDDER_MODEL: "${DISCOVERY_YOUTUBE_EMBEDDER_MODEL:-text-embedding-3-small}"
-      DISCOVERY_MAX_CONCURRENCY: "${DISCOVERY_MAX_CONCURRENCY:-2}"
-      DISCOVERY_MAX_TOOL_CALLS: "${DISCOVERY_MAX_TOOL_CALLS:-4}"
       DISCOVERY_REQUEST_TIMEOUT_SECONDS: "${DISCOVERY_REQUEST_TIMEOUT_SECONDS:-8}"
       DISCOVERY_WORKER_INTERVAL_MS: "${DISCOVERY_WORKER_INTERVAL_MS:-30000}"
+      DISCOVERY_WORKER_CONCURRENCY: "${DISCOVERY_WORKER_CONCURRENCY:-3}"
+      EXA_DAILY_CALL_CAP: "${EXA_DAILY_CALL_CAP:-1000}"
       DISCOVERY_WORKER_MAX_JOBS: "${DISCOVERY_WORKER_MAX_JOBS:-0}"
-      DISCOVERY_AGENT_TIMEOUT_SECONDS: "${DISCOVERY_AGENT_TIMEOUT_SECONDS:-120}"
-      DISCOVERY_REFRESH_FAST_HOURS: "${DISCOVERY_REFRESH_FAST_HOURS:-12}"
+      DISCOVERY_REFRESH_FAST_HOURS: "${DISCOVERY_REFRESH_FAST_HOURS:-24}"
       DISCOVERY_REFRESH_MEDIUM_HOURS: "${DISCOVERY_REFRESH_MEDIUM_HOURS:-24}"
       DISCOVERY_REFRESH_SLOW_HOURS: "${DISCOVERY_REFRESH_SLOW_HOURS:-72}"
       DISCOVERY_REFRESH_JITTER_PERCENT: "${DISCOVERY_REFRESH_JITTER_PERCENT:-0.1}"
       DISCOVERY_REFRESH_DEDUP_HOURS: "${DISCOVERY_REFRESH_DEDUP_HOURS:-12}"
+      # YouTube Data API v3 key, restricted to that API. Without it the worker skips metrics.
+      YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+      YOUTUBE_DAILY_QUOTA_CAP: "${YOUTUBE_DAILY_QUOTA_CAP:-9000}"
+      YOUTUBE_METRICS_MAX_AGE_DAYS: "${YOUTUBE_METRICS_MAX_AGE_DAYS:-7}"
+      YOUTUBE_METRICS_BATCH_SIZE: "${YOUTUBE_METRICS_BATCH_SIZE:-200}"
+      YOUTUBE_MIN_DURATION_SECONDS: "${YOUTUBE_MIN_DURATION_SECONDS:-60}"
     depends_on:
       # The worker needs the schema, which the web container migrates.
       web:
         condition: service_healthy
-    ports:
-      - "${BACKEND_PORT:-8080}:8080"
     restart: unless-stopped
 
 volumes:

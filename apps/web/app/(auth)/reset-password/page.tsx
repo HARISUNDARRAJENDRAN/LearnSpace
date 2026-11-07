@@ -12,8 +12,8 @@ export default async function ResetPasswordPage({
   const params = await searchParams;
   return (
     <AuthShell
-      title="Choose a new password."
-      subtitle="Set a fresh password and continue learning securely."
+      title="Choose a new password"
+      subtitle="Use at least 8 characters, then keep learning."
     >
       <ResetPasswordForm token={first(params.token) ?? ""} />
     </AuthShell>

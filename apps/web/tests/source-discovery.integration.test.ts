@@ -4,6 +4,11 @@ import test from "node:test";
 import postgres from "postgres";
 import { hashPassword } from "../lib/auth/crypto";
 
+/** Exa search results carrying the same videos a discovery batch fixture lists. */
+function exaResults(batch: { youtube: Record<string, unknown>[] } & Record<string, unknown>): Response {
+  return new Response(JSON.stringify({ results: batch.youtube.map((video) => ({ url: video.canonical_url, title: video.title, author: video.channel, highlights: video.evidence ?? [] })) }), { headers: { "content-type": "application/json" } });
+}
+
 const databaseAvailable = Boolean(
   process.env.DATABASE_URL && process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL,
 );
@@ -197,15 +202,13 @@ test(
     const resourceIds: string[] = [];
     const runIds: string[] = [];
     const originalFetch = globalThis.fetch;
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const previousExaKey = process.env.EXA_API_KEY;
     const query = `Variational autoencoders ${randomUUID().slice(0, 8)}`;
-    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
-    process.env.INTERNAL_SERVICE_TOKEN = "source-ranking-test";
+    process.env.EXA_API_KEY = "test-exa-key";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
-      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
-      return new Response(JSON.stringify({ trace_id: "source-ranking-test", youtube: [], arxiv: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
+      return exaResults({ youtube: [] });
     }) as typeof fetch;
     try {
       for (let index = 0; index < 6; index += 1) {
@@ -247,10 +250,8 @@ test(
       assert.equal(refreshes[0]?.count, "2");
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
-      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
-      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
-      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = previousExaKey;
       await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
       if (runIds.some(Boolean)) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN ${migrator(runIds.filter(Boolean))}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
@@ -279,20 +280,18 @@ test(
     const catalogResourceIds: string[] = [];
     let runId = "";
     const originalFetch = globalThis.fetch;
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const previousExaKey = process.env.EXA_API_KEY;
     const query = `python for beginners ${randomUUID().slice(0, 8)}`;
     let seenQuery = "";
     let seenLimit = 0;
-    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
-    process.env.INTERNAL_SERVICE_TOKEN = "source-python-test";
+    process.env.EXA_API_KEY = "test-exa-key";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
-      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
-      const request = JSON.parse(String(init?.body ?? "{}")) as { query_text?: string; limit?: number };
-      seenQuery = request.query_text ?? "";
-      seenLimit = request.limit ?? 0;
-      return new Response(JSON.stringify({
+      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
+      const request = JSON.parse(String(init?.body ?? "{}")) as { query?: string; numResults?: number };
+      seenQuery = request.query ?? "";
+      seenLimit = request.numResults ?? 0;
+      return exaResults({
         trace_id: "python-regression-test",
         youtube: Array.from({ length: 30 }, (_, index) => {
           const youtubeId = `A${index.toString(36).padStart(10, "0")}`;
@@ -309,7 +308,7 @@ test(
           };
         }),
         arxiv: [],
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      });
     }) as typeof fetch;
     try {
       const unrelatedTitles = [
@@ -346,7 +345,7 @@ test(
         runId = initial.runId ?? runId;
       }
       assert.equal(initial.status, "completed");
-      assert.equal(seenQuery, query);
+      assert.equal(seenQuery, `videos on ${query}`);
       assert.equal(seenLimit, 30);
       assert.equal(initial.candidates.length, 30);
       assert.ok(initial.candidates.every((candidate) => candidate.title.includes(query.slice(-8))));
@@ -384,10 +383,8 @@ test(
       assert.equal(polledResponse.candidates.length, 30);
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
-      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
-      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
-      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = previousExaKey;
       await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
       if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
@@ -415,20 +412,18 @@ test(
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
     const user = await createEmailUser({ email: `source-fast-${randomUUID()}@example.test`, displayName: "Fast Source Test", passwordHash: await hashPassword("source-fast-password-123") });
     const originalFetch = globalThis.fetch;
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const previousExaKey = process.env.EXA_API_KEY;
     const query = `Rust for beginners ${randomUUID().slice(0, 8)}`;
     let seenQuery = "";
-    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
-    process.env.INTERNAL_SERVICE_TOKEN = "instant-source-test";
+    process.env.EXA_API_KEY = "test-exa-key";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
       if (requestUrl.startsWith("https://www.youtube.com/oembed")) {
         return new Response(JSON.stringify({ title: "Rust for Beginners - Full Course", thumbnail_url: "https://i.ytimg.com/vi/aB3dE5fG7hJ/hqdefault.jpg", author_name: "Fast Source Lab" }), { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
-      seenQuery = JSON.parse(String(init?.body ?? "{}")).query_text as string;
-      return new Response(JSON.stringify({
+      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
+      seenQuery = JSON.parse(String(init?.body ?? "{}")).query as string;
+      return exaResults({
         trace_id: "instant-test",
         youtube: [
           { youtube_id: "aB3dE5fG7hJ", canonical_url: "https://www.youtube.com/watch?v=aB3dE5fG7hJ", title: `${query} - Full Course`, channel: "Fast Source Lab", confidence: 0.95, evidence: ["beginner Rust course"] },
@@ -436,7 +431,7 @@ test(
           { youtube_id: "cD5fG7hI9jL", canonical_url: "https://www.youtube.com/watch?v=cD5fG7hI9jL", title: `Beginner projects — ${query}`, channel: "Fast Source Lab", confidence: 0.88, evidence: ["hands-on beginner Rust projects"] },
         ],
         arxiv: [],
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      });
     }) as typeof fetch;
     let runId = "";
     let resourceId = "";
@@ -445,7 +440,7 @@ test(
       const result = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
       runId = result.runId ?? "";
       assert.equal(result.status, "completed");
-      assert.equal(seenQuery, query);
+      assert.equal(seenQuery, `videos on ${query}`);
       assert.equal(result.candidates.length, 3);
       assert.equal(result.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"), true);
       assert.equal(result.candidates.every((candidate) => !candidate.resourceId), true);
@@ -482,10 +477,8 @@ test(
       assert.equal(started.readiness, "preparing");
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
-      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
-      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
-      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = previousExaKey;
       await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${user.id}`;
       await migrator`DELETE FROM activity.activity_events WHERE user_id = ${user.id}`;
       if (sessionId) {
@@ -521,16 +514,14 @@ test(
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
     const user = await createEmailUser({ email: `source-late-${randomUUID()}@example.test`, displayName: "Late Source Test", passwordHash: await hashPassword("source-late-password-123") });
     const originalFetch = globalThis.fetch;
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const previousExaKey = process.env.EXA_API_KEY;
     const query = `Rust ownership for beginners ${randomUUID().slice(0, 8)}`;
-    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
-    process.env.INTERNAL_SERVICE_TOKEN = "instant-source-late-test";
+    process.env.EXA_API_KEY = "test-exa-key";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
-      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
+      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
       await new Promise((resolve) => setTimeout(resolve, 650));
-      return new Response(JSON.stringify({
+      return exaResults({
         trace_id: "late-source-test",
         youtube: [
           { youtube_id: "dE7fG9hJ1kL", canonical_url: "https://www.youtube.com/watch?v=dE7fG9hJ1kL", title: `${query} — Full Course`, channel: "Late Source Lab", confidence: 0.95, evidence: ["Rust ownership for beginners"] },
@@ -538,7 +529,7 @@ test(
           { youtube_id: "fG9hI1jK3nP", canonical_url: "https://www.youtube.com/watch?v=fG9hI1jK3nP", title: `Practical ${query} projects`, channel: "Late Source Lab", confidence: 0.9, evidence: ["hands-on Rust ownership"] },
         ],
         arxiv: [],
-      }), { status: 200, headers: { "content-type": "application/json" } });
+      });
     }) as typeof fetch;
     let runId = "";
     try {
@@ -558,10 +549,8 @@ test(
       assert.ok(completed?.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
-      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
-      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
-      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = previousExaKey;
       await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
       if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
@@ -584,16 +573,14 @@ test(
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
     const user = await createEmailUser({ email: `source-failure-${randomUUID()}@example.test`, displayName: "Provider Failure Test", passwordHash: await hashPassword("source-failure-password-123") });
     const originalFetch = globalThis.fetch;
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
+    const previousExaKey = process.env.EXA_API_KEY;
     const query = `Rust error handling ${randomUUID().slice(0, 8)}`;
-    process.env.DISCOVERY_AGENT_URL = "https://instant-agent.example.test";
-    process.env.INTERNAL_SERVICE_TOKEN = "instant-source-failure-test";
+    process.env.EXA_API_KEY = "test-exa-key";
     globalThis.fetch = (async (input, init) => {
       const requestUrl = String(input);
-      if (!requestUrl.endsWith("/internal/v1/discovery/instant")) return originalFetch(input, init);
-      assert.equal(JSON.parse(String(init?.body ?? "{}")).query_text, query);
-      return new Response(JSON.stringify({ trace_id: "failure-source-test", youtube: [], arxiv: [], failures: ["instant:ConnectError"] }), { status: 200, headers: { "content-type": "application/json" } });
+      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
+      assert.equal(JSON.parse(String(init?.body ?? "{}")).query, `videos on ${query}`);
+      return new Response("{}", { status: 503 });
     }) as typeof fetch;
     let runId = "";
     try {
@@ -611,10 +598,8 @@ test(
       assert.equal(terminal?.refreshError?.code, "DISCOVERY_PROVIDER_UNAVAILABLE");
     } finally {
       globalThis.fetch = originalFetch;
-      if (previousAgentUrl === undefined) delete process.env.DISCOVERY_AGENT_URL;
-      else process.env.DISCOVERY_AGENT_URL = previousAgentUrl;
-      if (previousToken === undefined) delete process.env.INTERNAL_SERVICE_TOKEN;
-      else process.env.INTERNAL_SERVICE_TOKEN = previousToken;
+      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = previousExaKey;
       await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
       if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;

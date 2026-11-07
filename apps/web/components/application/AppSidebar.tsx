@@ -8,18 +8,14 @@ import {
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
-  CircleHelp,
   FileText,
   FileSearch,
   House,
   Compass,
   LibraryBig,
-  LogOut,
   MoreHorizontal,
   Plus,
   Search,
-  Settings,
-  UserRound,
   Video,
 } from "lucide-react";
 import Link from "next/link";
@@ -47,10 +43,8 @@ type AppSidebarProps = {
   recentSessions: RecentSession[];
   isOpen: boolean;
   isCollapsed: boolean;
-  isLoggingOut: boolean;
   onClose: () => void;
   onOpenSearch: () => void;
-  onLogout: () => void;
   onToggleCollapsed: () => void;
 };
 
@@ -88,10 +82,8 @@ export function AppSidebar({
   recentSessions,
   isOpen,
   isCollapsed,
-  isLoggingOut,
   onClose,
   onOpenSearch,
-  onLogout,
   onToggleCollapsed,
 }: AppSidebarProps) {
   const pathname = usePathname();
@@ -99,7 +91,6 @@ export function AppSidebar({
   const [mode, setMode] = useState<NavigationMode>(() => modeFromPath(pathname));
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [recentOpen, setRecentOpen] = useState(true);
-  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
   const visibleRecentSessions = useMemo(
@@ -112,17 +103,15 @@ export function AppSidebar({
   }, [pathname]);
 
   useEffect(() => {
-    if (!modeMenuOpen && !accountMenuOpen) return;
+    if (!modeMenuOpen) return;
     function closeMenus(event: MouseEvent) {
       const target = event.target as Node;
       if (!(target instanceof Element)) return;
       if (!target.closest(".application-mode-control")) setModeMenuOpen(false);
-      if (!target.closest(".application-account-control")) setAccountMenuOpen(false);
     }
     function closeOnEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return;
       setModeMenuOpen(false);
-      setAccountMenuOpen(false);
     }
     document.addEventListener("click", closeMenus);
     document.addEventListener("keydown", closeOnEscape);
@@ -130,7 +119,7 @@ export function AppSidebar({
       document.removeEventListener("click", closeMenus);
       document.removeEventListener("keydown", closeOnEscape);
     };
-  }, [accountMenuOpen, modeMenuOpen]);
+  }, [modeMenuOpen]);
 
   useEffect(() => {
     function isTypingTarget(target: EventTarget | null): boolean {
@@ -241,20 +230,10 @@ export function AppSidebar({
         </nav>
 
         <div className="application-sidebar-footer">
-          <Link className="application-footer-button" href="/app/settings" aria-label="Settings" onClick={onClose}><Settings aria-hidden="true" /></Link>
-          <Link className="application-footer-button" href="/#how-it-works" aria-label="Help center" onClick={onClose}><CircleHelp aria-hidden="true" /></Link>
-          <div className="application-account-control">
-            <button className="application-footer-button" type="button" aria-label="Account menu" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((open) => !open)}><UserRound aria-hidden="true" /></button>
-            {accountMenuOpen ? (
-              <div className="application-account-menu" role="menu">
-                <p>{user.email}</p>
-                <Link href="/app/sessions" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Recent activity</Link>
-                <Link href="/#pricing" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Get Premium</Link>
-                <Link href="/app/settings" role="menuitem" onClick={() => { setAccountMenuOpen(false); onClose(); }}>Account settings</Link>
-                <button type="button" role="menuitem" disabled={isLoggingOut} onClick={onLogout}><LogOut aria-hidden="true" />{isLoggingOut ? "Signing out…" : "Log out"}</button>
-              </div>
-            ) : null}
-          </div>
+          <Link className={`application-profile-link ${isActivePath(pathname, "/app/profile") ? "is-active" : ""}`} href="/app/profile" aria-current={isActivePath(pathname, "/app/profile") ? "page" : undefined} aria-label="My profile" title="My profile" onClick={onClose}>
+            <span className="application-profile-avatar" aria-hidden="true">{firstName.slice(0, 1).toUpperCase()}</span>
+            <span className="application-profile-copy"><b>{user.displayName?.trim() || firstName}</b><small>{user.email}</small></span>
+          </Link>
         </div>
       </aside>
     </>

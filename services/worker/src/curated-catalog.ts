@@ -3,7 +3,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type postgres from "postgres";
 import { datasetRows, canonicalYoutubeId, type DatasetRow } from "@learnspace/shared/youtube-dataset";
-import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
 import { redisCommands, recommendationCatalogKey } from "@learnspace/shared/recommendation-cache";
 
 const categoryConcepts: Record<string, string[]> = {
@@ -37,12 +36,11 @@ export async function syncCuratedCatalog(db: ReturnType<typeof postgres>): Promi
     const hash = createHash("sha256").update(JSON.stringify(entries)).digest("hex");
     const description = [row.coverage_notes, row.track].filter(Boolean).join(". ") || null;
     const level = /advanced|specializ/i.test(row.learning_stage ?? "") ? "advanced" : /intermediate/i.test(row.learning_stage ?? "") ? "intermediate" : /foundation/i.test(row.learning_stage ?? "") ? "beginner" : null;
-    const quality = scoreYoutubeQuality({ title, description, channelTitle: row.channel || null, durationMs: null, publishedAt: null, viewCount: null, likeCount: null, commentCount: null, metricsCapturedAt: null }, new Date());
     const metadata = { curatedCategory: category, curatedCategories: categories, curriculumHash: hash, curriculumRole: row.curriculum_role, learningStage: row.learning_stage, subtopic: row.track, estimatedLevel: level, coverageNotes: row.coverage_notes, thumbnailUrl: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg` };
     const updated = await db.begin(async (tx) => {
       const [resource] = await tx<{ id: string }[]>`
-        INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, quality_score, metadata)
-        VALUES ('video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${title}, ${description}, ${/english/i.test(row.language ?? "") ? "en" : null}, 'public', 'ready', ${quality.finalQualityScore}, ${tx.json(metadata)})
+        INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, description, language, visibility, status, metadata)
+        VALUES ('video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${title}, ${description}, ${/english/i.test(row.language ?? "") ? "en" : null}, 'public', 'ready', ${tx.json(metadata)})
         ON CONFLICT (provider, external_id) WHERE owner_user_id IS NULL AND external_id IS NOT NULL DO UPDATE SET title = CASE WHEN catalog.resources.metadata ? 'curriculumHash' THEN EXCLUDED.title ELSE catalog.resources.title END, description = CASE WHEN catalog.resources.metadata ? 'curriculumHash' THEN EXCLUDED.description ELSE catalog.resources.description END, metadata = catalog.resources.metadata || EXCLUDED.metadata, updated_at = now()
           WHERE catalog.resources.metadata->>'curriculumHash' IS DISTINCT FROM ${hash} AND catalog.resources.deleted_at IS NULL
         RETURNING id

@@ -247,9 +247,7 @@ export async function saveOnboardingDraft(
       return stateFromSettings(tx, settings);
     }
 
-    if (draft.conceptIds) {
-      await validateConcepts(tx, draft.conceptIds);
-    }
+    const selectedConcepts = draft.conceptIds ? await validateConcepts(tx, draft.conceptIds) : [];
 
     const previousDraft = readDraft(settings.learningPreferences);
     const mergedDraft = onboardingDraftSchema.parse({
@@ -271,6 +269,30 @@ export async function saveOnboardingDraft(
         ),
       )
       .returning();
+
+    // Discover the chosen topics while the learner finishes the last two steps. The worker skips
+    // concepts refreshed recently, so the same request at completion costs nothing extra.
+    const previousConceptIds = new Set(previousDraft.conceptIds ?? []);
+    if (updatedRows[0] && selectedConcepts.length >= 3 && selectedConcepts.some(({ id }) => !previousConceptIds.has(id))) {
+      await tx.insert(outboxEvents).values({
+        aggregateType: "user",
+        aggregateId: userId,
+        eventType: "discovery.refresh_requested",
+        schemaVersion: 1,
+        userId,
+        payload: {
+          conceptIds: selectedConcepts.map(({ id }) => id),
+          conceptNames: selectedConcepts.map(({ name }) => name),
+          // Steps 1–2 are answered by now; the worker turns them into search lanes.
+          persona: mergedDraft.persona ?? null,
+          learningIntents: mergedDraft.learningIntents ?? [],
+          preferredFormats: mergedDraft.preferredFormats ?? [],
+          level: mergedDraft.selfReportedLevel ?? null,
+          source: "onboarding-draft-v1",
+          requestedAt: now.toISOString(),
+        },
+      });
+    }
     return stateFromSettings(tx, updatedRows[0] ?? (await loadSettings(tx, userId)));
   });
 }
@@ -368,6 +390,8 @@ export async function completeOnboarding(
         payload: {
           conceptIds: completion.conceptIds,
           conceptNames: selectedConcepts.map((concept) => concept.name),
+          persona: completion.persona,
+          learningIntents: completion.learningIntents,
           level: completion.selfReportedLevel,
           preferredFormats: completion.preferredFormats,
           source: "onboarding-v1",
@@ -401,7 +425,8 @@ export function isApplicationPrefetch(headers: Pick<Headers, "get">): boolean {
   return headers.get("next-router-prefetch") !== null || headers.get("purpose") === "prefetch" || headers.get("sec-purpose")?.includes("prefetch") === true;
 }
 
-// The conditional update claims the entry once, including concurrent sessions.
+// The conditional update claims the entry once, including concurrent sessions. It answers whether
+// that first entry should land on Discover: not when onboarding already planned a first session.
 export async function recordFirstApplicationVisit(userId: string): Promise<boolean> {
   return withUserTransaction(userId, async (tx) => {
     const rows = await tx.execute(sql`
@@ -412,8 +437,9 @@ export async function recordFirstApplicationVisit(userId: string): Promise<boole
       )
       UPDATE identity.user_settings settings
       SET first_application_visit_at = now(), updated_at = now()
-      FROM claim WHERE settings.user_id = claim.user_id RETURNING settings.user_id
+      FROM claim WHERE settings.user_id = claim.user_id
+      RETURNING NOT EXISTS (SELECT 1 FROM study.schedule_items WHERE user_id = ${userId}) AS land_on_discover
     `);
-    return rows.length > 0;
+    return rows[0]?.land_on_discover === true;
   });
 }

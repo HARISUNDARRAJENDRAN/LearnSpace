@@ -2,8 +2,6 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 type ResetResponse = { redirectTo?: string; error?: { message?: string } };
 
@@ -50,9 +48,10 @@ export function ResetPasswordForm({ token }: { token: string }) {
     <>
       {error ? <p className="auth-error" role="alert">{error}</p> : null}
       <form className="auth-form" onSubmit={submit}>
-        <label htmlFor="new-password">
-          <span>New password</span>
-          <Input
+        <div className="auth-field">
+          <label htmlFor="new-password">New password</label>
+          <input
+            className="auth-input"
             id="new-password"
             name="password"
             type="password"
@@ -63,10 +62,11 @@ export function ResetPasswordForm({ token }: { token: string }) {
             minLength={8}
             required
           />
-        </label>
-        <label htmlFor="reset-confirm-password">
-          <span>Confirm password</span>
-          <Input
+        </div>
+        <div className="auth-field">
+          <label htmlFor="reset-confirm-password">Confirm password</label>
+          <input
+            className="auth-input"
             id="reset-confirm-password"
             name="confirmPassword"
             type="password"
@@ -77,10 +77,10 @@ export function ResetPasswordForm({ token }: { token: string }) {
             minLength={8}
             required
           />
-        </label>
-        <Button className="auth-submit" type="submit" disabled={isSubmitting || !token}>
+        </div>
+        <button className="auth-submit" type="submit" disabled={isSubmitting || !token}>
           {isSubmitting ? "Updating…" : "Reset password"}
-        </Button>
+        </button>
       </form>
       <p className="auth-switch">
         Need a new link? <a href="/forgot-password">Start again</a>

@@ -1,15 +1,16 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
-import { concepts, libraryItems, paperDetails, resourceConcepts, resources, studySessions, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
+import { concepts, libraryItems, paperDetails, resourceConcepts, resources, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { type Activity, type ActivityDay, progression, type Progression } from "../plan/levels";
+import { listPlanSuggestions, type PlanItem } from "../plan/service";
 import { youtubeThumbnailSources } from "./thumbnail";
 
-const continueLimit = 1;
 const relatedLimit = 4;
-// Enough recent lessons for the In progress and Completed filters to each show a few.
+// The resource picker in the plan dialog offers these recent lessons.
 const recentLimit = 12;
 const providerNames: Record<string, string> = { youtube: "YouTube", arxiv: "arXiv" };
 
-type HomeVideo = {
+export type HomeVideoItem = {
   resourceId: string;
   title: string;
   channelTitle: string | null;
@@ -17,16 +18,6 @@ type HomeVideo = {
   thumbnailUrl: string | null;
   thumbnailFallbackUrl: string | null;
   durationMs: number | null;
-};
-
-export type HomeContinueItem = HomeVideo & {
-  description: string | null;
-  sessionId: string;
-  progressPct: number;
-  lastActiveAt: string;
-};
-
-export type HomeVideoItem = HomeVideo & {
   reason: string;
 };
 
@@ -35,77 +26,60 @@ export type HomeLesson = {
   title: string;
   type: string;
   source: string | null;
+  youtubeId: string | null;
   durationMs: number | null;
   progressPct: number;
   status: string;
   spentSeconds: number;
+  lastSessionSeconds: number;
   startedDay: string | null;
   openedDay: string;
 };
 
 export type LearnHomeData = {
-  activity: { today: string; days: HomeActivityDay[] };
-  continueWatching: HomeContinueItem | null;
-  relatedAnchor: { resourceId: string; title: string } | null;
-  relatedVideos: HomeVideoItem[];
+  today: string;
+  progression: Progression;
   recentLessons: HomeLesson[];
+  nextActions: PlanItem[];
 };
 
-export type HomeActivityDay = {
-  day: string;
-  focusSeconds: number;
-  practiceSeconds: number;
-  researchSeconds: number;
-  videoSeconds: number;
-  paperSeconds: number;
-  otherSeconds: number;
-  resources: number;
-  completed: number;
-};
-
-async function loadTimezone(tx: Transaction, userId: string): Promise<string> {
+export async function loadTimezone(tx: Transaction, userId: string): Promise<string> {
   const [user] = await tx.select({ timezone: users.timezone }).from(users).where(eq(users.id, userId));
   const timezone = user?.timezone ?? "UTC";
   try { new Intl.DateTimeFormat("en", { timeZone: timezone }); } catch { return "UTC"; }
   return timezone;
 }
 
-async function loadActivity(tx: Transaction, userId: string, timezone: string): Promise<LearnHomeData["activity"]> {
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-  // Read measured intervals directly: the daily projections have no writer yet.
-  const days = await tx.execute<HomeActivityDay>(sql`
-    WITH measured AS (
-      SELECT to_char(f.started_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD') AS day,
-        f.duration_sec AS seconds, f.mode, r.type
-      FROM study.focus_sessions f
-      LEFT JOIN catalog.resources r ON r.id = f.resource_id
-      WHERE f.user_id = ${userId} AND f.ended_at <= now() AND f.duration_sec > 0 AND f.started_at <= now()
-    ), daily AS (
-      SELECT day,
-        sum(CASE WHEN mode NOT IN ('practice', 'research') THEN seconds ELSE 0 END) AS focus_seconds,
-        sum(CASE WHEN mode = 'practice' THEN seconds ELSE 0 END) AS practice_seconds,
-        sum(CASE WHEN mode = 'research' THEN seconds ELSE 0 END) AS research_seconds,
-        sum(CASE WHEN mode <> 'practice' AND type = 'video' THEN seconds ELSE 0 END) AS video_seconds,
-        sum(CASE WHEN mode <> 'practice' AND type IN ('paper', 'pdf') THEN seconds ELSE 0 END) AS paper_seconds,
-        sum(CASE WHEN mode <> 'practice' AND (type IS NULL OR type NOT IN ('video', 'paper', 'pdf')) THEN seconds ELSE 0 END) AS other_seconds,
-        0 AS resources, 0 AS completed
-      FROM measured GROUP BY day
-      UNION ALL
-      SELECT to_char(first_started_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD'), 0, 0, 0, 0, 0, 0, count(*), 0
-      FROM study.user_resource_progress
-      WHERE user_id = ${userId} AND first_started_at <= now() GROUP BY 1
-      UNION ALL
-      SELECT to_char(completed_at AT TIME ZONE ${timezone}, 'YYYY-MM-DD'), 0, 0, 0, 0, 0, 0, 0, count(*)
-      FROM study.user_resource_progress
-      WHERE user_id = ${userId} AND completed_at <= now() GROUP BY 1
-    )
-    SELECT day, sum(focus_seconds)::float8 AS "focusSeconds",
-      sum(practice_seconds)::float8 AS "practiceSeconds", sum(research_seconds)::float8 AS "researchSeconds",
-      sum(video_seconds)::float8 AS "videoSeconds", sum(paper_seconds)::float8 AS "paperSeconds",
-      sum(other_seconds)::float8 AS "otherSeconds", sum(resources)::float8 AS resources, sum(completed)::float8 AS completed
-    FROM daily GROUP BY day ORDER BY day
+// XP per calendar day and source, read from measured study so it always matches the evidence.
+// Raw amounts per day and activity; lib/plan/levels turns them into XP so the points live in one place.
+export async function loadActivityDays(tx: Transaction, userId: string, timezone: string): Promise<ActivityDay[]> {
+  const day = (column: ReturnType<typeof sql>) => sql`to_char(${column} AT TIME ZONE ${timezone}, 'YYYY-MM-DD')`;
+  const rows = await tx.execute<{ day: string; activity: Activity; amount: number }>(sql`
+    SELECT ${day(sql`focus.started_at`)} AS day, CASE WHEN resource.type IN ('paper', 'pdf', 'webpage', 'note') THEN 'read' ELSE 'watch' END AS activity,
+      floor(sum(focus.duration_sec) / 60.0)::float8 AS amount
+    FROM study.focus_sessions AS focus
+    LEFT JOIN catalog.resources AS resource ON resource.id = focus.resource_id
+    WHERE focus.user_id = ${userId} AND focus.ended_at <= now() AND focus.duration_sec > 0
+    GROUP BY 1, 2
+    UNION ALL
+    SELECT ${day(sql`progress.completed_at`)}, CASE WHEN resource.type = 'video' THEN 'finish_video' ELSE 'finish_paper' END, count(*)::float8
+    FROM study.user_resource_progress AS progress
+    JOIN catalog.resources AS resource ON resource.id = progress.resource_id
+    WHERE progress.user_id = ${userId} AND progress.completed_at <= now()
+    GROUP BY 1, 2
+    UNION ALL
+    SELECT ${day(sql`occurred_at`)}, 'question', count(*)::float8
+    FROM activity.activity_events
+    WHERE user_id = ${userId} AND event_type = 'question.asked' AND occurred_at <= now()
+    GROUP BY 1
+    UNION ALL
+    -- Plan items earn their points in proportion to how much of them was completed.
+    SELECT ${day(sql`starts_at`)}, 'plan_' || kind, (sum(progress_pct) / 100.0)::float8
+    FROM study.schedule_items
+    WHERE user_id = ${userId} AND status IN ('planned', 'done') AND progress_pct > 0 AND starts_at <= now()
+    GROUP BY 1, 2
   `);
-  return { today, days: [...days] };
+  return [...rows].map((row) => ({ day: row.day, activity: row.activity, amount: Number(row.amount) }));
 }
 
 function visibleResource(userId: string) {
@@ -121,50 +95,6 @@ function videoResource(userId: string) {
   );
 }
 
-async function loadContinueCandidates(tx: Transaction, userId: string, status: "active" | "paused"): Promise<HomeContinueItem[]> {
-  const rows = await tx
-    .select({
-      sessionId: studySessions.id,
-      lastActiveAt: studySessions.lastActiveAt,
-      resource: resources,
-      video: videoDetails,
-      progressPct: userResourceProgress.progressPct,
-    })
-    .from(studySessions)
-    .innerJoin(resources, eq(resources.id, studySessions.activeResourceId))
-    .innerJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
-    .leftJoin(userResourceProgress, and(
-      eq(userResourceProgress.userId, userId),
-      eq(userResourceProgress.resourceId, resources.id),
-    ))
-    .where(and(
-      eq(studySessions.userId, userId),
-      eq(studySessions.status, status),
-      sql`coalesce(${userResourceProgress.progressPct}, 0) < 100`,
-      sql`coalesce(${userResourceProgress.status}, 'not_started') <> 'completed'`,
-      videoResource(userId),
-    ))
-    .orderBy(desc(studySessions.lastActiveAt))
-    .limit(continueLimit);
-
-  return rows.map((row) => {
-    const thumbnails = youtubeThumbnailSources(row.video.youtubeId);
-    return {
-    resourceId: row.resource.id,
-    title: row.resource.title,
-    description: row.resource.description,
-    channelTitle: row.video.channelTitle,
-    youtubeId: row.video.youtubeId,
-    thumbnailUrl: thumbnails?.primary ?? null,
-    thumbnailFallbackUrl: thumbnails?.fallback ?? null,
-    durationMs: row.video.durationMs,
-    sessionId: row.sessionId,
-    progressPct: Number(row.progressPct ?? 0),
-    lastActiveAt: row.lastActiveAt.toISOString(),
-    };
-  });
-}
-
 async function loadRecentLessons(tx: Transaction, userId: string, timezone: string): Promise<HomeLesson[]> {
   const rows = await tx
     .select({
@@ -173,6 +103,7 @@ async function loadRecentLessons(tx: Transaction, userId: string, timezone: stri
       type: resources.type,
       provider: resources.provider,
       channelTitle: videoDetails.channelTitle,
+      youtubeId: videoDetails.youtubeId,
       venue: paperDetails.venue,
       durationMs: videoDetails.durationMs,
       progressPct: userResourceProgress.progressPct,
@@ -182,6 +113,10 @@ async function loadRecentLessons(tx: Transaction, userId: string, timezone: stri
       spentSeconds: sql<number>`(
         SELECT coalesce(sum(f.duration_sec), 0)::float8 FROM study.focus_sessions f
         WHERE f.user_id = ${userId} AND f.resource_id = ${resources.id} AND f.ended_at <= now()
+      )`,
+      lastSessionSeconds: sql<number>`(
+        SELECT coalesce(sum(f.duration_sec), 0)::float8 FROM study.focus_sessions f
+        WHERE f.user_id = ${userId} AND f.resource_id = ${resources.id} AND f.study_session_id = ${userResourceProgress.lastSessionId} AND f.ended_at <= now()
       )`,
     })
     .from(userResourceProgress)
@@ -201,32 +136,18 @@ async function loadRecentLessons(tx: Transaction, userId: string, timezone: stri
     title: row.title,
     type: row.type,
     source: row.channelTitle ?? row.venue ?? providerNames[row.provider] ?? row.provider,
+    youtubeId: row.youtubeId,
     durationMs: row.durationMs,
     progressPct: Number(row.progressPct ?? 0),
     status: row.status,
     spentSeconds: Number(row.spentSeconds),
+    lastSessionSeconds: Number(row.lastSessionSeconds),
     startedDay: row.startedDay,
     openedDay: row.openedDay,
   }));
 }
 
-async function loadRecentAnchor(tx: Transaction, userId: string): Promise<{ resourceId: string; title: string } | null> {
-  const row = await tx
-    .select({ resourceId: resources.id, title: resources.title })
-    .from(userResourceProgress)
-    .innerJoin(resources, eq(resources.id, userResourceProgress.resourceId))
-    .innerJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
-    .where(and(
-      eq(userResourceProgress.userId, userId),
-      isNotNull(userResourceProgress.lastOpenedAt),
-      videoResource(userId),
-    ))
-    .orderBy(desc(userResourceProgress.lastOpenedAt))
-    .limit(1);
-  return row[0] ?? null;
-}
-
-async function loadRelatedVideos(tx: Transaction, userId: string, anchorResourceId: string): Promise<HomeVideoItem[]> {
+export async function loadRelatedVideos(tx: Transaction, userId: string, anchorResourceId: string): Promise<HomeVideoItem[]> {
   const anchorConcepts = await tx
     .select({ conceptId: resourceConcepts.conceptId, name: concepts.name, relevance: resourceConcepts.relevance })
     .from(resourceConcepts)
@@ -276,35 +197,28 @@ async function loadRelatedVideos(tx: Transaction, userId: string, anchorResource
       resourceId: row.resourceId,
       title: row.title,
       channelTitle: row.channelTitle,
-    youtubeId: row.youtubeId,
-    thumbnailUrl: thumbnails?.primary ?? null,
-    thumbnailFallbackUrl: thumbnails?.fallback ?? null,
-    durationMs: row.durationMs,
-    reason: `Related to ${reasonConcept}`,
+      youtubeId: row.youtubeId,
+      thumbnailUrl: thumbnails?.primary ?? null,
+      thumbnailFallbackUrl: thumbnails?.fallback ?? null,
+      durationMs: row.durationMs,
+      reason: `Related to ${reasonConcept}`,
     };
   });
+}
+
+export function localToday(timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
 export async function getLearnHome(userId: string): Promise<LearnHomeData> {
   return withUserTransaction(userId, async (tx) => {
     const timezone = await loadTimezone(tx, userId);
-    const [active, paused, recentAnchor, activity, recentLessons] = await Promise.all([
-      loadContinueCandidates(tx, userId, "active"),
-      loadContinueCandidates(tx, userId, "paused"),
-      loadRecentAnchor(tx, userId),
-      loadActivity(tx, userId, timezone),
+    const today = localToday(timezone);
+    const [xpDays, recentLessons, nextActions] = await Promise.all([
+      loadActivityDays(tx, userId, timezone),
       loadRecentLessons(tx, userId, timezone),
+      listPlanSuggestions(tx, userId),
     ]);
-    const continueCandidates = active.length > 0 ? active : paused;
-    const continueWatching = continueCandidates[0] ?? null;
-    const relatedResource = continueWatching ?? recentAnchor;
-    const relatedVideos = relatedResource ? await loadRelatedVideos(tx, userId, relatedResource.resourceId) : [];
-    return {
-      activity,
-      continueWatching,
-      relatedAnchor: relatedResource ? { resourceId: relatedResource.resourceId, title: relatedResource.title } : null,
-      relatedVideos,
-      recentLessons,
-    };
+    return { today, progression: progression(xpDays, today), recentLessons, nextActions };
   });
 }

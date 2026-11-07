@@ -4,7 +4,6 @@ const runId = process.env.PLAYWRIGHT_RUN_ID ?? "local";
 const productionServer = process.env.PLAYWRIGHT_E2E_SERVER === "production" || process.env.CI === "true";
 process.env.APP_URL = "http://localhost:3101";
 process.env.AUTH_SECRET = "playwright-auth-secret-that-is-long-enough";
-process.env.AUTH_RATE_LIMIT_BACKEND = "memory";
 process.env.AUTH_EXPOSE_VERIFICATION_LINK = "true";
 process.env.AUTH_TEST_MODE = "true";
 process.env.GOOGLE_CLIENT_ID = "playwright-client-id";

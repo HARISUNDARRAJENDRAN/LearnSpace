@@ -106,13 +106,14 @@ async function completeOnboarding(page: Page, refreshDraft = false) {
   }
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("button", { name: "Start learning" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
   await page.getByRole("button", { name: "Just getting started" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "I'm fairly comfortable" }).click();
   await page.getByRole("button", { name: "It depends on the topic" }).click();
   await page.getByRole("button", { name: "I'm advanced" }).click();
-  await page.getByRole("button", { name: "Start learning" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/app\/discover$/);
 }
 
@@ -143,8 +144,8 @@ async function clearGoogleTestUser(): Promise<void> {
 }
 
 async function logout(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Account menu" }).click();
-  const logoutButton = page.getByRole("menu").getByRole("menuitem", { name: "Log out" });
+  await page.getByRole("link", { name: "My profile" }).click();
+  const logoutButton = page.getByRole("button", { name: "Log out" });
   await expect(logoutButton).toBeVisible();
   await logoutButton.click();
   await expect(page).toHaveURL("/");
@@ -159,7 +160,7 @@ test("register, verify, log in, access the app, and log out", async ({ page }) =
   await completeOnboarding(page, true);
   await page.goto("/app");
   await expect(page).toHaveURL(/\/app$/);
-  await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
+  await expect(page.getByText(/Your last video or paper will appear here/)).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
   await page.waitForLoadState("load");

@@ -43,8 +43,8 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     expect(entered[0]?.first_application_visit_at).toBeTruthy();
     await page.getByRole("link", { name: "Home", exact: true }).click();
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Find your next lesson" })).toBeVisible();
+    await expect(page.getByText(/Your last video or paper will appear here/)).toBeVisible();
+    await expect(page.getByRole("link", { name: "Find a lesson" })).toBeVisible();
     await page.reload();
     await expect(page).toHaveURL(/\/app$/);
     const laterSession = await createSession(fresh.userId, { userAgent: "home-return-visit" }, process.env.AUTH_SECRET ?? "");
@@ -52,13 +52,14 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     await page.context().addCookies([{ name: sessionCookieName, value: laterSession.token, url: "http://localhost:3101", httpOnly: true, sameSite: "Lax" }]);
     await page.goto("/app");
     await expect(page).toHaveURL(/\/app$/);
-    await expect(page.getByText("Your recent lessons will appear here.")).toBeVisible();
+    await expect(page.getByText(/Your last video or paper will appear here/)).toBeVisible();
     const after = await database`SELECT first_application_visit_at FROM identity.user_settings WHERE user_id = ${fresh.userId}`;
     expect(after[0]?.first_application_visit_at).toEqual(entered[0]?.first_application_visit_at);
     await page.addInitScript(() => {
       type PlayerOptions = { events: { onReady: (event: { target: FixturePlayer }) => void; onStateChange: (event: { data: number }) => void } };
       class FixturePlayer {
         startedAt = 0;
+        buttons: HTMLButtonElement[];
         constructor(element: HTMLElement, options: PlayerOptions) {
           const play = document.createElement("button");
           play.textContent = "Play fixture video";
@@ -66,10 +67,12 @@ test("first app entry goes to Discover once; empty Home works across later sessi
           const pause = document.createElement("button");
           pause.textContent = "Pause fixture video";
           pause.onclick = () => options.events.onStateChange({ data: 2 });
+          this.buttons = [play, pause];
           element.append(play, pause);
           setTimeout(() => options.events.onReady({ target: this }), 0);
         }
-        destroy() {}
+        // Like YT.Player, destroying removes what it rendered.
+        destroy() { for (const button of this.buttons) button.remove(); }
         getDuration() { return 600; }
         getCurrentTime() { return this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0; }
         seekTo() {}
@@ -86,32 +89,44 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     const recorded = await database`SELECT sum(duration_sec)::int AS seconds FROM study.focus_sessions WHERE user_id = ${fresh.userId}`;
     expect(recorded[0]?.seconds).toBeGreaterThan(0);
     await page.getByRole("button", { name: "Pause fixture video" }).click();
+    // Cleanup must not race the observer tick that writes the agent's suggestions.
+    const observed = page.waitForResponse((response) => response.url().endsWith("/api/v1/plan/observe"));
     await page.getByRole("link", { name: "Home", exact: true }).click();
-    const studyTime = page.locator(".home-metric").filter({ has: page.getByRole("heading", { name: "Study time" }) });
-    await expect(studyTime.locator("strong")).toHaveText(/\d+ sec/);
-    await expect(page.getByRole("region", { name: "Study mix" })).toContainText("Videos");
-    await expect(page.getByRole("region", { name: "This week" })).toContainText("Your best day was");
+    const recent = page.getByRole("region", { name: "Recent study" });
+    await expect(recent).toContainText("Home E2E Python lesson");
+    await expect(recent.getByRole("button", { name: "Resume" })).toBeVisible();
+    await observed;
   } finally {
     await cleanupHomeFixture(database, fresh);
   }
 });
 
-test("populated Home lists lessons and continues the current video", async ({ page }) => {
+test("populated Home shows recent study, the agent's next actions and the learner's level", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  await expect(page.getByText("Sample data", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: /^Hello, / })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Recent lessons" }).getByRole("button").first()).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Continue: / })).toHaveAttribute("href", `/app/study/video/${fixture.sessions.hero}`);
+  await expect(page.getByRole("region", { name: "Recent study" })).toContainText("Home E2E Python lesson");
+  await expect(page.getByRole("region", { name: "Next actions" }).getByRole("button", { name: "Add to plan" }).first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "Level & rank" })).toContainText(/Level \d+/);
 });
 
-test("Home period tabs and lesson filters toggle", async ({ page }) => {
+test("the study plan calendar creates, switches views and deletes an item", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
-  const month = page.getByRole("group", { name: "Period" }).getByRole("button", { name: "This month" });
-  await month.click();
-  await expect(month).toHaveAttribute("aria-pressed", "true");
-  const completed = page.getByRole("button", { name: /Completed$/ });
-  await completed.click();
-  await expect(completed).toHaveAttribute("aria-pressed", "true");
-  await completed.click();
-  await expect(completed).toHaveAttribute("aria-pressed", "false");
+  const calendar = page.getByRole("region", { name: "Study plan" });
+  await calendar.getByRole("button", { name: "Plan", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Plan study" });
+  await expect(dialog.getByLabel("Date")).toHaveValue(/^\d{2}\/\d{2}\/\d{4}$/);
+  await dialog.getByLabel("Title", { exact: true }).fill("Learn polymorphism in Java");
+  await dialog.getByRole("radio", { name: "Practice" }).check();
+  await dialog.getByRole("button", { name: "Add to plan" }).click();
+  await expect(dialog).toBeHidden();
+  const event = calendar.getByRole("button", { name: /Learn polymorphism in Java/ });
+  await expect(event).toBeVisible();
+  await expect(event).toHaveClass(/kind-practice/);
+  await calendar.getByRole("tab", { name: "Month" }).click();
+  await expect(calendar.getByRole("tab", { name: "Month" })).toHaveAttribute("aria-selected", "true");
+  await calendar.getByRole("button", { name: /Learn polymorphism in Java/ }).click();
+  const edit = page.getByRole("dialog", { name: "Plan item" });
+  await expect(edit.getByRole("region", { name: "Progress" })).toBeVisible();
+  await edit.getByRole("button", { name: "Delete" }).click();
+  await edit.getByRole("button", { name: "Confirm delete" }).click();
+  await expect(calendar.getByRole("button", { name: /Learn polymorphism in Java/ })).toHaveCount(0);
 });

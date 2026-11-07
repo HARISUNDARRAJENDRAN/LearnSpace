@@ -6,6 +6,7 @@ import test from "node:test";
 import { hasBrowsableResources } from "../lib/discovery/browse";
 import { homeFeedCacheKey } from "../lib/discovery/cache";
 import { getCurriculum, getCurriculumCategoryBySlug } from "../lib/discovery/curriculum";
+import { loadCurriculumFromCsv } from "../lib/discovery/curriculum-source";
 import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "@learnspace/shared/youtube-dataset";
 import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
 import { rankDiscoveryResources, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
@@ -139,6 +140,9 @@ test("old metric snapshots reduce quality confidence without fabricated values",
     likeCount: 700,
     commentCount: 80,
     metricsCapturedAt: now,
+    channelSubscriberCount: null,
+    channelViewCount: null,
+    channelVideoCount: null,
   }, now);
   const old = scoreYoutubeQuality({
     title: "A lesson",
@@ -150,6 +154,9 @@ test("old metric snapshots reduce quality confidence without fabricated values",
     likeCount: 700,
     commentCount: 80,
     metricsCapturedAt: new Date("2024-01-01T00:00:00.000Z"),
+    channelSubscriberCount: null,
+    channelViewCount: null,
+    channelVideoCount: null,
   }, now);
   const missing = scoreYoutubeQuality({
     title: "A lesson",
@@ -161,6 +168,9 @@ test("old metric snapshots reduce quality confidence without fabricated values",
     likeCount: null,
     commentCount: null,
     metricsCapturedAt: null,
+    channelSubscriberCount: null,
+    channelViewCount: null,
+    channelVideoCount: null,
   }, now);
   assert.ok(recent.finalQualityScore > old.finalQualityScore);
   assert.equal(missing.bayesianEngagement, null);
@@ -357,4 +367,8 @@ test("source ranking returns up to thirty qualified resources without padding", 
   const visible = ranked.filter((item) => item.finalRank !== null);
   assert.equal(visible.length, 30);
   assert.equal(visible.at(-1)?.finalRank, 30);
+});
+
+test("the bundled curriculum matches the curriculum CSV", async () => {
+  assert.deepEqual(await getCurriculum(), await loadCurriculumFromCsv(), "run pnpm discovery:generate:category-intelligence");
 });

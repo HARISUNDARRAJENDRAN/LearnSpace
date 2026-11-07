@@ -755,7 +755,7 @@ const tests: Array<[string, () => Promise<void>]> = [
     await expectRejected(
       () => migrator`
         INSERT INTO study.schedule_items (id, user_id, learning_goal_id, kind, title, starts_at)
-        VALUES (${scheduleId}, ${ids.userA}, ${ids.goalB}, 'study', 'Invalid goal owner', '2026-01-03T00:00:00.000Z')
+        VALUES (${scheduleId}, ${ids.userA}, ${ids.goalB}, 'watch', 'Invalid goal owner', '2026-01-03T00:00:00.000Z')
       `,
       "schedule item referencing another user's goal",
     );

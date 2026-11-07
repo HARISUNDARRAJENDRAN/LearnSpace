@@ -1,71 +1,57 @@
-import { LearnSpaceLogo } from "./hero/LearnSpaceLogo";
-import { Landscape } from "./Landscape";
+import { ArrowRight } from "lucide-react";
 
-const groups = [
-	{
-		title: "Product",
-		links: [
-			["Features", "#features"],
-			["How It Works", "#how-it-works"],
-			["Pricing", "#pricing"],
-		],
-	},
-	{
-		title: "Company",
-		links: [
-			["About", "#features"],
-			["Careers", "#features"],
-			["Contact", "#hero"],
-			["Press", "#hero"],
-		],
-	},
-	{
-		title: "Resources",
-		links: [
-			["Help Center", "#how-it-works"],
-			["Updates", "#features"],
-			["Guides", "#how-it-works"],
-		],
-	},
+import { Logo } from "./SiteNav";
+
+const columns = [
+	["Features", [["Focused discovery", "#discovery"], ["Real-time tutor", "#tutor"], ["Curated playlists", "#playlists"], ["Learning calendar", "#calendar"], ["Practice", "#practice"]]],
+	["Use cases", [["Developers", "#use-cases"], ["Students", "#use-cases"], ["Researchers", "#use-cases"], ["Interview prep", "#use-cases"]]],
+	["Product", [["Pricing", "#pricing"], ["Log in", "/login"], ["Create account", "/register"]]],
 ] as const;
+
+export function CtaBanner({ authenticated }: { authenticated: boolean }) {
+	return (
+		<section className="ls-cta" aria-labelledby="cta-title">
+			<div className="ls-container">
+				<div className="ls-cta-panel">
+					<h2 className="ls-h2" id="cta-title" data-reveal>
+						Built for learners who finish.{" "}
+						<br />
+						Start learning today.
+					</h2>
+					<a className="ls-btn ls-btn-pill ls-btn-lg" href={authenticated ? "/app" : "/register"}>
+						{authenticated ? "Open LearnSpace" : "Start learning"}
+						<ArrowRight aria-hidden="true" />
+					</a>
+				</div>
+			</div>
+		</section>
+	);
+}
 
 export function Footer() {
 	return (
-		<footer className="marketing-footer wide-container scenic-panel">
-			<Landscape />
-			<div className="footer-columns" data-reveal="fade">
-				<div className="footer-brand">
-					<a href="#hero" aria-label="LearnSpace home">
-						<LearnSpaceLogo />
-					</a>
-					<p>
-						Your simple space to capture ideas, stay organized, and never lose a
-						thought.
-					</p>
+		<footer className="ls-footer">
+			<div className="ls-container">
+				<div className="ls-footer-grid">
+					<div className="ls-footer-brand">
+						<Logo />
+						<p>Your space to learn, research and remember.</p>
+					</div>
+					{columns.map(([title, links]) => (
+						<nav key={title} aria-label={title}>
+							<p>{title}</p>
+							<ul>
+								{links.map(([label, href]) => (
+									<li key={label}>
+										<a href={href}>{label}</a>
+									</li>
+								))}
+							</ul>
+						</nav>
+					))}
 				</div>
-				{groups.map((group) => (
-					<nav key={group.title} aria-label={group.title}>
-						<h3>{group.title}</h3>
-						{group.links.map(([label, href]) => (
-							<a key={label} href={href}>
-								{label}
-							</a>
-						))}
-					</nav>
-				))}
-			</div>
-			<div className="footer-bottom" data-reveal="fade" data-reveal-delay="100">
-				<span>
-					© {new Date().getFullYear()} LearnSpace. All rights reserved.
-				</span>
-				<div className="footer-socials">
-					<a href="https://www.linkedin.com" aria-label="LearnSpace on LinkedIn">
-						in
-					</a>
-					<a href="https://x.com" aria-label="LearnSpace on X">
-						𝕏
-					</a>
-				</div>
+				<hr />
+				<p className="ls-footer-legal">© 2026 LearnSpace</p>
 			</div>
 		</footer>
 	);

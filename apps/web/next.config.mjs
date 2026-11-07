@@ -20,16 +20,8 @@ const nextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(appDirectory, "../.."),
   transpilePackages: ["@learnspace/db", "@learnspace/shared"],
-  images: {
-    qualities: [75, 100],
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "i.ytimg.com",
-        pathname: "/vi/**",
-      },
-    ],
-  },
+  // YouTube already serves sized thumbnails; resizing them again would spend image-optimization quota for no gain.
+  images: { unoptimized: true },
   webpack(config) {
     config.resolve.extensions = [
       ".ts",

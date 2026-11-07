@@ -1,0 +1,20 @@
+# Vercel builds from source; secrets, caches and local build output never leave this machine.
+.env
+.env.*
+.git
+.codegraph
+.pnpm-store
+.turbo
+.ruff_cache
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+**/.next*
+coverage
+playwright-report
+test-results
+artifacts
+infra/postgres/data
+supabase
+*.log

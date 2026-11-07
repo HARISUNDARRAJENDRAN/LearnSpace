@@ -49,7 +49,8 @@ test("signup → interests → Discover preview → full feed → topic controls
     await page.getByRole("button", { name: "Clear explanations" }).click();
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "I know the basics" }).click();
-    await page.getByRole("button", { name: "Start learning" }).click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await page.getByRole("button", { name: "Skip for now" }).click();
     await expect(page).toHaveURL(/\/app/);
     userId = (await db<{ id: string }[]>`SELECT id FROM identity.users WHERE email = ${email}`)[0]!.id;
     await projectRecommendationProfiles(worker, null, [userId]);

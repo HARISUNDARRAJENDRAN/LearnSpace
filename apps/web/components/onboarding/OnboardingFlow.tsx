@@ -1,21 +1,23 @@
 "use client";
 
 import {
-  PERSONA_INTENTS,
-  PERSONAS,
-  PREFERRED_DURATIONS,
-  PREFERRED_FORMATS,
-  STARTING_LEVEL_OPTIONS,
   type OnboardingDraft,
   type OnboardingDraftRequest,
+  PERSONA_INTENTS,
+  PERSONAS,
   type Persona,
+  PREFERRED_DURATIONS,
+  PREFERRED_FORMATS,
   type PreferredDuration,
   type PreferredFormat,
   type SelfReportedLevel,
+  STARTING_LEVEL_OPTIONS,
   type StartingLevelOptionId,
 } from "@learnspace/shared/onboarding";
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { ArrowLeft, ArrowRight, Check, Search, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Logo } from "../marketing/SiteNav";
+import { FirstSession } from "./FirstSession";
 
 type Concept = {
   id: string;
@@ -129,46 +131,6 @@ function apiErrorMessage(data: ApiError): string {
   return data.error?.message ?? "We could not save your learning preferences.";
 }
 
-const BLOOM_SEED = 174074637;
-const BLOOM_GRAIN_LAYER =
-  "url(\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.280'/></svg>\")";
-
-const BLOOM_BLOBS = [
-  { baseX: 66.94, baseY: 46.43, color: "251, 233, 240", stops: [19.02, 38.05, 57.07, 76.1] },
-  { baseX: 34.69, baseY: 66.31, color: "205, 231, 240", stops: [12.73, 25.45, 38.18, 50.9] },
-  { baseX: 48.93, baseY: 19.32, color: "230, 214, 245", stops: [16.75, 33.5, 50.25, 67] },
-  { baseX: 80.23, baseY: 87.54, color: "214, 240, 228", stops: [10.28, 20.55, 30.83, 41.1] },
-] as const;
-
-function seededBloomPhase(index: number, offset: number): number {
-  return (Math.sin(BLOOM_SEED + index * 13.37 + offset * 29.11) * 0.5 + 0.5) * Math.PI * 2;
-}
-
-const BLOOM_PHASES = BLOOM_BLOBS.map((_, index) => ({
-  p: seededBloomPhase(index, 0),
-  p2: seededBloomPhase(index, 1),
-}));
-
-function buildBloomBackground(ph: number): string {
-  const amt = 0.40;
-  const dir = 1;
-  const spin = ph * dir;
-  const layers = BLOOM_BLOBS.map((blob, index) => {
-    const phase = BLOOM_PHASES[index];
-    if (!phase) {
-      return "";
-    }
-    const { p, p2 } = phase;
-    const x = blob.baseX + (Math.sin(spin * 0.55 + p) - Math.sin(p)) * 14 * amt;
-    const y = blob.baseY + (Math.sin(spin * 0.43 + p2) - Math.sin(p2)) * 14 * amt;
-    const [stop1, stop2, stop3, stop4] = blob.stops;
-
-    return `radial-gradient(circle at ${x}% ${y}%, rgba(${blob.color}, 1) 0%, rgba(${blob.color}, 0.844) ${stop1}%, rgba(${blob.color}, 0.5) ${stop2}%, rgba(${blob.color}, 0.156) ${stop3}%, rgba(${blob.color}, 0) ${stop4}%)`;
-  });
-
-  return [BLOOM_GRAIN_LAYER, ...layers].join(",\n");
-}
-
 export function OnboardingFlow({
   firstName,
   initialState,
@@ -176,8 +138,6 @@ export function OnboardingFlow({
   firstName: string;
   initialState: InitialState;
 }) {
-  const router = useRouter();
-  const pageRef = useRef<HTMLElement>(null);
   const [step, setStep] = useState(0);
   const [flow, setFlow] = useState(() => initialFlow(initialState.draft));
   const [selectedConcepts, setSelectedConcepts] = useState(() =>
@@ -193,33 +153,11 @@ export function OnboardingFlow({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
+  // Where "Skip for now" goes once the profile is saved and the first-session step shows.
+  const [destination, setDestination] = useState<string | null>(null);
 
   useEffect(() => {
     setIsHydrated(true);
-  }, []);
-
-  useEffect(() => {
-    const page = pageRef.current;
-    if (!page) {
-      return;
-    }
-
-    page.style.backgroundImage = buildBloomBackground(0);
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      return;
-    }
-
-    const start = performance.now();
-    let raf = 0;
-    const frame = (now: number) => {
-      const t = (now - start) / 1000;
-      const ph = t * 1.0;
-      page.style.backgroundImage = buildBloomBackground(ph);
-      raf = requestAnimationFrame(frame);
-    };
-
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
   }, []);
 
   useEffect(() => {
@@ -391,7 +329,8 @@ export function OnboardingFlow({
         return;
       }
       if (data.destination !== "/app" && data.destination !== "/app/discover") throw new Error("Application destination missing");
-      router.replace(data.destination);
+      setDestination(data.destination);
+      setStep(6);
     } catch {
       setSubmitError("We could not finish setting up your space. Try again.");
     } finally {
@@ -405,26 +344,34 @@ export function OnboardingFlow({
   );
 
   return (
-    <main ref={pageRef} className="onboarding-page">
+    <main className="onboarding-page">
       <section
         className="onboarding-shell"
         aria-labelledby="onboarding-title"
         data-onboarding-hydrated={isHydrated ? "true" : "false"}
       >
-        {step > 0 ? (
-          <header className="onboarding-header">
-            <span className="onboarding-progress">Step {step} of 5</span>
-          </header>
-        ) : null}
+        <header className="onboarding-header">
+          <Logo />
+          {step > 0 ? (
+            <span className="onboarding-progress">
+              Step {step} of 6
+              <span className="onboarding-progress-steps" aria-hidden="true">
+                {[1, 2, 3, 4, 5, 6].map((index) => (
+                  <span key={index} className={index <= step ? "is-done" : undefined} />
+                ))}
+              </span>
+            </span>
+          ) : null}
+        </header>
 
-        <div className="onboarding-content">
+        <div className="onboarding-content" key={step}>
           {step === 0 ? (
             <div className="onboarding-welcome">
               <span className="onboarding-kicker">A space made for your mind</span>
               <h1 id="onboarding-title">Welcome, {firstName}.</h1>
               <p>Let&apos;s shape this place around how you learn.</p>
               <button className="onboarding-primary" type="button" onClick={goForward}>
-                Get started <span aria-hidden="true">↗</span>
+                Get started <ArrowRight aria-hidden="true" />
               </button>
             </div>
           ) : (
@@ -436,11 +383,13 @@ export function OnboardingFlow({
                 {step === 3 ? <h1 id="onboarding-title">What could you spend hours learning about?</h1> : null}
                 {step === 4 ? <h1 id="onboarding-title">What helps ideas stick?</h1> : null}
                 {step === 5 ? <h1 id="onboarding-title">Where are you starting from?</h1> : null}
+                {step === 6 ? <h1 id="onboarding-title">What will you study right now?</h1> : null}
                 {step === 1 ? <p>Choose the path that feels closest right now.</p> : null}
                 {step === 2 ? <p>Select everything that sounds like you.</p> : null}
                 {step === 3 ? <p>Pick at least three. You can always change these later.</p> : null}
                 {step === 4 ? <p>There is no wrong way to learn. Choose what feels useful.</p> : null}
                 {step === 5 ? <p>We&apos;ll use this as a starting point, never a label.</p> : null}
+                {step === 6 ? <p>Pick one and we&apos;ll put it on your calendar.</p> : null}
               </div>
 
               {step === 1 ? (
@@ -455,7 +404,7 @@ export function OnboardingFlow({
                       onClick={() => selectPersona(persona)}
                     >
                       <span>{personaLabels[persona]}</span>
-                      <span className="onboarding-option-check" aria-hidden="true">{flow.persona === persona ? "✓" : ""}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.persona === persona ? <Check /> : null}</span>
                     </button>
                   ))}
                 </fieldset>
@@ -473,7 +422,7 @@ export function OnboardingFlow({
                       onClick={() => toggleIntent(intent)}
                     >
                       <span>{intentLabels[intent] ?? intent}</span>
-                      <span className="onboarding-option-check" aria-hidden="true">{flow.learningIntents.includes(intent) ? "✓" : ""}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.learningIntents.includes(intent) ? <Check /> : null}</span>
                     </button>
                   ))}
                 </fieldset>
@@ -483,7 +432,7 @@ export function OnboardingFlow({
                 <div className="onboarding-interest-picker">
                   <label className="onboarding-search">
                     <span className="sr-only">Search interests</span>
-                    <span aria-hidden="true">⌕</span>
+                    <Search aria-hidden="true" />
                     <input
                       type="search"
                       value={conceptQuery}
@@ -499,7 +448,7 @@ export function OnboardingFlow({
                         key={concept.id}
                         onClick={() => toggleConcept(concept)}
                       >
-                        {concept.name} <span aria-hidden="true">×</span>
+                        {concept.name} <X aria-hidden="true" />
                       </button>
                     ))}
                   </div>
@@ -533,23 +482,25 @@ export function OnboardingFlow({
                         onClick={() => toggleFormat(format)}
                       >
                         <span>{formatLabels[format]}</span>
-                        <span className="onboarding-option-check" aria-hidden="true">{flow.preferredFormats.includes(format) ? "✓" : ""}</span>
+                        <span className="onboarding-option-check" aria-hidden="true">{flow.preferredFormats.includes(format) ? <Check /> : null}</span>
                       </button>
                     ))}
                   </fieldset>
                   <fieldset className="onboarding-choice-row">
                     <legend className="onboarding-field-label">Typical learning time</legend>
-                    {PREFERRED_DURATIONS.map((duration) => (
-                      <button
-                        className={`onboarding-small-option ${flow.preferredDuration === duration ? "is-selected" : ""}`}
-                        type="button"
-                        aria-pressed={flow.preferredDuration === duration}
-                        key={duration}
-                        onClick={() => setFlow((current) => ({ ...current, preferredDuration: duration }))}
-                      >
-                        {durationLabels[duration]}
-                      </button>
-                    ))}
+                    <div className="onboarding-segments">
+                      {PREFERRED_DURATIONS.map((duration) => (
+                        <button
+                          className={`onboarding-small-option ${flow.preferredDuration === duration ? "is-selected" : ""}`}
+                          type="button"
+                          aria-pressed={flow.preferredDuration === duration}
+                          key={duration}
+                          onClick={() => setFlow((current) => ({ ...current, preferredDuration: duration }))}
+                        >
+                          {durationLabels[duration]}
+                        </button>
+                      ))}
+                    </div>
                   </fieldset>
                 </div>
               ) : null}
@@ -571,20 +522,21 @@ export function OnboardingFlow({
                         }))
                       }
                     >
-                      <span className="onboarding-level-dot" aria-hidden="true" />
                       <span>{option.label}</span>
-                      <span className="onboarding-option-check" aria-hidden="true">{flow.startingLevelOption === option.id ? "✓" : ""}</span>
+                      <span className="onboarding-option-check" aria-hidden="true">{flow.startingLevelOption === option.id ? <Check /> : null}</span>
                     </button>
                   ))}
                 </fieldset>
               ) : null}
 
+              {step === 6 && destination ? <FirstSession preferredDuration={flow.preferredDuration} skipTo={destination} /> : null}
+
               {saveError ? <p className="onboarding-inline-error" role="status">{saveError}</p> : null}
               {submitError ? <p className="onboarding-inline-error" role="alert">{submitError}</p> : null}
 
-              <div className="onboarding-actions">
+              {step < 6 ? <div className="onboarding-actions">
                 <button className="onboarding-back" type="button" onClick={goBack}>
-                  <span aria-hidden="true">←</span> Back
+                  <ArrowLeft aria-hidden="true" /> Back
                 </button>
                 {step < 5 ? (
                   <button
@@ -598,14 +550,14 @@ export function OnboardingFlow({
                       (step === 4 && flow.preferredFormats.length === 0)
                     }
                   >
-                    Continue <span aria-hidden="true">↗</span>
+                    Continue <ArrowRight aria-hidden="true" />
                   </button>
                 ) : (
                   <button className="onboarding-primary" type="button" onClick={complete} disabled={isSubmitting || isSaving || !flow.selfReportedLevel}>
-                    {isSubmitting ? "Saving your space…" : "Start learning"} <span aria-hidden="true">↗</span>
+                    {isSubmitting ? "Saving your space…" : "Continue"} <ArrowRight aria-hidden="true" />
                   </button>
                 )}
-              </div>
+              </div> : null}
             </>
           )}
         </div>

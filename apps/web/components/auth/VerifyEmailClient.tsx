@@ -1,8 +1,7 @@
 "use client";
 
+import { MailCheck } from "lucide-react";
 import { useState, type FormEvent } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 type ResendResponse = {
   message?: string;
@@ -64,18 +63,21 @@ export function VerifyEmailClient({
 
   return (
     <>
-      <div className="verify-icon" aria-hidden="true">✦</div>
-      <p className="verify-copy">{message}</p>
+      <span className="auth-verify-icon">
+        <MailCheck aria-hidden="true" />
+      </span>
+      <p className="auth-verify-copy">{message}</p>
       {error ? <p className="auth-error" role="alert">{error}</p> : null}
       {link ? (
         <a className="development-link" href={link}>
           Open verification link
         </a>
       ) : null}
-      <form className="auth-form verify-form" onSubmit={resend}>
-        <label htmlFor="verify-email">
-          <span>Email address</span>
-          <Input
+      <form className="auth-form" onSubmit={resend}>
+        <div className="auth-field">
+          <label htmlFor="verify-email">Email address</label>
+          <input
+            className="auth-input"
             id="verify-email"
             type="email"
             value={address}
@@ -83,10 +85,10 @@ export function VerifyEmailClient({
             autoComplete="email"
             required
           />
-        </label>
-        <Button className="auth-submit" type="submit" disabled={isSubmitting}>
+        </div>
+        <button className="auth-submit" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Sending…" : "Resend verification email"}
-        </Button>
+        </button>
       </form>
       <p className="auth-switch">
         Ready to continue? <a href="/login">Go to login</a>

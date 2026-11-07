@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { discoveryAgentPayload, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult, sourcePickerJobPayload } from "./discovery.js";
+import { discoveryRequest, discoveryPayload, nextRefreshAt, parseBatch, refreshIntervalHours, resourceIdsFromJobResult, sourcePickerJobPayload } from "./discovery.js";
 import { DISCOVERY_SMOKE_SYSTEM_ACCOUNT, hasSmokeAccountMarker } from "./discovery-smoke-provision.js";
 
 test("discovery jobs are scoped to one canonical concept", () => {
@@ -8,7 +8,11 @@ test("discovery jobs are scoped to one canonical concept", () => {
     "trace",
     "00000000-0000-0000-0000-000000000101",
     "Physics",
+    "practical",
   );
+  assert.equal(payload.ranking_intent, "practical");
+  assert.equal(payload.source_kind, "video");
+  assert.equal(discoveryPayload("trace", "00000000-0000-0000-0000-000000000101", "Physics", "recent").source_kind, null, "papers ride along with the recent lane only");
   assert.deepEqual(payload.concept_ids, ["00000000-0000-0000-0000-000000000101"]);
   assert.deepEqual(payload.concept_names, ["Physics"]);
   assert.equal(payload.concept_id, "00000000-0000-0000-0000-000000000101");
@@ -19,11 +23,12 @@ test("discovery jobs are scoped to one canonical concept", () => {
 });
 
 test("agent requests exclude worker-only scheduling fields", () => {
-  const payload = discoveryAgentPayload({
+  const payload = discoveryRequest({
     ...discoveryPayload(
       "trace",
       "00000000-0000-0000-0000-000000000101",
       "Physics",
+      "beginner_friendly",
     ),
     refresh_reason: "scheduled",
   });
@@ -38,7 +43,7 @@ test("agent requests exclude worker-only scheduling fields", () => {
 });
 
 test("shared concept agent requests cannot inherit a learner profile", () => {
-  const payload = discoveryAgentPayload({
+  const payload = discoveryRequest({
     concept_ids: ["00000000-0000-0000-0000-000000000101"],
     concept_names: ["Physics"],
     level: "beginner",
@@ -51,11 +56,12 @@ test("shared concept agent requests cannot inherit a learner profile", () => {
 });
 
 test("smoke agent requests can explicitly bypass a stale cache", () => {
-  const payload = discoveryAgentPayload({
+  const payload = discoveryRequest({
     ...discoveryPayload(
       "trace",
       "00000000-0000-0000-0000-000000000101",
       "Physics",
+      "beginner_friendly",
     ),
     force_refresh: true,
   });
@@ -63,7 +69,7 @@ test("smoke agent requests can explicitly bypass a stale cache", () => {
 });
 
 test("agent payload construction rejects multi-concept refreshes", () => {
-  assert.throws(() => discoveryAgentPayload({
+  assert.throws(() => discoveryRequest({
     concept_ids: ["concept-a", "concept-b"],
     concept_names: ["A", "B"],
   }), /one canonical concept/);
@@ -91,7 +97,7 @@ test("source-picker refreshes always use a run-specific job, even with a canonic
 });
 
 test("refresh policy is tiered, configurable, and jittered deterministically", () => {
-  assert.equal(refreshIntervalHours("AI / Machine Learning"), 12);
+  assert.equal(refreshIntervalHours("AI / Machine Learning"), 24);
   assert.equal(refreshIntervalHours("Physics"), 72);
   const finishedAt = new Date("2026-01-01T00:00:00.000Z");
   const first = nextRefreshAt("concept-a", "Physics", finishedAt);
@@ -101,17 +107,17 @@ test("refresh policy is tiered, configurable, and jittered deterministically", (
 
 test("scheduled payloads contain no learner-specific state", () => {
   const scheduled = {
-    ...discoveryPayload("trace", "concept", "Physics"),
+    ...discoveryPayload("trace", "concept", "Physics", "beginner_friendly"),
     level: "beginner",
     preferred_formats: ["hands_on"],
     audit_user_id: "user",
     refresh_reason: "scheduled",
   };
-  const agentPayload = discoveryAgentPayload(scheduled);
-  assert.equal(agentPayload.level, "mixed");
-  assert.deepEqual(agentPayload.preferred_formats, []);
-  assert.equal(agentPayload.audit_user_id, null);
-  assert.equal("refresh_reason" in agentPayload, false);
+  const request = discoveryRequest(scheduled);
+  assert.equal(request.level, "mixed");
+  assert.deepEqual(request.preferred_formats, []);
+  assert.equal(request.audit_user_id, null);
+  assert.equal("refresh_reason" in request, false);
 });
 
 test("worker rejects YouTube candidates with an unknown learning format", () => {

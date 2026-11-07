@@ -31,8 +31,8 @@ export default async function LoginPage({
   const initialError = loginError(first(params.error));
   return (
     <AuthShell
-      title="Sign In or Join Now!"
-      subtitle="login or create your LearnSpace account."
+      title="Welcome back"
+      subtitle="Log in to pick up where you left off."
     >
       <AuthForm
         mode="login"

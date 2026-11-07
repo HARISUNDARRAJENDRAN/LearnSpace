@@ -19,8 +19,9 @@ export default async function RegisterPage({
   if (session) redirect(await getAuthenticatedDestination(session.user.id, next));
   return (
     <AuthShell
-      title="Sign In or Join Now!"
-      subtitle="login or create your LearnSpace account."
+      className="auth-page-register"
+      title="Create your account"
+      subtitle="Start learning without the internet’s distractions."
     >
       <AuthForm mode="register" next={next} />
     </AuthShell>

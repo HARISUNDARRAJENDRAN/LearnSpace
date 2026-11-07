@@ -1,81 +1,72 @@
-import { Landscape } from "./Landscape";
+import { Check } from "lucide-react";
+
+import { Band, Eyebrow } from "./primitives";
 
 const plans = [
 	{
-		name: "Starter",
-		price: 19,
-		description: "Great for small teams just getting started.",
-		features: [
-			"Up to 5 team members",
-			"2 project boards",
-			"Basic async updates",
-			"7-day activity history",
-			"Email support",
-		],
+		name: "Free",
+		price: "$0",
+		period: "forever",
+		description: "Everything you need to start learning with focus.",
+		cta: "Start learning",
+		features: ["Focused discovery feed", "Tutor chat on every video", "Curated playlists", "Learning calendar", "Quizzes after each lesson"],
 	},
 	{
 		name: "Pro",
-		price: 59,
-		description: "For growing teams that need full visibility.",
+		price: "$12",
+		period: "per month",
+		description: "For learners following a plan every day.",
+		cta: "Go Pro",
 		features: [
-			"Unlimited team members",
-			"Unlimited boards & tasks",
-			"Smart status automation",
-			"Full activity history",
-			"Slack & Calendar integration",
+			"Everything in Free",
+			"Personal sprint plans",
+			"Research paper sessions",
+			"Live code editor with hint ladder",
+			"Unlimited study sessions",
 		],
 	},
 ] as const;
 
 export function Pricing() {
 	return (
-		<section
-			className="pricing content-container"
-			id="pricing"
-			aria-labelledby="pricing-title"
-		>
-			<header data-reveal="fade">
-				<h2 id="pricing-title">Choose the best plan</h2>
-				<p>Flexible pricing built for every stage, from startup to scale</p>
-			</header>
-			<div className="plan-grid">
-				{plans.map((plan, index) => (
-					<article
-						className={`plan${index === 0 ? " plan-featured" : ""}`}
-						key={plan.name}
-						data-reveal="card"
-						data-reveal-delay={index === 0 ? "0" : "100"}
-					>
-						{index === 0 && <Landscape />}
-						<h3>{plan.name}</h3>
-						<div className="price">
-							<b>${plan.price}</b>
-							<span>/month</span>
-						</div>
-						<p>{plan.description}</p>
-						<div className="plan-includes">
-							<strong>What&apos;s included</strong>
+		<Band id="pricing" tone="surface" labelledBy="pricing-title">
+			<div className="ls-frame ls-section-head is-centered" data-reveal>
+				<Eyebrow href="#pricing">Pricing</Eyebrow>
+				<h2 className="ls-h2" id="pricing-title">
+					Start free.{" "}
+					<br />
+					Upgrade when it sticks.
+				</h2>
+			</div>
+			<div className="ls-frame ls-frame-flush">
+				<div className="ls-grid-cells ls-prices">
+					{plans.map((plan) => (
+						<article className="ls-price-card" key={plan.name} data-reveal>
+							<h3>{plan.name}</h3>
+							<p className="ls-price">
+								<b>{plan.price}</b>
+								<span>{plan.period}</span>
+							</p>
+							<p className="ls-price-note">{plan.description}</p>
+							<a
+								className={plan.name === "Pro" ? "ls-btn" : "ls-btn ls-btn-secondary"}
+								href="/register"
+								aria-label={`${plan.cta} with the ${plan.name} plan`}
+							>
+								{plan.cta}
+							</a>
 							<ul>
 								{plan.features.map((feature) => (
 									<li key={feature}>
-										<span className="plan-check" aria-hidden="true">
-											✓
-										</span>
+										<Check aria-hidden="true" />
 										{feature}
 									</li>
 								))}
 							</ul>
-							<a
-								className="plan-button"
-								href="/register"
-								aria-label={`Get started with ${plan.name}`}
-							>
-								Get started
-							</a>
-						</div>
-					</article>
-				))}
+						</article>
+					))}
+				</div>
 			</div>
-		</section>
+		</Band>
 	);
 }

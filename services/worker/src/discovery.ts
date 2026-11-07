@@ -1,10 +1,15 @@
 import { writeFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { RECOMMENDATION_CONFIG as recommendationConfig, semanticRecommendationsEnabled } from "@learnspace/shared/recommendation-config";
+import { discoverCandidates, type DiscoveryRequest } from "@learnspace/shared/exa-discovery";
 import { redisCommands, recommendationCatalogKey } from "@learnspace/shared/recommendation-cache";
 import { createHash, randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { recommendationMaintenance } from "./recommendation-maintenance.js";
+import { dailyUsage, recordUsage } from "./api-usage.js";
+import { configuredNumber } from "./config.js";
+import { type DiscoveryLane, discoveryLanes } from "./discovery-lanes.js";
+import { recommendationMaintenance, recommendationUpkeep } from "./recommendation-maintenance.js";
+import { purgeExpiredYoutubeStatistics, refreshYoutubeMetrics } from "./youtube-metrics.js";
 import {
   DISCOVERY_LEARNING_FORMATS,
   canonicalYoutubeUrl,
@@ -71,17 +76,10 @@ type CandidateBatch = {
   youtube: YoutubeProposal[];
   arxiv: ArxivProposal[];
   failures: string[];
-  audit_run_id: string | null;
   cache_hit: boolean;
   provider_calls: number;
   fallback_calls: number;
-  enrichment_calls: number;
 };
-
-function configuredNumber(name: string, fallback: number, minimum: number, maximum: number): number {
-  const value = Number(process.env[name] ?? fallback);
-  return Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, value)) : fallback;
-}
 
 function refreshDeduplicationHours(): number {
   return configuredNumber("DISCOVERY_REFRESH_DEDUP_HOURS", 12, 1, 168);
@@ -90,7 +88,7 @@ function refreshDeduplicationHours(): number {
 export function refreshIntervalHours(conceptName: string): number {
   const name = conceptName.toLowerCase();
   if (/\b(artificial intelligence|machine learning|ai|ml|web development|cybersecurity)\b/.test(name)) {
-    return configuredNumber("DISCOVERY_REFRESH_FAST_HOURS", 12, 1, 168);
+    return configuredNumber("DISCOVERY_REFRESH_FAST_HOURS", 24, 1, 168);
   }
   if (/(programming|computer science|data science|devops|cloud)/.test(name)) {
     return configuredNumber("DISCOVERY_REFRESH_MEDIUM_HOURS", 24, 1, 336);
@@ -238,7 +236,7 @@ function parseArxiv(value: unknown): ArxivProposal | null {
 
 export function parseBatch(value: unknown): CandidateBatch {
   const body = objectValue(value);
-  if (!body) throw new Error("discovery agent returned a non-object response");
+  if (!body) throw new Error("discovery returned a non-object batch");
   const youtube: YoutubeProposal[] = [];
   const youtubeIds = new Set<string>();
   for (const item of Array.isArray(body.youtube) ? body.youtube.slice(0, 50) : []) {
@@ -262,18 +260,19 @@ export function parseBatch(value: unknown): CandidateBatch {
     youtube,
     arxiv,
     failures: stringArray(body.failures).slice(0, 10),
-    audit_run_id: stringValue(body.audit_run_id),
     cache_hit: body.cache_hit === true,
     provider_calls: countValue(body.provider_calls),
     fallback_calls: countValue(body.fallback_calls),
-    enrichment_calls: countValue(body.enrichment_calls),
   };
 }
 
-export function discoveryPayload(traceId: string, conceptId: string, conceptName: string): JsonObject {
+/** One background search: a concept in one lane. Only the "recent" lane also searches papers, so papers are fetched once per concept. */
+export function discoveryPayload(traceId: string, conceptId: string, conceptName: string, lane: DiscoveryLane): JsonObject {
   return {
     concept_id: conceptId,
     concept_name: conceptName,
+    ranking_intent: lane,
+    source_kind: lane === "recent" ? null : "video",
     concept_ids: [conceptId],
     concept_names: [conceptName],
     level: "mixed",
@@ -319,12 +318,17 @@ export function sourcePickerJobPayload(
   };
 }
 
+function refreshDedupKey(conceptId: string, lane: DiscoveryLane): string {
+  return `discovery:${conceptId}:${lane}`;
+}
+
 async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
-  const rows = await sql<{ concept_id: string; concept_name: string; payload: JsonObject; finished_at: Date }[]>`
-    SELECT DISTINCT ON (payload->>'concept_id')
+  // Jobs from before lanes carry no ranking_intent; they refresh as the basics lane.
+  const rows = await sql<{ concept_id: string; concept_name: string; lane: DiscoveryLane; finished_at: Date }[]>`
+    SELECT DISTINCT ON (payload->>'concept_id', COALESCE(payload->>'ranking_intent', 'beginner_friendly'))
       payload->>'concept_id' AS concept_id,
       COALESCE(payload->>'concept_name', payload->'concept_names'->>0, payload->>'concept_id') AS concept_name,
-      payload,
+      COALESCE(payload->>'ranking_intent', 'beginner_friendly') AS lane,
       finished_at
     FROM ops.jobs
     WHERE queue = 'discovery'
@@ -332,40 +336,31 @@ async function scheduleDueRefreshes(sql: SqlClient): Promise<number> {
       AND status IN ('done', 'dead')
       AND finished_at IS NOT NULL
       AND payload->>'concept_id' IS NOT NULL
-    ORDER BY payload->>'concept_id', finished_at DESC
+    ORDER BY payload->>'concept_id', COALESCE(payload->>'ranking_intent', 'beginner_friendly'), finished_at DESC
   `;
-  const scheduledRows = await sql<{ concept_id: string; status: string; created_at: Date }[]>`
-    SELECT DISTINCT ON (payload->>'concept_id')
-      payload->>'concept_id' AS concept_id,
-      status,
-      created_at
+  const scheduledRows = await sql<{ dedup_key: string; created_at: Date }[]>`
+    SELECT DISTINCT ON (dedup_key) dedup_key, created_at
     FROM ops.jobs
     WHERE queue = 'discovery'
       AND job_type = 'discovery.refresh_concept'
       AND payload->>'refresh_reason' = 'scheduled'
       AND status IN ('pending', 'running')
-    ORDER BY payload->>'concept_id', created_at DESC
+    ORDER BY dedup_key, created_at DESC
   `;
-  const existingScheduled = new Map(scheduledRows.map((job) => [job.concept_id, job]));
+  const existingScheduled = new Map(scheduledRows.map((job) => [job.dedup_key, job]));
   let scheduled = 0;
   for (const row of rows) {
     const nextAt = nextRefreshAt(row.concept_id, row.concept_name, row.finished_at);
     if (nextAt.getTime() > Date.now()) continue;
-    const existing = existingScheduled.get(row.concept_id);
+    const dedupKey = refreshDedupKey(row.concept_id, row.lane);
+    const existing = existingScheduled.get(dedupKey);
     if (existing && existing.created_at >= row.finished_at) continue;
-    const payload = {
-      ...discoveryPayload(
-        `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
-        row.concept_id,
-        row.concept_name,
-      ),
-      refresh_reason: "scheduled",
-      trace_id: `scheduled-${row.concept_id}-${row.finished_at.getTime()}`,
-    };
+    const traceId = `scheduled-${row.concept_id}-${row.lane}-${row.finished_at.getTime()}`;
+    const payload = { ...discoveryPayload(traceId, row.concept_id, row.concept_name, row.lane), refresh_reason: "scheduled" };
     const inserted = await sql<{ id: string }[]>`
       INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, available_at, trace_id)
       VALUES ('discovery', 'discovery.refresh_concept', ${sql.json(payload)}, 'pending', 0,
-        ${`discovery:${row.concept_id}:refresh`}, ${`scheduled:${row.concept_id}:${row.finished_at.toISOString()}`}, ${nextAt}, ${payload.trace_id})
+        ${dedupKey}, ${`scheduled:${row.concept_id}:${row.lane}:${row.finished_at.toISOString()}`}, ${nextAt}, ${traceId})
       ON CONFLICT DO NOTHING
       RETURNING id
     `;
@@ -435,14 +430,15 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
         RETURNING id
       `;
       if (inserted[0]) jobs.push(inserted[0]);
-    } else for (const [index, conceptId] of conceptIds.entries()) {
+    } else for (const [index, conceptId] of conceptIds.entries()) for (const lane of discoveryLanes({
+      persona: stringValue(outboxPayload.persona),
+      learningIntents: stringArray(outboxPayload.learningIntents),
+      preferredFormats: stringArray(outboxPayload.preferredFormats),
+      level: stringValue(outboxPayload.level),
+    })) {
       const conceptName = conceptNames[index] ?? conceptId;
-      const payload = {
-        ...discoveryPayload(traceId, conceptId, conceptName),
-        audit_user_id: outbox.user_id,
-        ...(sourcePickerRunId ? { source_picker_run_id: sourcePickerRunId, query_text: queryText, source_kind: sourceKind } : {}),
-      };
-      const dedupKey = `discovery:${conceptId}:refresh`;
+      const payload = { ...discoveryPayload(traceId, conceptId, conceptName, lane), audit_user_id: outbox.user_id };
+      const dedupKey = refreshDedupKey(conceptId, lane);
       const recentJobs = await tx<{ id: string }[]>`
         SELECT id
         FROM ops.jobs
@@ -460,8 +456,8 @@ async function promoteOutbox(sql: SqlClient): Promise<string | null> {
       `;
       if (recentJobs.length > 0) continue;
       const inserted = await tx<{ id: string }[]>`
-        INSERT INTO ops.jobs (queue, job_type, payload, dedup_key, idempotency_key, correlation_id, trace_id)
-        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, ${dedupKey}, ${`${outbox.id}:${conceptId}`}, ${outbox.correlation_id}, ${traceId})
+        INSERT INTO ops.jobs (queue, job_type, payload, status, priority, dedup_key, idempotency_key, correlation_id, trace_id)
+        VALUES ('discovery', 'discovery.refresh_concept', ${tx.json(payload)}, 'pending', 5, ${dedupKey}, ${`${outbox.id}:${conceptId}:${lane}`}, ${outbox.correlation_id}, ${traceId})
         ON CONFLICT DO NOTHING
         RETURNING id
       `;
@@ -542,19 +538,18 @@ async function reclaimExpiredJobs(sql: SqlClient): Promise<number> {
   });
 }
 
-async function callAgent(agentUrl: string, token: string, job: JobRow): Promise<CandidateBatch> {
-  const agentPayload = discoveryAgentPayload(job.payload);
-  const response = await fetch(`${agentUrl.replace(/\/$/, "")}/internal/v1/discovery/refresh`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-internal-service-token": token },
-    body: JSON.stringify(agentPayload),
-    signal: AbortSignal.timeout(configuredNumber("DISCOVERY_AGENT_TIMEOUT_SECONDS", 120, 5, 300) * 1000),
-  });
-  if (!response.ok) throw new Error(`discovery agent returned ${response.status}`);
-  return parseBatch(await response.json());
+/** Searches Exa for the job's concept lane; without EXA_API_KEY a job finds nothing and reports why. */
+async function discover(job: JobRow): Promise<CandidateBatch> {
+  const exaApiKey = process.env.EXA_API_KEY;
+  const request = discoveryRequest(job.payload);
+  if (!exaApiKey) return parseBatch({ trace_id: request.trace_id, youtube: [], arxiv: [], failures: ["exa_not_configured"] });
+  return parseBatch(await discoverCandidates(request as DiscoveryRequest, {
+    exaApiKey,
+    timeoutMs: configuredNumber("DISCOVERY_REQUEST_TIMEOUT_SECONDS", 8, 1, 30) * 1000,
+  }));
 }
 
-const discoveryAgentPayloadKeys = [
+const discoveryRequestKeys = [
   "concept_ids",
   "concept_names",
   "level",
@@ -571,14 +566,14 @@ const discoveryAgentPayloadKeys = [
   "ranking_intent",
 ] as const;
 
-export function discoveryAgentPayload(payload: JsonObject): JsonObject {
+export function discoveryRequest(payload: JsonObject): JsonObject {
   const request = Object.fromEntries(
-    discoveryAgentPayloadKeys.flatMap((key) => key in payload ? [[key, payload[key]]] : []),
+    discoveryRequestKeys.flatMap((key) => key in payload ? [[key, payload[key]]] : []),
   );
   const conceptIds = stringArray(payload.concept_ids);
   const conceptNames = stringArray(payload.concept_names);
   if ((conceptIds.length !== 1 || conceptNames.length !== 1) && !stringValue(payload.query_text)) {
-    throw new Error("discovery agent requests require one canonical concept or query text");
+    throw new Error("discovery requests require one canonical concept or query text");
   }
   return {
     ...request,
@@ -669,7 +664,7 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       await tx`
         INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at, default_audio_language, fetched_at)
         VALUES (${resourceId}, ${candidate.youtube_id}, ${candidate.channel}, ${candidate.duration_ms}, ${candidate.published_at}, ${candidate.language}, now())
-        ON CONFLICT (resource_id) DO UPDATE SET channel_title = EXCLUDED.channel_title, duration_ms = EXCLUDED.duration_ms, published_at = EXCLUDED.published_at, default_audio_language = EXCLUDED.default_audio_language, fetched_at = now()
+        ON CONFLICT (resource_id) DO UPDATE SET channel_title = COALESCE(catalog.video_details.channel_title, EXCLUDED.channel_title), duration_ms = COALESCE(catalog.video_details.duration_ms, EXCLUDED.duration_ms), published_at = COALESCE(catalog.video_details.published_at, EXCLUDED.published_at), default_audio_language = COALESCE(catalog.video_details.default_audio_language, EXCLUDED.default_audio_language), fetched_at = now()
       `;
       if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
@@ -695,43 +690,8 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
       `;
       papers += 1;
     }
-    if (userId && batch.audit_run_id) await persistAudit(sql, job, batch);
     return { videos, papers, resourceIds: [...resourceIds].slice(0, 100) };
   });
-}
-
-async function persistAudit(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<void> {
-  const userId = stringValue(job.payload.audit_user_id);
-  if (!userId || !batch.audit_run_id) return;
-  const auditSqlUrl = process.env.DATABASE_AI_URL;
-  if (!auditSqlUrl) throw new Error("DATABASE_AI_URL is required for discovery agent audit persistence");
-  const auditSql = postgres(auditSqlUrl, { max: 1, prepare: false, connect_timeout: 10 });
-  try {
-    await auditSql.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${userId}, true)`;
-      const [run] = await tx<{ id: string }[]>`
-        INSERT INTO agent.agent_runs (id, user_id, purpose, status, goal, policy_version, max_iterations, max_tool_calls, max_tokens, trace_id, correlation_id, started_at, completed_at, final_answer)
-        VALUES (${batch.audit_run_id}, ${userId}, 'recommendation', 'done', 'Refresh bounded discovery candidates for canonical interests', 'discovery-policy-v1', 3, 4, 12000, ${batch.trace_id}, ${job.correlation_id}, now(), now(), ${JSON.stringify({ youtube: batch.youtube.length, arxiv: batch.arxiv.length })})
-        ON CONFLICT (id) DO UPDATE SET status = 'done', completed_at = now(), final_answer = EXCLUDED.final_answer
-        RETURNING id
-      `;
-      if (!run) return;
-      const [step] = await tx<{ id: string }[]>`
-        INSERT INTO agent.agent_steps (agent_run_id, step_key, sequence_no, kind, status, input, output_summary, started_at, completed_at)
-        VALUES (${run.id}, 'discovery.validate', 1, 'validate', 'done', ${tx.json({ conceptIds: stringArray(job.payload.concept_ids) })}, ${`Validated ${batch.youtube.length} videos and ${batch.arxiv.length} papers`}, now(), now())
-        ON CONFLICT (agent_run_id, step_key) DO UPDATE SET status = 'done', completed_at = now(), output_summary = EXCLUDED.output_summary
-        RETURNING id
-      `;
-      if (step) {
-        await tx`
-          INSERT INTO agent.tool_invocations (agent_run_id, agent_step_id, tool_name, tool_version, status, input, output, latency_ms, started_at, completed_at)
-          VALUES (${run.id}, ${step.id}, 'candidate-validation', 'discovery-guardrails-v1', 'succeeded', ${tx.json({ conceptCount: stringArray(job.payload.concept_ids).length })}, ${tx.json({ youtube: batch.youtube.length, arxiv: batch.arxiv.length })}, 0, now(), now())
-        `;
-      }
-    });
-  } finally {
-    await auditSql.end({ timeout: 5 });
-  }
 }
 
 async function finishJob(sql: SqlClient, job: JobRow, result: JsonObject): Promise<void> {
@@ -794,21 +754,26 @@ async function failJob(sql: SqlClient, job: JobRow, error: unknown): Promise<voi
   }
 }
 
-export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}): Promise<JsonObject> {
+/** One queue tick. `housekeeping` (reclaiming, scheduling, idle YouTube upkeep) runs on one lane at the poll cadence, never per wake-up. */
+export async function runDiscoveryWorker(options: { maintenance?: boolean; housekeeping?: boolean; onPromoted?: () => void } = {}): Promise<JsonObject> {
   const databaseUrl = process.env.DATABASE_WORKER_URL;
-  const agentUrl = process.env.DISCOVERY_AGENT_URL;
-  const token = process.env.INTERNAL_SERVICE_TOKEN;
   if (!databaseUrl) throw new Error("DATABASE_WORKER_URL is required");
-  if (!agentUrl) throw new Error("DISCOVERY_AGENT_URL is required");
-  if (!token) throw new Error("INTERNAL_SERVICE_TOKEN is required");
   const sql = postgres(databaseUrl, { max: 1, prepare: false, connect_timeout: 10 });
   const workerId = `discovery-worker-${randomUUID()}`;
   try {
-    const reclaimedCount = await reclaimExpiredJobs(sql);
-    const scheduledCount = await scheduleDueRefreshes(sql);
+    const housekeeping = options.housekeeping !== false;
+    const reclaimedCount = housekeeping ? await reclaimExpiredJobs(sql) : 0;
+    const scheduledCount = housekeeping ? await scheduleDueRefreshes(sql) : 0;
     const promotedJobId = await promoteOutbox(sql);
+    if (promotedJobId) options.onPromoted?.();
     const job = await claimJob(sql, workerId);
     if (!job) {
+      if (!housekeeping) return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
+      // Idle ticks keep YouTube metrics fresh and within the 30-day retention policy.
+      const youtube = await refreshYoutubeMetrics(sql);
+      const purged = await purgeExpiredYoutubeStatistics(sql);
+      if (youtube.videos || purged) await redisCommands([["INCR", recommendationCatalogKey]]);
+      await sql`DELETE FROM ops.rate_limit_counters WHERE reset_at < now()`;
       if (options.maintenance !== false) await recommendationMaintenance(sql);
       return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
     }
@@ -817,26 +782,35 @@ export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}
         const candidateBatch = objectValue(job.payload.candidate_batch);
         if (!candidateBatch) throw new Error("source-picker persistence job has no candidate batch");
         const persisted = await persistBatch(sql, job, parseBatch(candidateBatch));
-        const result = { ...persisted };
+        const youtube = await refreshYoutubeMetrics(sql, persisted.resourceIds);
+        const result = { ...persisted, youtubeQuotaUnits: youtube.quotaUnits, youtubeGated: youtube.gated };
         await markSourcePickerRefresh(sql, job, persisted.resourceIds);
         if (persisted.resourceIds.length) await redisCommands([["INCR", recommendationCatalogKey]]);
       await finishJob(sql, job, result);
         return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, ...result };
       }
-      const batch = await callAgent(agentUrl, token, job);
       const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
+      // Background refreshes stop at the daily Exa cap; the feed keeps ranking the catalog it already has.
+      if (!sourcePickerRunId && await dailyUsage(sql, "exa") >= configuredNumber("EXA_DAILY_CALL_CAP", 1000, 1, 1_000_000)) {
+        await finishJob(sql, job, { skipped: "exa_daily_cap" });
+        return { status: "done", jobId: job.id, scheduledCount, reclaimedCount, skipped: "exa_daily_cap" };
+      }
+      const batch = await discover(job);
+      await recordUsage(sql, "exa", batch.provider_calls);
       if (sourcePickerRunId && batch.failures.length > 0 && batch.youtube.length === 0 && batch.arxiv.length === 0) {
-        throw new Error(`discovery agent reported no candidates: ${batch.failures[0]}`);
+        throw new Error(`discovery found no candidates: ${batch.failures[0]}`);
       }
       const persisted = await persistBatch(sql, job, batch);
+      const youtube = await refreshYoutubeMetrics(sql, persisted.resourceIds);
       const result = {
         traceId: batch.trace_id,
         providerCalls: batch.provider_calls,
         fallbackCalls: batch.fallback_calls,
-        enrichmentCalls: batch.enrichment_calls,
         failures: batch.failures,
         cacheHit: batch.cache_hit,
         ...persisted,
+        youtubeQuotaUnits: youtube.quotaUnits,
+        youtubeGated: youtube.gated,
       };
       await markSourcePickerRefresh(sql, job, persisted.resourceIds);
       if (persisted.resourceIds.length) await redisCommands([["INCR", recommendationCatalogKey]]);
@@ -851,29 +825,60 @@ export async function runDiscoveryWorker(options: { maintenance?: boolean } = {}
   }
 }
 
-export async function runDiscoveryWorkerLoop(options: { maxJobs?: number; intervalMs?: number; signal?: AbortSignal } = {}): Promise<JsonObject> {
+/**
+ * Runs `concurrency` queue lanes so one user's topics are discovered in parallel. Lanes sleep until the
+ * poll interval or a `discovery_wake` NOTIFY (sent when a discovery request commits), whichever is first.
+ */
+export async function runDiscoveryWorkerLoop(options: { maxJobs?: number; intervalMs?: number; concurrency?: number; signal?: AbortSignal } = {}): Promise<JsonObject> {
   const maxJobs = options.maxJobs ?? configuredNumber("DISCOVERY_WORKER_MAX_JOBS", 0, 0, 100_000);
   const intervalMs = options.intervalMs ?? configuredNumber("DISCOVERY_WORKER_INTERVAL_MS", 30_000, 1_000, 300_000);
+  const concurrency = options.concurrency ?? configuredNumber("DISCOVERY_WORKER_CONCURRENCY", 3, 1, 16);
   let processed = 0;
   let scheduled = 0;
   let maintenance: Promise<void> | null = null;
   let nextMaintenance = 0;
-  const pause = () => delay(intervalMs, undefined, { signal: options.signal }).catch((error) => {
-    if (!options.signal?.aborted) throw error;
+  let nextHousekeeping = 0;
+  let wakeLanes = () => {};
+  let woken = new Promise<void>((resolve) => { wakeLanes = resolve; });
+  const wake = () => {
+    const resolve = wakeLanes;
+    woken = new Promise<void>((next) => { wakeLanes = next; });
+    resolve();
+  };
+  const pause = async () => {
+    const timer = new AbortController();
+    const stop = () => timer.abort();
+    options.signal?.addEventListener("abort", stop, { once: true });
+    try {
+      await Promise.race([delay(intervalMs, undefined, { signal: timer.signal }), woken]);
+    } catch (error) {
+      if (!timer.signal.aborted) throw error;
+    } finally {
+      timer.abort();
+      options.signal?.removeEventListener("abort", stop);
+    }
+  };
+  const listener = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false, connect_timeout: 10 });
+  await listener.listen("discovery_wake", wake).catch((error) => {
+    console.warn(JSON.stringify({ metric: "discovery_wake_listen_failure", error: error instanceof Error ? error.message : "listen failed" }));
   });
-  try {
+  options.signal?.addEventListener("abort", wake, { once: true });
+  const lane = async (index: number) => {
     while (!options.signal?.aborted && (maxJobs <= 0 || processed < maxJobs)) {
+      const housekeeping = index === 0 && Date.now() >= nextHousekeeping;
+      if (housekeeping) nextHousekeeping = Date.now() + intervalMs;
       let result: JsonObject;
       try {
-        result = await runDiscoveryWorker({ maintenance: false });
+        // A promotion turns one request into several jobs; wake the other lanes to share them.
+        result = await runDiscoveryWorker({ maintenance: false, housekeeping, onPromoted: wake });
       } catch (error) {
-        console.warn(JSON.stringify({ metric: "discovery_worker_failure", error: error instanceof Error ? error.message : "job failed" }));
+        console.warn(JSON.stringify({ metric: "discovery_worker_failure", lane: index, error: error instanceof Error ? error.message : "job failed" }));
         if (maxJobs > 0) processed += 1;
         await pause();
         continue;
       }
       if (process.env.WORKER_HEARTBEAT_PATH) await writeFile(process.env.WORKER_HEARTBEAT_PATH, String(Date.now()));
-      console.info(JSON.stringify({ metric: "discovery_worker_tick", status: result.status, jobId: result.jobId }));
+      if (result.status !== "idle") console.info(JSON.stringify({ metric: "discovery_worker_tick", lane: index, status: result.status, jobId: result.jobId }));
       scheduled += typeof result.scheduledCount === "number" ? result.scheduledCount : 0;
       // One maintenance batch may run beside queue processing. It owns one small
       // pool; provider latency cannot monopolize the discovery queue connection.
@@ -887,6 +892,63 @@ export async function runDiscoveryWorkerLoop(options: { maxJobs?: number; interv
       if (result.status === "done") { processed += 1; continue; }
       await pause();
     }
-  } finally { await maintenance; }
+  };
+  try {
+    await Promise.all(Array.from({ length: concurrency }, (_, index) => lane(index)));
+  } finally {
+    options.signal?.removeEventListener("abort", wake);
+    await maintenance;
+    await listener.end({ timeout: 5 });
+  }
   return { status: options.signal?.aborted ? "stopped" : "complete", processed, scheduled };
+}
+
+/**
+ * Serverless entry: `concurrency` lanes work the queue until it is empty or the deadline nears, so one
+ * short invocation per wake-up replaces the long-running loop. `housekeeping` invocations also reclaim,
+ * schedule and refresh YouTube metrics, then run recommendation upkeep. Jobs left at the deadline stay
+ * queued for the next invocation.
+ */
+export async function drainDiscoveryQueue(options: { housekeeping?: boolean; concurrency?: number; deadlineMs?: number } = {}): Promise<JsonObject> {
+  if (!process.env.DATABASE_WORKER_URL) throw new Error("DATABASE_WORKER_URL is required");
+  const deadline = Date.now() + (options.deadlineMs ?? 100_000);
+  const concurrency = options.concurrency ?? configuredNumber("DISCOVERY_WORKER_CONCURRENCY", 3, 1, 16);
+  let processed = 0;
+  let failed = 0;
+  const tick = async (housekeeping: boolean) => {
+    try {
+      const result = await runDiscoveryWorker({ maintenance: false, housekeeping });
+      if (result.status === "done") processed += 1;
+      return result.status;
+    } catch (error) {
+      failed += 1;
+      console.warn(JSON.stringify({ metric: "discovery_worker_failure", error: error instanceof Error ? error.message : "job failed" }));
+      return "failed";
+    }
+  };
+  // Reclaim and schedule first, so due refreshes are drained in this same invocation.
+  if (options.housekeeping) await tick(true);
+  // Turn every pending request into jobs before the lanes start, so no lane sees an empty queue and exits early.
+  const outboxSql = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false, connect_timeout: 10 });
+  try {
+    while (Date.now() < deadline && await promoteOutbox(outboxSql)) { /* next request */ }
+  } finally {
+    await outboxSql.end({ timeout: 5 });
+  }
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (Date.now() < deadline && await tick(false) !== "idle") { /* next job */ }
+  }));
+  if (options.housekeeping && Date.now() < deadline) {
+    // An empty queue lets the housekeeping tick refresh YouTube metrics and purge expired statistics.
+    await tick(true);
+    const db = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false, connect_timeout: 10 });
+    try {
+      await recommendationUpkeep(db, AbortSignal.timeout(Math.max(1_000, deadline - Date.now())));
+    } catch (error) {
+      console.warn(JSON.stringify({ metric: "recommendation_maintenance_failure", error: error instanceof Error ? error.message : "maintenance failed" }));
+    } finally {
+      await db.end({ timeout: 5 });
+    }
+  }
+  return { status: Date.now() < deadline ? "drained" : "deadline", processed, failed };
 }

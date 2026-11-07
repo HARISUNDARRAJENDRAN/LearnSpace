@@ -2,6 +2,39 @@
 @tailwind utilities;
 
 :root {
+	/* LearnSpace design tokens: see design.md */
+	--ls-bg: #fff;
+	--ls-surface: #fafafa;
+	--ls-muted: #f5f5f5;
+	--ls-ink: #090b0c;
+	--ls-ink-soft: #171717;
+	--ls-ink-muted: #737373;
+	--ls-ink-subtle: #a1a1a1;
+	--ls-ink-faint: #d0d6d8;
+	--ls-line: rgb(0 0 0 / 6%);
+	--ls-line-strong: rgb(10 10 10 / 15%);
+	--ls-brand: #00a5ef;
+	--ls-brand-ink: #0084cc;
+	--ls-dark: #22292b;
+	--ls-on-dark: #fafafa;
+	--ls-success: #00c758;
+	--ls-warning: #f99c00;
+	--ls-danger: #fb2c36;
+	--ls-font: var(--font-geist-sans), "Geist", ui-sans-serif, system-ui, sans-serif;
+	--ls-font-serif: var(--font-geist-serif-regular), "Times New Roman", serif;
+	--ls-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+	--ls-radius-sm: 6px;
+	--ls-radius-md: 8px;
+	--ls-radius-lg: 11px;
+	--ls-radius-xl: 16px;
+	--ls-radius-2xl: 22px;
+	--ls-radius-3xl: 32px;
+	--ls-radius-full: 999px;
+	--ls-shadow-sm: 0 1px 3px rgb(0 0 0 / 10%), 0 1px 2px -1px rgb(0 0 0 / 10%);
+	--ls-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 5%), 0 2px 4px -2px rgb(0 0 0 / 5%);
+	--ls-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 7%), 0 4px 6px -4px rgb(0 0 0 / 7%);
+	--ls-shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 10%), 0 8px 10px -6px rgb(0 0 0 / 10%);
+	--ls-ease: cubic-bezier(0.2, 0, 0, 1);
 	--background: 200 33% 98%;
 	--foreground: 198 31% 12%;
 	--card: 0 0% 100%;

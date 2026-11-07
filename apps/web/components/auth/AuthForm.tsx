@@ -1,10 +1,7 @@
 "use client";
 
-import { AtSignIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useState } from "react";
-import { Button } from "../ui/button";
-import { Input } from "../ui/input";
 
 type AuthFormMode = "login" | "register";
 
@@ -90,6 +87,19 @@ export function AuthForm({
       }
 
       if (isRegister) {
+        if (data.verificationUrl && process.env.NEXT_PUBLIC_MANUAL_E2E_MODE === "true") {
+          const verificationUrl = new URL(data.verificationUrl, window.location.origin);
+          if (
+            verificationUrl.origin !== window.location.origin ||
+            verificationUrl.pathname !== "/api/auth/verify"
+          ) {
+            setError("We could not start email verification.");
+            return;
+          }
+          window.location.replace(verificationUrl.href);
+          return;
+        }
+
         const verifyUrl = new URL("/verify-email", window.location.origin);
         verifyUrl.searchParams.set("email", values.email);
         verifyUrl.searchParams.set("next", next);
@@ -112,7 +122,7 @@ export function AuthForm({
   const googleUrl = `/api/auth/google?next=${encodeURIComponent(next)}`;
 
   return (
-    <div className={`auth-form-flow auth-form-flow-${mode}`}>
+    <>
       {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
       {error ? (
         <div className="auth-error" role="alert">
@@ -126,20 +136,21 @@ export function AuthForm({
           ) : null}
         </div>
       ) : null}
-      <div className="auth-providers">
-        <a className="auth-provider-button" href={googleUrl}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path fill="currentColor" d="M12.479 14.265v-3.279h11.049c.108.571.164 1.247.164 1.979 0 2.46-.672 5.502-2.84 7.669C18.744 22.829 16.051 24 12.483 24 5.869 24 .308 18.613.308 12S5.869 0 12.483 0c3.659 0 6.265 1.436 8.223 3.307L18.392 5.62c-1.404-1.317-3.307-2.341-5.913-2.341C7.65 3.279 3.873 7.171 3.873 12s3.777 8.721 8.606 8.721c3.132 0 4.916-1.258 6.059-2.401.927-.927 1.537-2.251 1.777-4.059l-7.836.004Z" />
-          </svg>
-          Continue with Google
-        </a>
+      <a className="auth-google" href={googleUrl}>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="currentColor" d="M12.479 14.265v-3.279h11.049c.108.571.164 1.247.164 1.979 0 2.46-.672 5.502-2.84 7.669C18.744 22.829 16.051 24 12.483 24 5.869 24 .308 18.613.308 12S5.869 0 12.483 0c3.659 0 6.265 1.436 8.223 3.307L18.392 5.62c-1.404-1.317-3.307-2.341-5.913-2.341C7.65 3.279 3.873 7.171 3.873 12s3.777 8.721 8.606 8.721c3.132 0 4.916-1.258 6.059-2.401.927-.927 1.537-2.251 1.777-4.059l-7.836.004Z" />
+        </svg>
+        Continue with Google
+      </a>
+      <div className="auth-divider" aria-hidden="true">
+        <span>or</span>
       </div>
-      <div className="auth-divider" aria-hidden="true"><span>OR</span></div>
       <form className="auth-form" onSubmit={submit}>
         {isRegister ? (
-          <label htmlFor="display-name">
-            <span>Your name</span>
-            <Input
+          <div className="auth-field">
+            <label htmlFor="display-name">Your name</label>
+            <input
+              className="auth-input"
               id="display-name"
               name="displayName"
               type="text"
@@ -149,28 +160,29 @@ export function AuthForm({
               placeholder="Alex Morgan"
               required
             />
-          </label>
+          </div>
         ) : null}
-        <label htmlFor="auth-email">
-          <span className="auth-email-prompt">Enter your email address to sign in or create an account</span>
-          <span className="auth-input-wrap">
-            <AtSignIcon aria-hidden="true" />
-            <Input
-              id="auth-email"
-              aria-label="Email address"
-              name="email"
-              type="email"
-              value={values.email}
-              onChange={(event) => updateValue("email", event.target.value)}
-              autoComplete="email"
-              placeholder="your.email@example.com"
-              required
-            />
-          </span>
-        </label>
-        <label htmlFor="auth-password">
-          <span>Password</span>
-          <Input
+        <div className="auth-field">
+          <label htmlFor="auth-email">Email address</label>
+          <input
+            className="auth-input"
+            id="auth-email"
+            name="email"
+            type="email"
+            value={values.email}
+            onChange={(event) => updateValue("email", event.target.value)}
+            autoComplete="email"
+            placeholder="you@example.com"
+            required
+          />
+        </div>
+        <div className="auth-field">
+          <div className="auth-label-row">
+            <label htmlFor="auth-password">Password</label>
+            {isRegister ? null : <a href="/forgot-password">Forgot password?</a>}
+          </div>
+          <input
+            className="auth-input"
             id="auth-password"
             name="password"
             type="password"
@@ -181,11 +193,12 @@ export function AuthForm({
             minLength={8}
             required
           />
-        </label>
+        </div>
         {isRegister ? (
-          <label htmlFor="confirm-password">
-            <span>Confirm password</span>
-            <Input
+          <div className="auth-field">
+            <label htmlFor="confirm-password">Confirm password</label>
+            <input
+              className="auth-input"
               id="confirm-password"
               name="confirmPassword"
               type="password"
@@ -196,23 +209,18 @@ export function AuthForm({
               minLength={8}
               required
             />
-          </label>
+          </div>
         ) : null}
-        <Button className="auth-submit" type="submit" disabled={isSubmitting}>
+        <button className="auth-submit" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Please wait…" : isRegister ? "Create account" : "Log in"}
-        </Button>
+        </button>
       </form>
-      {!isRegister ? (
-        <p className="auth-forgot">
-          <a href="/forgot-password">Forgot password?</a>
-        </p>
-      ) : null}
       <p className="auth-switch">
-        {isRegister ? "Already have an account?" : "No account?"}{" "}
+        {isRegister ? "Already have an account?" : "New to LearnSpace?"}{" "}
         <a href={`${isRegister ? "/login" : "/register"}?next=${encodeURIComponent(next)}`}>
-          {isRegister ? "Login here" : "Sign up here"}
+          {isRegister ? "Log in" : "Create an account"}
         </a>
       </p>
-    </div>
+    </>
   );
 }

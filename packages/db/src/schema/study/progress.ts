@@ -83,8 +83,15 @@ export const scheduleItems = studySchema.table(
     learningGoalId: uuid("learning_goal_id").references(() => learningGoals.id, { onDelete: "restrict" }),
     studySessionId: uuid("study_session_id").references(() => studySessions.id, { onDelete: "restrict" }),
     conceptId: uuid("concept_id").references(() => concepts.id, { onDelete: "set null" }),
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
+    // The kind of study, which also colours the item on the calendar.
     kind: text("kind").notNull(),
+    // suggested (agent proposal) -> planned -> done, or dismissed. Only the observer marks items done.
     status: text("status").notNull().default("planned"),
+    source: text("source").notNull().default("learner"),
+    progressPct: real("progress_pct").notNull().default(0),
+    observerNote: text("observer_note"),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }),
     title: text("title").notNull(),
     description: text("description"),
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
@@ -96,6 +103,10 @@ export const scheduleItems = studySchema.table(
   },
   (table) => [
     check("schedule_items_end_after_start_chk", sql`${table.endsAt} IS NULL OR ${table.endsAt} >= ${table.startsAt}`),
+    check("schedule_items_status_chk", sql`${table.status} IN ('suggested', 'planned', 'done', 'dismissed')`),
+    check("schedule_items_kind_chk", sql`${table.kind} IN ('watch', 'read', 'practice', 'review')`),
+    check("schedule_items_source_chk", sql`${table.source} IN ('learner', 'agent')`),
+    check("schedule_items_progress_chk", sql`${table.progressPct} BETWEEN 0 AND 100`),
     index("schedule_items_user_starts_idx").on(table.userId, table.startsAt),
     index("schedule_items_user_status_starts_idx").on(table.userId, table.status, table.startsAt),
     foreignKey({

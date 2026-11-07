@@ -21,6 +21,7 @@ function contextLabel(pathname: string): string {
   if (pathname.startsWith("/app/research")) return "Research";
   if (pathname.startsWith("/app/second-brain")) return "Second Brain";
   if (pathname.startsWith("/app/settings")) return "Settings";
+  if (pathname.startsWith("/app/profile")) return "My profile";
   if (pathname.startsWith("/app/study")) return "Study session";
   return "LearnSpace";
 }
@@ -39,7 +40,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
   const mode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
   const isHome = pathname === "/app";
   const isDiscover = pathname.startsWith("/app/discover");
-  const hasShellHeading = isHome || pathname === "/app/sessions" || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings";
+  const hasShellHeading = isHome || pathname === "/app/sessions" || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings" || pathname === "/app/profile";
   const showViewControls = pathname === "/app/library";
 
   return (

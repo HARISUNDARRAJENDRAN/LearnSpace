@@ -1,28 +1,13 @@
 import assert from "node:assert/strict";
-import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import test, { after } from "node:test";
 import { closeRecommendationRedis } from "@learnspace/shared/recommendation-cache";
 import postgres from "postgres";
 import { runDiscoveryWorker, runDiscoveryWorkerLoop } from "./discovery.js";
+import { handleWorkerRequest } from "./edge.js";
 
 const databaseAvailable = Boolean(process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_WORKER_URL);
 after(closeRecommendationRedis);
-
-function listen(server: Server): Promise<number> {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") return reject(new Error("fake discovery agent did not bind a port"));
-      resolve(address.port);
-    });
-  });
-}
-
-function close(server: Server): Promise<void> {
-  return new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-}
 
 function restoreEnv(name: string, value: string | undefined): void {
   if (value === undefined) delete process.env[name];
@@ -54,43 +39,23 @@ test(
     let reportAgentFailure = false;
     const sourceResourceIds: string[] = [];
     let seenRequest: Record<string, unknown> | null = null;
-    const agent = createServer(async (request, response) => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of request) chunks.push(Buffer.from(chunk));
-      seenRequest = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-      if (reportAgentFailure) {
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          trace_id: traceId,
-          youtube: [],
-          arxiv: [],
-          failures: ["youtube:TimeoutError"],
-        }));
-        return;
-      }
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        trace_id: traceId,
-        youtube: youtubeIds.map((youtubeId, index) => ({
-          youtube_id: youtubeId,
-          canonical_url: `https://www.youtube.com/watch?v=${youtubeId}`,
+    const realFetch = globalThis.fetch;
+    // Exa is the only provider; a rejected key is a hard failure that the source picker must surface.
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) !== "https://api.exa.ai/search") return realFetch(input, init);
+      seenRequest = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (reportAgentFailure) return new Response("{}", { status: 401 });
+      return new Response(JSON.stringify({
+        results: youtubeIds.map((youtubeId, index) => ({
+          url: `https://www.youtube.com/watch?v=${youtubeId}`,
           title: ["Python for Beginners - Full Course", "Learn Python Variables", "Beginner Python Projects"][index],
-          channel: "Source Picker Lab",
-          matched_concept_ids: [conceptId],
-          learning_format: index === 2 ? "hands_on" : "clear_explanations",
-          estimated_level: "beginner",
-          has_implementation: index === 2,
-          confidence: 0.9,
-          evidence: ["Deterministic worker integration candidate"],
+          author: "Source Picker Lab",
+          highlights: ["Deterministic worker integration candidate"],
         })),
-        arxiv: [],
       }));
-    });
-    const port = await listen(agent);
-    const previousAgentUrl = process.env.DISCOVERY_AGENT_URL;
-    const previousToken = process.env.INTERNAL_SERVICE_TOKEN;
-    process.env.DISCOVERY_AGENT_URL = `http://127.0.0.1:${port}`;
-    process.env.INTERNAL_SERVICE_TOKEN = "source-picker-worker-test";
+    }) as typeof fetch;
+    const previousExaKey = process.env.EXA_API_KEY;
+    process.env.EXA_API_KEY = "source-picker-worker-test";
 
     try {
       await migrator.begin(async (tx) => {
@@ -126,8 +91,7 @@ test(
       assert.equal(result.status, "done");
       const requestPayload = seenRequest as Record<string, unknown> | null;
       assert.ok(requestPayload);
-      assert.equal(requestPayload.query_text, "python for beginners");
-      assert.deepEqual(requestPayload.concept_ids, [conceptId]);
+      assert.match(String(requestPayload.query), /python for beginners$/);
 
       const [run] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
         SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
@@ -255,7 +219,7 @@ test(
           (${failedJobId}, 'discovery', 'discovery.refresh_concept', ${migrator.json({ concept_ids: [conceptId], concept_names: ["Python"], query_text: "A failing source search", source_kind: "video", source_picker_run_id: failedRunId, audit_user_id: userId, force_refresh: true })}, 'pending', 10, 1, ${`discovery:source-picker:${failedRunId}`}, ${`failed-${failedRunId}`}, ${`failed-${failedRunId}`})
       `;
       reportAgentFailure = true;
-      await assert.rejects(() => runDiscoveryWorker(), /discovery agent reported no candidates/);
+      await assert.rejects(() => runDiscoveryWorker(), /discovery found no candidates: youtube:.*ExaHTTP401/);
       const [failedRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
         SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${failedRunId}
       `;
@@ -284,9 +248,8 @@ test(
       assert.equal(reclaimedRun?.status, "failed");
       assert.equal(reclaimedRun?.context_snapshot.refreshStatus, "failed");
     } finally {
-      restoreEnv("DISCOVERY_AGENT_URL", previousAgentUrl);
-      restoreEnv("INTERNAL_SERVICE_TOKEN", previousToken);
-      await close(agent);
+      globalThis.fetch = realFetch;
+      restoreEnv("EXA_API_KEY", previousExaKey);
       await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${runId}, ${failedRunId}, ${instantRunId}, ${leaseRunId})`;
       await migrator`DELETE FROM catalog.resource_concepts WHERE concept_id = ${conceptId}`;
       if (sourceResourceIds.length > 0) {
@@ -305,6 +268,136 @@ test(
       await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (SELECT id FROM catalog.resources WHERE owner_user_id = ${userId})`;
       await migrator`DELETE FROM catalog.resources WHERE owner_user_id = ${userId}`;
       await migrator`DELETE FROM knowledge.concepts WHERE id = ${conceptId}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
+      await migrator.end({ timeout: 5 });
+    }
+  },
+);
+
+test(
+  "a committed discovery request wakes idle lanes, runs its concept lanes in parallel and shares lanes across learners",
+  { skip: databaseAvailable ? false : "DATABASE_MIGRATOR_URL and DATABASE_WORKER_URL are required" },
+  async () => {
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const traceId = `discovery-wake-${randomUUID()}`;
+    const userId = randomUUID();
+    const conceptIds = [randomUUID(), randomUUID()];
+    const outboxId = randomUUID();
+    const secondOutboxId = randomUUID();
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://export.arxiv.org/")) return new Response("<feed></feed>");
+      if (url !== "https://api.exa.ai/search") return realFetch(input, init);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      inFlight -= 1;
+      return new Response(JSON.stringify({ results: [] }));
+    }) as typeof fetch;
+    const previousExaKey = process.env.EXA_API_KEY;
+    const previousSemantic = process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED;
+    process.env.EXA_API_KEY = "discovery-wake-test";
+    process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED = "false";
+    // A minute-long poll interval: only the NOTIFY can start these jobs within the deadline.
+    const stop = new AbortController();
+    const loop = runDiscoveryWorkerLoop({ signal: stop.signal, intervalMs: 60_000, concurrency: 2 });
+    try {
+      await migrator`INSERT INTO identity.users (id, email, email_verified, status, display_name) VALUES (${userId}, ${`${traceId}@example.test`}, true, 'active', 'Discovery Wake Test')`;
+      for (const [index, id] of conceptIds.entries()) {
+        await migrator`INSERT INTO knowledge.concepts (id, slug, name, kind, status) VALUES (${id}, ${`${traceId}-${index}`}, ${`Wake concept ${index}`}, 'topic', 'active')`;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const committedAt = Date.now();
+      await migrator`
+        INSERT INTO ops.outbox_events (id, aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id)
+        VALUES (${outboxId}, 'user', ${userId}, 'discovery.refresh_requested', 1, ${userId}, ${migrator.json({ conceptIds, conceptNames: ["Wake concept 0", "Wake concept 1"], persona: "builder" })}, ${traceId})
+      `;
+      const waitForDone = async (count: number) => {
+        let finished = 0;
+        while (Date.now() - committedAt < 10_000) {
+          const [row] = await migrator<{ done: string }[]>`SELECT count(*) AS done FROM ops.jobs WHERE trace_id = ${traceId} AND status = 'done'`;
+          finished = Number(row?.done ?? 0);
+          if (finished >= count) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        return finished;
+      };
+      assert.equal(await waitForDone(4), 4, "a builder's two lanes per concept finish long before the next poll");
+      assert.equal(maxInFlight, 2, "concept lanes are discovered in parallel");
+      // A researcher on the same concepts adds only the missing lane; the shared recent lane is reused.
+      await migrator`
+        INSERT INTO ops.outbox_events (id, aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id)
+        VALUES (${secondOutboxId}, 'user', ${userId}, 'discovery.refresh_requested', 1, ${userId}, ${migrator.json({ conceptIds, conceptNames: ["Wake concept 0", "Wake concept 1"], persona: "researcher" })}, ${traceId})
+      `;
+      assert.equal(await waitForDone(6), 6);
+      const lanes = await migrator<{ lane: string; jobs: string }[]>`
+        SELECT payload->>'ranking_intent' AS lane, count(*) AS jobs FROM ops.jobs WHERE trace_id = ${traceId} GROUP BY 1 ORDER BY 1
+      `;
+      assert.deepEqual(lanes.map(({ lane, jobs }) => [lane, Number(jobs)]), [["in_depth", 2], ["practical", 2], ["recent", 2]]);
+    } finally {
+      stop.abort();
+      await loop;
+      globalThis.fetch = realFetch;
+      restoreEnv("EXA_API_KEY", previousExaKey);
+      restoreEnv("LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED", previousSemantic);
+      await migrator`DELETE FROM ops.jobs WHERE trace_id = ${traceId}`;
+      await migrator`DELETE FROM ops.outbox_events WHERE id IN (${outboxId}, ${secondOutboxId})`;
+      await migrator`DELETE FROM knowledge.concepts WHERE id IN ${migrator(conceptIds)}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
+      await migrator.end({ timeout: 5 });
+    }
+  },
+);
+
+test(
+  "the serverless entry rejects a wrong secret and drains a committed request in the background",
+  { skip: databaseAvailable ? false : "DATABASE_MIGRATOR_URL and DATABASE_WORKER_URL are required" },
+  async () => {
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const traceId = `discovery-edge-${randomUUID()}`;
+    const userId = randomUUID();
+    const conceptIds = [randomUUID(), randomUUID()];
+    const outboxId = randomUUID();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith("https://export.arxiv.org/")) return new Response("<feed></feed>");
+      if (url !== "https://api.exa.ai/search") return realFetch(input, init);
+      return new Response(JSON.stringify({ results: [] }));
+    }) as typeof fetch;
+    const previous = { EXA_API_KEY: process.env.EXA_API_KEY, LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED: process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED, WORKER_TRIGGER_SECRET: process.env.WORKER_TRIGGER_SECRET };
+    process.env.EXA_API_KEY = "discovery-edge-test";
+    process.env.LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED = "false";
+    process.env.WORKER_TRIGGER_SECRET = "edge-test-secret";
+    const work: Promise<unknown>[] = [];
+    const call = (authorization: string) => handleWorkerRequest(
+      new Request("http://worker.test/", { method: "POST", headers: { authorization }, body: "{}" }),
+      (promise) => work.push(promise),
+    );
+    try {
+      assert.equal((await call("Bearer wrong-secret")).status, 401);
+      assert.equal(work.length, 0);
+      await migrator`INSERT INTO identity.users (id, email, email_verified, status, display_name) VALUES (${userId}, ${`${traceId}@example.test`}, true, 'active', 'Discovery Edge Test')`;
+      for (const [index, id] of conceptIds.entries()) {
+        await migrator`INSERT INTO knowledge.concepts (id, slug, name, kind, status) VALUES (${id}, ${`${traceId}-${index}`}, ${`Edge concept ${index}`}, 'topic', 'active')`;
+      }
+      await migrator`
+        INSERT INTO ops.outbox_events (id, aggregate_type, aggregate_id, event_type, schema_version, user_id, payload, trace_id)
+        VALUES (${outboxId}, 'user', ${userId}, 'discovery.refresh_requested', 1, ${userId}, ${migrator.json({ conceptIds, conceptNames: ["Edge concept 0", "Edge concept 1"], persona: "builder" })}, ${traceId})
+      `;
+      assert.equal((await call("Bearer edge-test-secret")).status, 202);
+      await Promise.all(work);
+      const [row] = await migrator<{ done: string }[]>`SELECT count(*) AS done FROM ops.jobs WHERE trace_id = ${traceId} AND status = 'done'`;
+      assert.equal(Number(row?.done), 4, "one invocation runs every lane the request created");
+    } finally {
+      globalThis.fetch = realFetch;
+      for (const [name, value] of Object.entries(previous)) restoreEnv(name, value);
+      await migrator`DELETE FROM ops.jobs WHERE trace_id = ${traceId}`;
+      await migrator`DELETE FROM ops.outbox_events WHERE id = ${outboxId}`;
+      await migrator`DELETE FROM knowledge.concepts WHERE id IN ${migrator(conceptIds)}`;
       await migrator`DELETE FROM identity.users WHERE id = ${userId}`;
       await migrator.end({ timeout: 5 });
     }

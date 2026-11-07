@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
 export default function ForgotPasswordPage() {
   return (
     <AuthShell
-      title="Find your way back."
-      subtitle="We will send a private link to reset your LearnSpace password."
+      title="Reset your password"
+      subtitle="We’ll email you a private link to choose a new one."
     >
       <ForgotPasswordForm />
     </AuthShell>

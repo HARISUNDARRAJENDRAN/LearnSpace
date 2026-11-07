@@ -53,13 +53,18 @@
       "types": "./src/youtube-quality.ts",
       "import": "./dist/youtube-quality.js",
       "default": "./dist/youtube-quality.js"
+    },
+    "./exa-discovery": {
+      "types": "./src/exa-discovery.ts",
+      "import": "./dist/exa-discovery.js",
+      "default": "./dist/exa-discovery.js"
     }
   },
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/contracts.test.ts src/source-discovery.test.ts"
+    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts"
   },
   "dependencies": {
     "ioredis": "^6.0.0",

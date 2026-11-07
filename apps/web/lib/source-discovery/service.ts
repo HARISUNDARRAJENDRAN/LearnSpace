@@ -9,6 +9,7 @@ import { AuthError } from "../auth/errors";
 import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, type DiscoveryResource, type RankedResource, rankSourceResources, sourceQuerySignals } from "../discovery/ranker";
 import { loadDiscoveryProfile, loadDiscoveryResources } from "../discovery/service";
 import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
+import { instantDiscovery } from "@learnspace/shared/exa-discovery";
 
 const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
 const sourceCoverageMinimum = SOURCE_DISCOVERY_MIN_RESULTS;
@@ -250,7 +251,7 @@ async function enqueueRefresh(tx: Transaction, userId: string, runId: string, mo
   });
 }
 
-type InstantAgentBatch = z.infer<typeof sourceDiscoveryInstantBatchSchema>;
+type InstantBatch = z.infer<typeof sourceDiscoveryInstantBatchSchema>;
 type ExternalPool = {
   resources: DiscoveryResource[];
   cacheHit: boolean;
@@ -284,7 +285,7 @@ function dedupeExternalResources(resources: DiscoveryResource[]): DiscoveryResou
   return [...new Map(resources.map((resource) => [`${resource.provider}:${resource.externalId}`, resource])).values()];
 }
 
-function externalResources(batch: InstantAgentBatch, mode: SourceDiscoveryMode): DiscoveryResource[] {
+function externalResources(batch: InstantBatch, mode: SourceDiscoveryMode): DiscoveryResource[] {
   if (mode === "learn") {
     return dedupeExternalResources(batch.youtube.flatMap((candidate) => {
       const parsed = classifySourceUrl(candidate.canonical_url);
@@ -371,32 +372,17 @@ function instantPoolKey(mode: SourceDiscoveryMode, rankingIntent: SourceRankingI
   return createHash("sha256").update(`${mode}\n${rankingIntent}\n${query}`).digest("hex");
 }
 
-async function callInstantAgent(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number; providerFailed: boolean } | null> {
-  const agentUrl = process.env.SOURCE_DISCOVERY_AGENT_URL ?? process.env.DISCOVERY_AGENT_URL;
-  const token = process.env.INTERNAL_SERVICE_TOKEN;
-  if (!agentUrl || !token) return null;
+async function callInstantDiscovery(mode: SourceDiscoveryMode, query: string, rankingIntent: SourceRankingIntent, correlationId: string): Promise<{ resources: DiscoveryResource[]; exaMs: number; providerFailed: boolean } | null> {
+  const exaApiKey = process.env.EXA_API_KEY;
+  if (!exaApiKey) return null;
   const started = performance.now();
   try {
-    const response = await fetch(`${agentUrl.replace(/\/$/, "")}/internal/v1/discovery/instant`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-internal-service-token": token },
-      body: JSON.stringify({
-        query_text: query,
-        source_kind: mode === "learn" ? "video" : "paper",
-        ranking_intent: rankingIntent,
-        limit: sourceResultLimit,
-        trace_id: correlationId,
-      }),
-      // The interactive budget bounds the response, not the provider work.
-      // The Python service deliberately keeps this request alive and warms its
-      // cache after the client has received a partial response.
-      signal: AbortSignal.timeout(instantProviderTimeoutMs()),
-    });
-    if (!response.ok) {
-      console.warn("source_discovery_instant_failed", { correlationId, status: response.status });
-      return null;
-    }
-    const parsed = sourceDiscoveryInstantBatchSchema.safeParse(await response.json());
+    // The interactive budget bounds the response, not the provider work: a slow search still fills the pool.
+    const batch = await instantDiscovery(
+      { query_text: query, source_kind: mode === "learn" ? "video" : "paper", ranking_intent: rankingIntent, limit: sourceResultLimit, trace_id: correlationId },
+      { exaApiKey, timeoutMs: instantProviderTimeoutMs() },
+    );
+    const parsed = sourceDiscoveryInstantBatchSchema.safeParse(batch);
     if (!parsed.success) {
       console.warn("source_discovery_instant_invalid_response", { correlationId });
       return null;
@@ -414,7 +400,7 @@ async function refreshExternalPool(mode: SourceDiscoveryMode, query: string, ran
   const key = instantPoolKey(mode, rankingIntent, query);
   const existing = instantRefreshes.get(key);
   if (existing) return existing;
-  const refresh = callInstantAgent(mode, query, rankingIntent, correlationId).then(async (result) => {
+  const refresh = callInstantDiscovery(mode, query, rankingIntent, correlationId).then(async (result) => {
     if (!result) return { resources: [], exaMs: 0, providerFailed: true };
     if (result.resources.length > 0) void setSourceCandidatePool(mode, rankingIntent, query, result.resources);
     return result;

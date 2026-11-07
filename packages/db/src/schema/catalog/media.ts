@@ -1,4 +1,4 @@
-import { bigint, index, integer, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { bigint, boolean, index, integer, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { catalogSchema } from "../namespaces.js";
 import { resources } from "./resources.js";
 
@@ -11,11 +11,23 @@ export const videoDetails = catalogSchema.table("video_details", {
   publishedAt: timestamp("published_at", { withTimezone: true }),
   defaultAudioLanguage: text("default_audio_language"),
   captionStatus: text("caption_status"),
+  embeddable: boolean("embeddable"),
+  liveBroadcastContent: text("live_broadcast_content"),
+  privacyStatus: text("privacy_status"),
+  ageRestricted: boolean("age_restricted"),
   latestViewCount: bigint("latest_view_count", { mode: "number" }),
   latestLikeCount: bigint("latest_like_count", { mode: "number" }),
   latestCommentCount: bigint("latest_comment_count", { mode: "number" }),
   metricsCapturedAt: timestamp("metrics_captured_at", { withTimezone: true }),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }),
+});
+
+export const youtubeChannels = catalogSchema.table("youtube_channels", {
+  channelId: text("channel_id").primaryKey(),
+  subscriberCount: bigint("subscriber_count", { mode: "number" }),
+  viewCount: bigint("view_count", { mode: "number" }),
+  videoCount: bigint("video_count", { mode: "number" }),
+  metricsCapturedAt: timestamp("metrics_captured_at", { withTimezone: true }).notNull(),
 });
 
 export const videoMetricSnapshots = catalogSchema.table(

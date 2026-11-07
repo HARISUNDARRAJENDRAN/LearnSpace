@@ -158,9 +158,51 @@ async function completeDiscoveryOnboarding(page: import("@playwright/test").Page
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
-  await page.getByRole("button", { name: "Start learning" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/app/);
 }
+
+test("the last onboarding step plans a first session onto the calendar", async ({ page }) => {
+  const email = `first-session-${Date.now()}@example.test`;
+  const password = "discovery-password-123";
+  await page.goto("/register");
+  await page.getByLabel("Your name").fill("First Session Learner");
+  await page.getByLabel("Email address").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm password").fill(password);
+  await page.getByRole("button", { name: "Create account" }).click();
+  await page.getByRole("link", { name: "Open verification link" }).click();
+  await expect(page.locator("[data-onboarding-hydrated]")).toHaveAttribute("data-onboarding-hydrated", "true");
+  await page.getByRole("button", { name: "Get started" }).click();
+  await page.getByRole("button", { name: "Student" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Coursework" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  const search = page.getByPlaceholder("Search topics, skills, or domains");
+  for (const [query, label] of [["AI", /AI \/ Machine Learning/], ["Python", "Python skill"], ["React", "React skill"]] as const) {
+    await search.fill(query);
+    await page.getByRole("button", { name: label }).click();
+  }
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Clear explanations" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "I know the basics" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start now" })).toBeDisabled();
+  await page.getByRole("button", { name: /Something else/ }).click();
+  await page.getByPlaceholder("e.g. Practise recursion problems").fill("Practise recursion problems");
+  await page.getByRole("button", { name: "Practice", exact: true }).click();
+  await page.getByRole("button", { name: "45 min" }).click();
+  await page.getByRole("button", { name: "Start now" }).click();
+  // Planning a first session skips the one-time landing on Discover.
+  await expect(page).toHaveURL(/\/app$/);
+  const calendar = page.getByRole("region", { name: "Study plan" });
+  await expect(calendar.getByRole("button", { name: /Practise recursion problems/ }).first()).toBeVisible();
+  await expect(calendar.getByRole("button", { name: /Practise recursion problems/ }).first()).toHaveClass(/kind-practice/);
+});
 
 test("completed learner reaches Home and can use the app navigation", async ({ page }) => {
   const email = `discovery-${Date.now()}@example.test`;
@@ -195,15 +237,15 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.getByRole("button", { name: "Clear explanations" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
-  await page.getByRole("button", { name: "Start learning" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await expect(page).toHaveURL(/\/app\/discover$/);
 
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app$/);
   await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /^Hello, / })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Recent Activity", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Study mix", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Study plan" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Recent study", exact: true })).toBeVisible();
   const browserErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

@@ -169,6 +169,41 @@
       "when": 1791018048695,
       "tag": "0023_curated_concept_reconciliation",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793986585066,
+      "tag": "0024_youtube_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793987690541,
+      "tag": "0025_discovery_wake",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794031550891,
+      "tag": "0026_rate_limit_counters",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794063963452,
+      "tag": "0027_study_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794067751912,
+      "tag": "0028_plan_kinds",
+      "breakpoints": true
     }
   ]
 }

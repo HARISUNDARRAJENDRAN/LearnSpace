@@ -17,9 +17,8 @@ export function getClientIp(request: Request): string {
     return realIp || forwardedFor || "unknown";
   }
 
-  // Production is reachable only through Cloudflare Tunnel, which sets this
-  // header itself; the server port is published on loopback only.
-  return request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+  // Vercel sets this header to the connecting client and overwrites any value the client sends.
+  return realIp || "unknown";
 }
 
 export function getSessionContext(request: Request): SessionContext {
