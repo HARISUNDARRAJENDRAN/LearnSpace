@@ -1,6 +1,11 @@
 // Bundles the serverless worker into one ESM file for the Supabase Edge Function (Deno).
+import { readdirSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { build } from "esbuild";
+
+// esbuild resolves `./x.js` to a real x.js before x.ts, so stray tsc output in src would ship stale code.
+const stale = readdirSync(new URL("../src", import.meta.url)).filter((name) => name.endsWith(".js"));
+if (stale.length) throw new Error(`Delete compiled files from services/worker/src before bundling: ${stale.join(", ")}`);
 
 await build({
   entryPoints: [new URL("../src/edge.ts", import.meta.url).pathname],
