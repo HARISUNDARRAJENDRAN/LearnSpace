@@ -228,7 +228,7 @@ test("curriculum source preserves every item inside its area and category", asyn
   const areas = await getCurriculum();
   const items = areas.flatMap((area) => area.categories.flatMap((category) => category.items));
   assert.equal(items.length, sourceRows.length);
-  assert.equal(areas.length, 8);
+  assert.equal(areas.length, 18);
   assert.ok(items.some((item) => item.resourceType === "dynamic-rule"));
   assert.ok(items.every((item) => item.title && item.id));
   const categories = areas.flatMap((area) => area.categories);
@@ -371,4 +371,18 @@ test("source ranking returns up to thirty qualified resources without padding", 
 
 test("the bundled curriculum matches the curriculum CSV", async () => {
   assert.deepEqual(await getCurriculum(), await loadCurriculumFromCsv(), "run pnpm discovery:generate:category-intelligence");
+});
+
+test("curriculum search tolerates typos, ranks courses first and links each lesson to its step", async () => {
+  const { searchCurriculum } = await import("../lib/search/curriculum");
+  const typo = await searchCurriculum("derivatves");
+  assert.ok(typo.some((result) => result.kind === "lesson" && /derivative/i.test(result.title)));
+  const courses = await searchCurriculum("operating systems");
+  assert.equal(courses[0]?.kind, "collection");
+  assert.equal(courses[0]?.href, "/app/discover/univ-operating-systems");
+  const lesson = (await searchCurriculum("khan derivatives")).find((result) => result.kind === "lesson");
+  assert.match(lesson?.href ?? "", /^\/app\/discover\/[a-z0-9-]+\?step=\d+$/);
+  const urls = (await searchCurriculum("essence of linear algebra")).filter((result) => result.kind === "lesson").map((result) => result.title);
+  assert.equal(new Set(urls).size, urls.length);
+  assert.deepEqual(await searchCurriculum("xyzzy"), []);
 });

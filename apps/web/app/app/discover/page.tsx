@@ -13,7 +13,7 @@ import { getCurriculum } from "../../../lib/discovery/curriculum";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Discover | LearnSpace" };
 
-type DiscoverSearchParams = Promise<{ area?: string }>;
+type DiscoverSearchParams = Promise<{ area?: string; level?: string }>;
 
 export default async function DiscoverPage({ searchParams }: { searchParams: DiscoverSearchParams }) {
   const session = await getCurrentSession();
@@ -36,5 +36,5 @@ export default async function DiscoverPage({ searchParams }: { searchParams: Dis
     return <DiscoverLanding areas={areas} selectedArea={selectedArea} />;
   }
 
-  return <DiscoverLanding areas={areas} feed={feed} recommendationsEnabled={enabled} />;
+  return <DiscoverLanding areas={areas} feed={feed} recommendationsEnabled={enabled} {...(params.level ? { level: params.level } : {})} />;
 }

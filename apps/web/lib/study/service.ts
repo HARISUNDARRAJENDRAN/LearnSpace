@@ -36,6 +36,7 @@ import type {
   StudyResourceProgress,
   StudyResourceProvenance,
   StudyResourceReadiness,
+  StudySessionCourse,
   StudySessionResource,
   StudySessionView,
 } from "@learnspace/shared";
@@ -52,7 +53,7 @@ import {
   studyResourceProvenanceSchema,
   studyResourceReadinessSchema,
 } from "@learnspace/shared";
-import { and, asc, count, desc, eq, inArray, isNull, max, ne, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, ne, notInArray, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 import { invalidateHomeFeedCache } from "../discovery/cache";
 import { projectStudyBehavior } from "../discovery/service";
@@ -93,6 +94,60 @@ type JoinedBinding = {
   binding: BindingRow;
   resource: ResourceRecord;
 };
+
+type CourseLesson = { itemId: string; sectionId: string; sectionTitle: string; resourceId: string; title: string; youtubeId: string | null; channelTitle: string | null };
+
+/** An imported course keeps its collection on the session, so the canvas and the lesson lock can find it. */
+function courseOf(session: SessionRow): { collectionId: string; slug: string | null } | null {
+  const course = session.metadata.course;
+  if (!course || typeof course !== "object" || Array.isArray(course)) return null;
+  const { collectionId, slug } = course as Record<string, unknown>;
+  return typeof collectionId === "string" ? { collectionId, slug: typeof slug === "string" ? slug : null } : null;
+}
+
+function sessionInProgress(): AuthError {
+  return new AuthError("SESSION_IN_PROGRESS", "Finish your current session before starting something new.", 409);
+}
+
+/** Sessions holds one session at a time: the latest one still in progress. */
+async function currentSessionInTransaction(tx: Transaction, userId: string): Promise<SessionRow | null> {
+  const [current] = await tx.select().from(studySessions)
+    .where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), isNotNull(studySessions.activeResourceId)))
+    .orderBy(desc(studySessions.lastActiveAt))
+    .limit(1);
+  return current ?? null;
+}
+
+/** A course's playable lessons in study order; a video listed in two sections is studied once, and optional units are left out. */
+async function loadCourseLessons(tx: Transaction, collectionId: string): Promise<CourseLesson[]> {
+  const rows = await tx
+    .select({ itemId: collectionItems.id, sectionId: collectionSections.id, sectionTitle: collectionSections.title, resourceId: resources.id, title: resources.title, youtubeId: videoDetails.youtubeId, channelTitle: videoDetails.channelTitle })
+    .from(collectionItems)
+    .innerJoin(collectionSections, eq(collectionSections.id, collectionItems.sectionId))
+    .innerJoin(resources, eq(resources.id, collectionItems.resourceId))
+    .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
+    .where(and(eq(collectionSections.collectionId, collectionId), eq(collectionItems.required, true), eq(resources.type, "video"), eq(resources.status, "ready"), isNull(resources.deletedAt)))
+    .orderBy(asc(collectionSections.position), asc(collectionItems.position));
+  const seen = new Set<string>();
+  return rows.filter((row) => !seen.has(row.resourceId) && Boolean(seen.add(row.resourceId)));
+}
+
+async function completedResourceIds(tx: Transaction, userId: string, resourceIds: string[]): Promise<Set<string>> {
+  if (resourceIds.length === 0) return new Set();
+  const rows = await tx.select({ resourceId: userResourceProgress.resourceId }).from(userResourceProgress)
+    .where(and(eq(userResourceProgress.userId, userId), inArray(userResourceProgress.resourceId, resourceIds), eq(userResourceProgress.status, "completed")));
+  return new Set(rows.map((row) => row.resourceId));
+}
+
+/** Lessons unlock in order: a lesson opens only once every lesson before it is complete. */
+async function assertCourseLessonUnlocked(tx: Transaction, userId: string, collectionId: string, resourceId: string): Promise<void> {
+  const lessons = await loadCourseLessons(tx, collectionId);
+  const index = lessons.findIndex((lesson) => lesson.resourceId === resourceId);
+  if (index < 0) throw new AuthError("NOT_IN_COURSE", "This session only holds its course's lessons.", 422);
+  const completed = await completedResourceIds(tx, userId, lessons.map((lesson) => lesson.resourceId));
+  const firstOpen = lessons.findIndex((lesson) => !completed.has(lesson.resourceId));
+  if (firstOpen >= 0 && index > firstOpen) throw new AuthError("LESSON_LOCKED", "Finish the lessons before this one to unlock it.", 409);
+}
 
 function iso(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -566,6 +621,10 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
   }
 
   let session = await findResumableSession(tx, userId, normalized.resourceId);
+  const current = await currentSessionInTransaction(tx, userId);
+  if (current && current.id !== session?.id) throw sessionInProgress();
+  const resumedCourse = session ? courseOf(session) : null;
+  if (resumedCourse) await assertCourseLessonUnlocked(tx, userId, resumedCourse.collectionId, normalized.resourceId);
   const resumed = Boolean(session);
   if (!session) {
     const [created] = await tx
@@ -734,6 +793,7 @@ export async function getStudySession(userId: string, sessionId: string): Promis
     const resourcesView = joined.map((row) => build(row, row.resource.id === session.activeResourceId));
     const activeResource = resourcesView.find((item) => item.resourceId === session.activeResourceId) ?? null;
     const related = await findRelatedResources(tx, userId, activeJoined?.resource ?? null);
+    const course = await courseView(tx, userId, session);
     return {
       id: session.id,
       title: session.title ?? activeResource?.title ?? "Study session",
@@ -750,8 +810,31 @@ export async function getStudySession(userId: string, sessionId: string): Promis
         return { id: checkpoint.id, resourceId: checkpoint.resourceId, kind: checkpoint.kind, label: checkpoint.label, anchor: parsed.success ? parsed.data : null, createdAt: iso(checkpoint.createdAt) ?? new Date(0).toISOString() };
       }),
       related,
+      course,
     };
   });
+}
+
+async function courseView(tx: Transaction, userId: string, session: SessionRow): Promise<StudySessionCourse | null> {
+  const course = courseOf(session);
+  if (!course) return null;
+  const lessons = await loadCourseLessons(tx, course.collectionId);
+  const progressRows = lessons.length > 0
+    ? await tx.select().from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), inArray(userResourceProgress.resourceId, lessons.map((lesson) => lesson.resourceId))))
+    : [];
+  const progressByResource = new Map(progressRows.map((row) => [row.resourceId, row]));
+  const sections: StudySessionCourse["sections"] = [];
+  for (const lesson of lessons) {
+    const progress = progressByResource.get(lesson.resourceId);
+    const state = progress?.status === "completed" ? "completed" : lesson.resourceId === session.activeResourceId ? "current" : "locked";
+    let section = sections.at(-1);
+    if (section?.id !== lesson.sectionId) {
+      section = { id: lesson.sectionId, title: lesson.sectionTitle, lessons: [] };
+      sections.push(section);
+    }
+    section.lessons.push({ resourceId: lesson.resourceId, title: lesson.title, youtubeId: lesson.youtubeId, channelTitle: lesson.channelTitle, state, progressPct: Number(progress?.progressPct ?? 0) });
+  }
+  return { collectionId: course.collectionId, slug: course.slug, title: session.title ?? "Course", sections };
 }
 
 async function findRelatedResources(tx: Transaction, userId: string, current: ResourceRecord | null): Promise<StudySessionResource[]> {
@@ -864,6 +947,8 @@ export async function attachSessionResource(userId: string, sessionId: string, i
     const resource = await loadResource(tx, userId, normalized.resourceId);
     const type = resource ? studyType(resource.type) : null;
     if (!resource || !type) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This material is not ready to study here.", 404);
+    const course = courseOf(await lockSession(tx, userId, normalizedSessionId));
+    if (course) await assertCourseLessonUnlocked(tx, userId, course.collectionId, normalized.resourceId);
     const activated = await activateResourceInTransaction(
       tx,
       userId,
@@ -912,6 +997,15 @@ async function advanceCollectionEnrollment(tx: Transaction, userId: string, reso
       .set({ currentItemId: next?.item.id ?? row.item.id, status: next ? "active" : "completed", progressPct: items.length === 0 ? 100 : (completedCount / items.length) * 100, completedAt: next ? null : new Date(), updatedAt: new Date() })
       .where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, row.enrollment.collectionId)));
   }
+}
+
+/** A finished course hands over to the oldest one in the learner's queue, so Sessions always holds what is next. */
+async function startNextQueuedCollection(tx: Transaction, userId: string): Promise<void> {
+  // A queued enrollment's started_at is when it joined the queue.
+  const [queued] = await tx.select({ collectionId: collectionEnrollments.collectionId }).from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.status, "queued"))).orderBy(asc(collectionEnrollments.startedAt)).limit(1);
+  if (!queued) return;
+  // A savepoint: a course that cannot start must not undo the progress being saved.
+  await tx.transaction((savepoint) => startCollectionInTransaction(savepoint, userId, queued.collectionId, randomUUID())).catch((error: unknown) => console.warn(JSON.stringify({ metric: "queue_advance_failure", collectionId: queued.collectionId, error: error instanceof Error ? error.message : "start failed" })));
 }
 
 export async function updateStudyProgress(userId: string, sessionId: string, input: StudyProgressRequest): Promise<StudyProgressResponse> {
@@ -979,7 +1073,11 @@ export async function updateStudyProgress(userId: string, sessionId: string, inp
         });
       await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
       await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
-      if (eventInserted && input.event === "complete") await advanceCollectionEnrollment(tx, userId, input.resourceId);
+      if (eventInserted && input.event === "complete") {
+        await advanceCollectionEnrollment(tx, userId, input.resourceId);
+        // Last, so a finished session has made room before the next queued course starts.
+        if (await advanceSessionAfterCompletion(tx, userId, session, input.resourceId)) await startNextQueuedCollection(tx, userId);
+      }
     }
     if (eventInserted && input.event === "pause" && type === "video" && watchedSeconds < 30 && progressPct < 10 && now.getTime() - session.startedAt.getTime() < 120_000) {
       await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: input.resourceId, eventType: "resource.abandoned", actorType: "user", source: "web", idempotencyKey: `study:abandon:${normalizedSessionId}:${input.resourceId}`, occurredAt: now, payload: { progressPct, watchedSeconds, runId: attribution?.[input.resourceId] ?? null } });
@@ -998,6 +1096,8 @@ export async function pauseSession(userId: string, sessionId: string, idempotenc
     const eventInserted = await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType, actorType: "user", source: "web", idempotencyKey: `study:session:${normalizedSessionId}:${idempotencyKey}`, occurredAt: now, payload: { action } });
     if (!eventInserted) return;
     await tx.update(studySessions).set({ status: action === "pause" ? "paused" : "completed", endedAt: action === "pause" ? null : now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId)));
+    // A completed session leaves Sessions empty, so the next queued Library course can start.
+    if (action === "complete") await startNextQueuedCollection(tx, userId);
   });
 }
 
@@ -1048,33 +1148,132 @@ export async function listStudySessions(userId: string): Promise<Array<{ id: str
 
 export async function startCollection(userId: string, collectionId: string, idempotencyKey: string): Promise<StartStudySessionResponse> {
   const normalizedCollectionId = collectionIdSchema.parse(collectionId);
+  const response = await withUserTransaction(userId, (tx) => startCollectionInTransaction(tx, userId, normalizedCollectionId, idempotencyKey));
+  await invalidateHomeFeedCache(userId);
+  return response;
+}
+
+async function startCollectionInTransaction(tx: Transaction, userId: string, normalizedCollectionId: string, idempotencyKey: string): Promise<StartStudySessionResponse> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.collection.start:${userId}:${normalizedCollectionId}`}, 0))`);
+  const collectionRows = await tx
+    .select()
+    .from(collections)
+    .where(and(eq(collections.id, normalizedCollectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))))
+    .limit(1);
+  const collection = collectionRows[0];
+  if (!collection) throw new AuthError("COLLECTION_NOT_FOUND", "That collection is not available.", 404);
+  const current = await currentSessionInTransaction(tx, userId);
+  const currentCourse = current ? courseOf(current) : null;
+  // Continuing the course already in Sessions reopens it; anything else waits for that session to finish.
+  if (current && currentCourse?.collectionId === normalizedCollectionId && current.activeResourceId) {
+    const active = await loadResource(tx, userId, current.activeResourceId, true);
+    if (active) return responseFor(current.id, active, resourceReadiness(active, current.activeVersionId), true);
+  }
+  if (current) throw sessionInProgress();
+  const lessons = await loadCourseLessons(tx, normalizedCollectionId);
+  if (lessons.length > 0) return createCourseSession(tx, userId, collection, lessons);
+  // A collection with no videos (papers only) keeps the single-material session.
+  const items = await tx
+    .select({ item: collectionItems, sectionPosition: collectionSections.position, resource: resources })
+    .from(collectionItems)
+    .innerJoin(collectionSections, eq(collectionSections.id, collectionItems.sectionId))
+    .innerJoin(resources, eq(resources.id, collectionItems.resourceId))
+    .where(eq(collectionSections.collectionId, normalizedCollectionId))
+    .orderBy(asc(collectionSections.position), asc(collectionItems.position));
+  if (items.length === 0) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
+  const enrollmentRows = await tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, normalizedCollectionId))).limit(1);
+  const currentId = enrollmentRows[0]?.currentItemId;
+  const selected = items.find((row) => row.item.id === currentId) ?? items.find((row) => row.item.required) ?? items[0];
+  if (!selected) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
+  const type = studyType(selected.resource.type);
+  if (!type) throw new AuthError("UNSUPPORTED_COLLECTION_ITEM", "This collection item does not have a study experience yet.", 422);
+  const input: StartStudySessionRequest = { resourceId: selected.resource.id, origin: "collection", collectionId: normalizedCollectionId, collectionItemId: selected.item.id, idempotencyKey: `collection:${idempotencyKey}` };
+  const result = await startOrResumeInTransaction(tx, userId, input);
+  await tx.insert(collectionEnrollments).values({ userId, collectionId: normalizedCollectionId, currentItemId: selected.item.id, status: "active", progressPct: enrollmentRows[0]?.progressPct ?? 0 }).onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: selected.item.id, status: "active", updatedAt: new Date() } });
+  return result;
+}
+
+/** Finishing a lesson opens the next one in the same session; finishing the last one completes the session (and returns true). */
+async function advanceSessionAfterCompletion(tx: Transaction, userId: string, session: SessionRow, completedResourceId: string): Promise<boolean> {
+  const course = courseOf(session);
+  let remaining: string[];
+  if (course) {
+    const lessons = await loadCourseLessons(tx, course.collectionId);
+    const completed = await completedResourceIds(tx, userId, lessons.map((lesson) => lesson.resourceId));
+    remaining = lessons.flatMap((lesson) => completed.has(lesson.resourceId) ? [] : [lesson.resourceId]);
+  } else {
+    const bindings = await tx.select({ resourceId: sessionResources.resourceId }).from(sessionResources).where(eq(sessionResources.studySessionId, session.id));
+    const completed = await completedResourceIds(tx, userId, bindings.map((binding) => binding.resourceId));
+    remaining = bindings.flatMap((binding) => completed.has(binding.resourceId) ? [] : [binding.resourceId]);
+  }
+  const next = course && remaining[0] ? await loadResource(tx, userId, remaining[0]) : null;
+  if (next) {
+    await activateResourceInTransaction(tx, userId, session.id, next, "primary", undefined, { origin: "collection", correlationId: randomUUID(), intent: "start", requestKey: `course-advance:${completedResourceId}` });
+    return false;
+  }
+  if (remaining.length > 0) return false;
+  const now = new Date();
+  await tx.update(studySessions).set({ status: "completed", endedAt: now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, session.id), eq(studySessions.userId, userId)));
+  // Every playable lesson is done, even if the course lists archived videos after them.
+  if (course) await tx.update(collectionEnrollments).set({ status: "completed", progressPct: 100, completedAt: now, updatedAt: now }).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, course.collectionId)));
+  return true;
+}
+
+export async function findCurrentStudySession(userId: string): Promise<{ id: string } | null> {
+  return withUserTransaction(userId, async (tx) => {
+    const current = await currentSessionInTransaction(tx, userId);
+    return current ? { id: current.id } : null;
+  });
+}
+
+/** Whether a Discover course has lessons that can be studied, so its import button only shows when it will work. */
+export async function isCourseImportable(slug: string, userId: string): Promise<boolean> {
+  return withUserTransaction(userId, async (tx) => {
+    const [course] = await tx.select({ id: collections.id }).from(collections).where(and(eq(collections.slug, slug), eq(collections.kind, "curated"), isNull(collections.ownerUserId))).limit(1);
+    return course ? (await loadCourseLessons(tx, course.id)).length > 0 : false;
+  });
+}
+
+/** Imports a whole Discover course as the learner's one session, starting at its first unfinished lesson. */
+export async function importCourseToSessions(userId: string, slug: string): Promise<StartStudySessionResponse> {
   const response = await withUserTransaction(userId, async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.collection.start:${userId}:${normalizedCollectionId}`}, 0))`);
-    const collectionRows = await tx
-      .select()
-      .from(collections)
-      .where(and(eq(collections.id, normalizedCollectionId), or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))))
-      .limit(1);
-    if (!collectionRows[0]) throw new AuthError("COLLECTION_NOT_FOUND", "That collection is not available.", 404);
-    const items = await tx
-      .select({ item: collectionItems, sectionPosition: collectionSections.position, resource: resources })
-      .from(collectionItems)
-      .innerJoin(collectionSections, eq(collectionSections.id, collectionItems.sectionId))
-      .innerJoin(resources, eq(resources.id, collectionItems.resourceId))
-      .where(eq(collectionSections.collectionId, normalizedCollectionId))
-      .orderBy(asc(collectionSections.position), asc(collectionItems.position));
-    if (items.length === 0) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
-    const enrollmentRows = await tx.select().from(collectionEnrollments).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, normalizedCollectionId))).limit(1);
-    const currentId = enrollmentRows[0]?.currentItemId;
-    const selected = items.find((row) => row.item.id === currentId) ?? items.find((row) => row.item.required) ?? items[0];
-    if (!selected) throw new AuthError("EMPTY_COLLECTION", "This collection does not have any learning material yet.", 422);
-    const type = studyType(selected.resource.type);
-    if (!type) throw new AuthError("UNSUPPORTED_COLLECTION_ITEM", "This collection item does not have a study experience yet.", 422);
-    const input: StartStudySessionRequest = { resourceId: selected.resource.id, origin: "collection", collectionId: normalizedCollectionId, collectionItemId: selected.item.id, idempotencyKey: `collection:${idempotencyKey}` };
-    const result = await startOrResumeInTransaction(tx, userId, input);
-    await tx.insert(collectionEnrollments).values({ userId, collectionId: normalizedCollectionId, currentItemId: selected.item.id, status: "active", progressPct: enrollmentRows[0]?.progressPct ?? 0 }).onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: selected.item.id, status: "active", updatedAt: new Date() } });
-    return result;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.course.import:${userId}`}, 0))`);
+    if (await currentSessionInTransaction(tx, userId)) throw sessionInProgress();
+    const [collection] = await tx.select().from(collections).where(and(eq(collections.slug, slug), eq(collections.kind, "curated"), isNull(collections.ownerUserId))).limit(1);
+    if (!collection) throw new AuthError("COURSE_NOT_AVAILABLE", "This course cannot be imported yet.", 404);
+    const lessons = await loadCourseLessons(tx, collection.id);
+    if (lessons.length === 0) throw new AuthError("EMPTY_COLLECTION", "This course does not have any playable lessons yet.", 422);
+    return createCourseSession(tx, userId, collection, lessons);
   });
   await invalidateHomeFeedCache(userId);
   return response;
+}
+
+/** One session holding every lesson of a course in order, opened at the first lesson the learner has not finished. */
+async function createCourseSession(tx: Transaction, userId: string, collection: typeof collections.$inferSelect, lessons: CourseLesson[]): Promise<StartStudySessionResponse> {
+  const completed = await completedResourceIds(tx, userId, lessons.map((lesson) => lesson.resourceId));
+  const startIndex = lessons.findIndex((lesson) => !completed.has(lesson.resourceId));
+  // Reopening a lesson would mark it unfinished again; finished courses are revisited from the Library instead.
+  if (startIndex < 0) throw new AuthError("COURSE_COMPLETED", "You've finished this course. Rewatch its lessons from your Library.", 409);
+  const records = await Promise.all(lessons.map((lesson) => loadResource(tx, userId, lesson.resourceId)));
+  const [session] = await tx.insert(studySessions).values({
+    userId,
+    title: collection.title,
+    mode: "guided_learning",
+    status: "active",
+    metadata: { startedFrom: "collection", course: { collectionId: collection.id, slug: collection.slug } },
+  }).returning();
+  if (!session) throw new Error("Study session could not be created");
+  await tx.insert(sessionResources).values(records.flatMap((record, position) => {
+    if (!record) return [];
+    const ready = Boolean(record.versionId && record.versionStatus === "ready");
+    return [{ studySessionId: session.id, resourceId: record.id, resourceVersionId: ready ? record.versionId : null, bindingStatus: ready ? "ready" : "preparing", role: "primary", position, addedBy: "user" }];
+  }));
+  const first = records[startIndex];
+  const lesson = lessons[startIndex];
+  if (!first || !lesson) throw new AuthError("RESOURCE_NOT_AVAILABLE", "This course's first lesson is not ready to study.", 404);
+  const activated = await activateResourceInTransaction(tx, userId, session.id, first, "primary", undefined, { origin: "collection", correlationId: randomUUID(), intent: "start", requestKey: `course-start:${collection.id}` });
+  await tx.insert(collectionEnrollments).values({ userId, collectionId: collection.id, currentItemId: lesson.itemId, status: "active", progressPct: (completed.size / lessons.length) * 100 })
+    .onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: lesson.itemId, status: "active", updatedAt: new Date() } });
+  return responseFor(session.id, first, resourceReadiness(first, activated.resourceVersionId), false);
 }

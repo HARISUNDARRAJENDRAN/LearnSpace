@@ -9,7 +9,7 @@ const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.D
 test("StudySession starts provisionally, switches resources in place, and preserves meaningful progress", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
   const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!migratorUrl) throw new Error("DATABASE_MIGRATOR_URL is required");
-  const [{ closeDb }, { createEmailUser }, { getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, getStudySession, pauseSession, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
+  const [{ closeDb }, { createEmailUser }, { addCourseToLibrary, getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, getStudySession, pauseSession, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
     import("@learnspace/db"),
     import("../lib/auth/repository"),
     import("../lib/library/service"),
@@ -29,9 +29,12 @@ test("StudySession starts provisionally, switches resources in place, and preser
   const foreignCollectionId = randomUUID();
   const privateForeignCollectionId = randomUUID();
   const curatedCollectionId = randomUUID();
+  const curatedSlug = `curated-${randomUUID()}`;
   const generatedCollectionId = randomUUID();
   const collectionSectionId = randomUUID();
   const collectionVideoItemId = randomUUID();
+  const curatedSectionId = randomUUID();
+  const curatedItemId = randomUUID();
   const collectionPaperItemId = randomUUID();
   const videoYoutubeId = `s${randomUUID().replaceAll("-", "").slice(0, 10)}`;
   const concurrentYoutubeId = `c${randomUUID().replaceAll("-", "").slice(0, 10)}`;
@@ -75,16 +78,16 @@ test("StudySession starts provisionally, switches resources in place, and preser
         (${ownCollectionId}, ${owner.id}, 'manual', ${`own-${randomUUID()}`}, 'private', 'Owner playlist', 'A learner-owned playlist.'),
         (${foreignCollectionId}, ${foreign.id}, 'manual', ${`foreign-${randomUUID()}`}, 'public', 'Foreign public playlist', 'A public playlist from another learner.'),
         (${privateForeignCollectionId}, ${foreign.id}, 'manual', ${`private-${randomUUID()}`}, 'private', 'Private foreign playlist', 'This collection is not visible to the owner.'),
-        (${curatedCollectionId}, NULL, 'curated', ${`curated-${randomUUID()}`}, 'public', 'Editorial collection', 'A LearnSpace collection.'),
+        (${curatedCollectionId}, NULL, 'curated', ${curatedSlug}, 'public', 'Editorial collection', 'A LearnSpace collection.'),
         (${generatedCollectionId}, ${owner.id}, 'generated', ${`generated-${randomUUID()}`}, 'private', 'Generated learner collection', 'A real generated collection.')
     `;
     await migrator`
       INSERT INTO catalog.collection_sections (id, collection_id, title, description, position)
-      VALUES (${collectionSectionId}, ${ownCollectionId}, 'One thread', 'Video then paper.', 0)
+      VALUES (${collectionSectionId}, ${ownCollectionId}, 'One thread', 'Video then paper.', 0), (${curatedSectionId}, ${curatedCollectionId}, 'Course units', NULL, 0)
     `;
     await migrator`
       INSERT INTO catalog.collection_items (id, section_id, resource_id, position, required)
-      VALUES (${collectionVideoItemId}, ${collectionSectionId}, ${videoId}, 0, true), (${collectionPaperItemId}, ${collectionSectionId}, ${paperId}, 1, true)
+      VALUES (${collectionVideoItemId}, ${collectionSectionId}, ${videoId}, 0, true), (${collectionPaperItemId}, ${collectionSectionId}, ${paperId}, 1, true), (${curatedItemId}, ${curatedSectionId}, ${concurrentVideoId}, 0, true)
     `;
     await migrator`
       INSERT INTO catalog.collection_enrollments (user_id, collection_id, current_item_id, status, progress_pct)
@@ -108,33 +111,36 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(first.route, `/app/study/video/${sessionId}`);
     assert.equal(first.readiness, "preparing");
 
+    // Sessions holds one thing at a time: the owner cannot start a second video while this one is in progress.
+    await assert.rejects(startOrResumeStudySession(owner.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `second-${randomUUID()}` }), (error: unknown) => error instanceof AuthError && error.code === "SESSION_IN_PROGRESS");
+    // Two tabs of a learner with an empty Sessions share one session.
     const concurrentStarts = await Promise.all([
-      startOrResumeStudySession(owner.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `concurrent-a-${randomUUID()}` }),
-      startOrResumeStudySession(owner.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `concurrent-b-${randomUUID()}` }),
+      startOrResumeStudySession(foreign.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `concurrent-a-${randomUUID()}` }),
+      startOrResumeStudySession(foreign.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `concurrent-b-${randomUUID()}` }),
     ]);
     assert.equal(concurrentStarts[0]?.sessionId, concurrentStarts[1]?.sessionId);
     const concurrentSessions = await migrator<{ count: number }[]>`
       SELECT count(*)::int AS count
       FROM study.study_sessions AS sessions
       INNER JOIN study.session_resources AS bindings ON bindings.study_session_id = sessions.id
-      WHERE sessions.user_id = ${owner.id} AND bindings.resource_id = ${concurrentVideoId} AND sessions.status IN ('active', 'paused')
+      WHERE sessions.user_id = ${foreign.id} AND bindings.resource_id = ${concurrentVideoId} AND sessions.status IN ('active', 'paused')
     `;
     assert.equal(concurrentSessions[0]?.count, 1);
     const concurrentOpened = await migrator<{ count: number }[]>`
       SELECT count(*)::int AS count
       FROM activity.activity_events
-      WHERE user_id = ${owner.id} AND resource_id = ${concurrentVideoId} AND event_type = 'resource.opened'
+      WHERE user_id = ${foreign.id} AND resource_id = ${concurrentVideoId} AND event_type = 'resource.opened'
     `;
     assert.equal(concurrentOpened[0]?.count, 1);
     const concurrentDiscoveryStarts = await migrator<{ count: number }[]>`
       SELECT count(*)::int AS count
       FROM discovery.discovery_interactions
-      WHERE user_id = ${owner.id} AND resource_id = ${concurrentVideoId} AND action = 'start_session'
+      WHERE user_id = ${foreign.id} AND resource_id = ${concurrentVideoId} AND action = 'start_session'
     `;
     assert.equal(concurrentDiscoveryStarts[0]?.count, 1);
     const concurrentSessionId = concurrentStarts[0]?.sessionId;
     assert.ok(concurrentSessionId);
-    const relatedView = await getStudySession(owner.id, concurrentSessionId);
+    const relatedView = await getStudySession(foreign.id, concurrentSessionId);
     const highQualityIndex = relatedView.related.findIndex((resource) => resource.resourceId === highQualityPaperId);
     const lowQualityIndex = relatedView.related.findIndex((resource) => resource.resourceId === lowQualityPaperId);
     assert.ok(highQualityIndex >= 0);
@@ -148,22 +154,27 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(replayAgain.sessionId, sessionId);
     assert.equal(replayAgain.resumed, true);
 
-    const researchStart = await startOrResumeStudySession(owner.id, { resourceId: paperId, origin: "research", idempotencyKey: `research-start-${randomUUID()}` });
+    await pauseSession(foreign.id, concurrentSessionId, `finish-concurrent-${randomUUID()}`, "complete");
+    const researchStart = await startOrResumeStudySession(foreign.id, { resourceId: paperId, origin: "research", idempotencyKey: `research-start-${randomUUID()}` });
     assert.equal(researchStart.route, `/app/study/paper/${researchStart.sessionId}`);
     assert.equal(researchStart.readiness, "ready");
-    assert.equal((await getStudySession(owner.id, researchStart.sessionId)).mode, "research");
+    assert.equal((await getStudySession(foreign.id, researchStart.sessionId)).mode, "research");
 
+    // The library holds only the learner's own collections and the courses they added.
+    assert.equal((await getLibraryPage(owner.id)).collections.some((collection) => collection.id === curatedCollectionId), false);
+    await addCourseToLibrary(owner.id, curatedSlug);
+    await addCourseToLibrary(owner.id, curatedSlug);
+    await assert.rejects(addCourseToLibrary(owner.id, `missing-${randomUUID()}`), /cannot be added/);
     const libraryPage = await getLibraryPage(owner.id);
     const ownPlaylist = libraryPage.collections.find((collection) => collection.id === ownCollectionId);
-    const foreignPlaylist = libraryPage.collections.find((collection) => collection.id === foreignCollectionId);
     const editorialCollection = libraryPage.collections.find((collection) => collection.id === curatedCollectionId);
     const generatedCollection = libraryPage.collections.find((collection) => collection.id === generatedCollectionId);
     assert.equal(ownPlaylist?.ownership, "user");
     assert.equal(ownPlaylist?.source, "user");
-    assert.equal(foreignPlaylist?.ownership, "other");
-    assert.equal(foreignPlaylist?.source, "public");
+    assert.equal(libraryPage.collections.some((collection) => collection.id === foreignCollectionId), false);
     assert.equal(editorialCollection?.ownership, "learnspace");
     assert.equal(editorialCollection?.source, "learnspace");
+    assert.equal(editorialCollection?.status, "queued");
     assert.equal(generatedCollection?.ownership, "user");
     assert.equal(generatedCollection?.source, "generated");
     const collectionDetail = await getCollectionDetail(owner.id, ownCollectionId);
@@ -284,7 +295,13 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(pauseEvents[0]?.count, 1);
     await startOrResumeStudySession(owner.id, { resourceId: videoId, origin: "home", idempotencyKey: `resume-after-pause-${randomUUID()}` });
 
+    // Finishing the last unit of the current course completes it, but the queued course waits while this session is still open.
+    await migrator`UPDATE catalog.collection_items SET required = false WHERE id = ${collectionPaperItemId}`;
+    await migrator`UPDATE catalog.collection_enrollments SET current_item_id = ${collectionVideoItemId} WHERE user_id = ${owner.id} AND collection_id = ${ownCollectionId}`;
     await updateStudyProgress(owner.id, sessionId, { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `complete-${randomUUID()}` });
+    const enrollments = await migrator<{ collection_id: string; status: string; current_item_id: string | null }[]>`SELECT collection_id, status, current_item_id FROM catalog.collection_enrollments WHERE user_id = ${owner.id} AND collection_id IN (${ownCollectionId}, ${curatedCollectionId})`;
+    assert.equal(enrollments.find((row) => row.collection_id === ownCollectionId)?.status, "completed");
+    assert.equal(enrollments.find((row) => row.collection_id === curatedCollectionId)?.status, "queued");
     await updateStudyProgress(owner.id, sessionId, { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `complete-retry-${randomUUID()}` });
     const completed = await migrator<{ status: string; progress_pct: number }[]>`SELECT status, progress_pct FROM study.user_resource_progress WHERE user_id = ${owner.id} AND resource_id = ${videoId}`;
     assert.equal(completed[0]?.status, "completed");
@@ -296,6 +313,9 @@ test("StudySession starts provisionally, switches resources in place, and preser
       SELECT count(*)::int AS count FROM activity.activity_events WHERE user_id = ${owner.id} AND study_session_id = ${sessionId} AND event_type = 'session.completed'
     `;
     assert.equal(sessionCompletionEvents[0]?.count, 1);
+    // Completing the session empties Sessions, so the queued course starts.
+    const [queuedCourse] = await migrator<{ status: string; current_item_id: string | null }[]>`SELECT status, current_item_id FROM catalog.collection_enrollments WHERE user_id = ${owner.id} AND collection_id = ${curatedCollectionId}`;
+    assert.deepEqual(queuedCourse, { status: "active", current_item_id: curatedItemId });
 
     await assert.rejects(() => getStudySession(foreign.id, sessionId ?? ""), (error: unknown) => error instanceof AuthError && error.status === 404);
     await assert.rejects(() => startOrResumeStudySession(owner.id, { resourceId: privateId, origin: "discover", idempotencyKey: `private-${randomUUID()}` }), (error: unknown) => error instanceof AuthError && error.status === 404);
@@ -315,8 +335,8 @@ test("StudySession starts provisionally, switches resources in place, and preser
     await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id IN (${owner.id}, ${foreign.id})`;
     await migrator`DELETE FROM discovery.user_concept_affinity WHERE user_id IN (${owner.id}, ${foreign.id})`;
     await migrator`DELETE FROM catalog.collection_enrollments WHERE collection_id IN (${ownCollectionId}, ${foreignCollectionId}, ${privateForeignCollectionId}, ${curatedCollectionId}, ${generatedCollectionId})`;
-    await migrator`DELETE FROM catalog.collection_items WHERE id IN (${collectionVideoItemId}, ${collectionPaperItemId})`;
-    await migrator`DELETE FROM catalog.collection_sections WHERE id = ${collectionSectionId}`;
+    await migrator`DELETE FROM catalog.collection_items WHERE id IN (${collectionVideoItemId}, ${collectionPaperItemId}, ${curatedItemId})`;
+    await migrator`DELETE FROM catalog.collection_sections WHERE id IN (${collectionSectionId}, ${curatedSectionId})`;
     await migrator`DELETE FROM catalog.collections WHERE id IN (${ownCollectionId}, ${foreignCollectionId}, ${privateForeignCollectionId}, ${curatedCollectionId}, ${generatedCollectionId})`;
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN (${owner.id}, ${foreign.id}) OR resource_id IN (${videoId}, ${concurrentVideoId}, ${paperId}, ${lowQualityPaperId}, ${highQualityPaperId}, ${privateId})`;
     await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN (${owner.id}, ${foreign.id})) OR resource_id IN (${videoId}, ${concurrentVideoId}, ${paperId}, ${lowQualityPaperId}, ${highQualityPaperId}, ${privateId})`;

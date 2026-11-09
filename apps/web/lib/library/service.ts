@@ -23,7 +23,6 @@ export type SavedLibraryResource = {
 export type LibraryPageData = {
   savedResources: SavedLibraryResource[];
   collections: LibraryCollectionSummary[];
-  continueCollections: LibraryCollectionSummary[];
 };
 
 function iso(value: Date | string | null | undefined): string | null {
@@ -49,6 +48,10 @@ function collectionSource(collection: typeof collections.$inferSelect, userId: s
   return "public";
 }
 
+function enrollmentStatus(value: string | undefined): LibraryCollectionSummary["status"] {
+  return value === "queued" || value === "active" || value === "completed" ? value : null;
+}
+
 function readiness(status: typeof resources.$inferSelect.status, hasVersion: boolean, hasDetail: boolean): SavedLibraryResource["readiness"] {
   if (status === "failed" || status === "archived" || !hasDetail) return "unavailable";
   if (hasVersion) return studyResourceReadinessSchema.parse("ready");
@@ -68,7 +71,8 @@ export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
   return withUserTransaction(userId, async (tx) => {
     const [savedRows, collectionRows] = await Promise.all([
       tx.select({ item: libraryItems, resource: resources, video: videoDetails, paper: paperDetails }).from(libraryItems).innerJoin(resources, eq(resources.id, libraryItems.resourceId)).leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id)).leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id)).where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "saved"))).orderBy(desc(libraryItems.updatedAt)).limit(60),
-      tx.select().from(collections).where(or(eq(collections.ownerUserId, userId), eq(collections.visibility, "public"))).orderBy(desc(collections.updatedAt)).limit(40),
+      // Only the learner's own collections and the ones they added; Discover is where everything else is browsed.
+      tx.select().from(collections).where(or(eq(collections.ownerUserId, userId), inArray(collections.id, tx.select({ id: collectionEnrollments.collectionId }).from(collectionEnrollments).where(eq(collectionEnrollments.userId, userId))))).orderBy(desc(collections.updatedAt)).limit(100),
     ]);
     const resourceIds = savedRows.map((row) => row.resource.id);
     const progressRows = resourceIds.length > 0 ? await tx.select().from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), inArray(userResourceProgress.resourceId, resourceIds))) : [];
@@ -80,9 +84,14 @@ export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
     ]);
     const countByCollection = new Map(countRows.map((row) => [row.collectionId, Number(row.itemCount)]));
     const enrollmentByCollection = new Map(enrollmentRows.map((row) => [row.collectionId, row]));
-    const summaries = collectionRows.map((collection) => {
+    // The queue runs first in, first out; everything else shows the most recently studied first.
+    const order = (collection: typeof collections.$inferSelect) => {
       const enrollment = enrollmentByCollection.get(collection.id);
-      return { id: collection.id, title: collection.title, description: collection.description, kind: kind(collection.kind), ownership: collectionOwnership(collection, userId), source: collectionSource(collection, userId), visibility: collection.visibility, itemCount: countByCollection.get(collection.id) ?? 0, progressPct: enrollment ? Number(enrollment.progressPct) : null, currentItemId: enrollment?.currentItemId ?? null } satisfies LibraryCollectionSummary;
+      return enrollment?.status === "queued" ? enrollment.startedAt.getTime() : -(enrollment?.updatedAt ?? collection.updatedAt).getTime();
+    };
+    const summaries = collectionRows.sort((left, right) => order(left) - order(right)).map((collection) => {
+      const enrollment = enrollmentByCollection.get(collection.id);
+      return { id: collection.id, title: collection.title, description: collection.description, kind: kind(collection.kind), ownership: collectionOwnership(collection, userId), source: collectionSource(collection, userId), visibility: collection.visibility, itemCount: countByCollection.get(collection.id) ?? 0, progressPct: enrollment ? Number(enrollment.progressPct) : null, currentItemId: enrollment?.currentItemId ?? null, status: enrollmentStatus(enrollment?.status) } satisfies LibraryCollectionSummary;
     });
     return {
       savedResources: savedRows.map((row) => ({
@@ -96,7 +105,6 @@ export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
         readiness: readiness(row.resource.status, Boolean(row.resource.currentVersionId), row.resource.type === "video" ? Boolean(row.video?.youtubeId) : row.resource.type === "paper" || row.resource.type === "pdf" ? Boolean(row.paper) : true),
       })),
       collections: summaries,
-      continueCollections: summaries.filter((collection) => collection.progressPct !== null && collection.progressPct < 100),
     };
   });
 }
@@ -139,7 +147,7 @@ export async function getCollectionDetail(userId: string, collectionId: string):
     const itemBySection = new Map<string, LibraryCollectionDetail["sections"][number]["items"]>();
     for (const row of itemRows) {
       const items = itemBySection.get(row.item.sectionId) ?? [];
-      items.push({ id: row.item.id, resourceId: row.resource.id, title: row.resource.title, type: row.resource.type === "video" || row.resource.type === "paper" || row.resource.type === "pdf" ? row.resource.type : "other", position: row.item.position, required: row.item.required, note: row.item.note, progressPct: Number(progressByResource.get(row.resource.id)?.progressPct ?? 0) });
+      items.push({ id: row.item.id, resourceId: row.resource.id, title: row.resource.title, type: row.resource.type === "video" || row.resource.type === "paper" || row.resource.type === "pdf" ? row.resource.type : "other", position: row.item.position, required: row.item.required, note: row.item.note, progressPct: Number(progressByResource.get(row.resource.id)?.progressPct ?? 0), completed: progressByResource.get(row.resource.id)?.status === "completed", youtubeId: row.resource.type === "video" && row.resource.provider === "youtube" ? row.resource.externalId : null });
       itemBySection.set(row.item.sectionId, items);
     }
     const itemCount = itemRows.length;
@@ -154,8 +162,19 @@ export async function getCollectionDetail(userId: string, collectionId: string):
       itemCount,
       progressPct: enrollment ? Number(enrollment.progressPct) : null,
       currentItemId: enrollment?.currentItemId ?? null,
+      status: enrollmentStatus(enrollment?.status),
       sections: sections.map((section) => ({ id: section.id, title: section.title, description: section.description, items: (itemBySection.get(section.id) ?? []).sort((left, right) => left.position - right.position) })),
     };
+  });
+}
+
+/** Queues a whole Discover course (published by the worker as a curated collection); it starts when the course before it finishes. */
+export async function addCourseToLibrary(userId: string, slug: string): Promise<void> {
+  await withUserTransaction(userId, async (tx) => {
+    const [course] = await tx.select({ id: collections.id }).from(collections).where(and(eq(collections.slug, slug), eq(collections.kind, "curated"), isNull(collections.ownerUserId))).limit(1);
+    if (!course) throw new AuthError("COURSE_NOT_AVAILABLE", "This course cannot be added to your library yet.", 404);
+    // A course already queued, in progress or finished keeps its place.
+    await tx.insert(collectionEnrollments).values({ userId, collectionId: course.id, status: "queued" }).onConflictDoNothing();
   });
 }
 

@@ -1,15 +1,15 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { DiscoveryBrowser } from "../../../../components/discovery/DiscoveryBrowser";
-import { CategoryIntelligencePanel } from "../../../../components/discovery/CategoryIntelligencePanel";
-import { getCategoryIntelligence } from "../../../../lib/discovery/category-intelligence";
 import { hasBrowsableResources } from "../../../../lib/discovery/browse";
 import { getCurriculum, getCurriculumCategoryBySlug, withPlaylistThumbnailFallbacks } from "../../../../lib/discovery/curriculum";
+import { requireCompletedSession } from "../../../../lib/discovery/access";
+import { findCurrentStudySession, isCourseImportable } from "../../../../lib/study/service";
 
 export const dynamic = "force-dynamic";
 export const dynamicParams = false;
 
-type Props = { params: Promise<{ categorySlug: string }> };
+type Props = { params: Promise<{ categorySlug: string }>; searchParams: Promise<{ step?: string }> };
 
 export async function generateStaticParams() {
   const areas = await getCurriculum();
@@ -26,11 +26,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   }
 }
 
-export default async function DiscoverCategoryPage({ params }: Props) {
+export default async function DiscoverCategoryPage({ params, searchParams }: Props) {
   const { categorySlug } = await params;
+  const { step } = await searchParams;
   const resolved = await getCurriculumCategoryBySlug(categorySlug);
   if (!resolved || !hasBrowsableResources(resolved.category)) notFound();
 
-  const { area, category } = resolved;
-  return <DiscoveryBrowser key={category.slug} areas={[{ name: area.name, categories: [category] }]} category={await withPlaylistThumbnailFallbacks(category)} intelligencePanel={<CategoryIntelligencePanel analysis={getCategoryIntelligence(category)} />} />;
+  const { category } = resolved;
+  const auth = await requireCompletedSession();
+  // Sessions holds one course at a time, so importing is offered only while it is empty.
+  const [current, importable, withThumbnails] = await Promise.all([findCurrentStudySession(auth.user.id), isCourseImportable(category.slug, auth.user.id), withPlaylistThumbnailFallbacks(category)]);
+  return <DiscoveryBrowser key={category.slug} initialStep={Number(step) || 1} category={withThumbnails} canImport={!current && importable} />;
 }

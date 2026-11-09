@@ -1,0 +1,332 @@
+/* Video session: a whiteboard with the lesson as a card and a side panel for the card's content. */
+.video-session {
+  --session-ink: rgba(0, 0, 0, .88);
+  --session-ink-soft: rgba(0, 0, 0, .72);
+  --session-ink-muted: rgba(0, 0, 0, .48);
+  --session-line: rgba(0, 0, 0, .13);
+  --session-hairline: rgba(0, 0, 0, .08);
+  --session-canvas: #f7f7f7;
+  --session-outer: #eeeded;
+  --session-hover: rgba(0, 0, 0, .05);
+  --session-blue: #2876dc;
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--session-outer);
+  color: var(--session-ink);
+  font-family: var(--font-app), Inter, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* The shell header gives way to the session's own bar; while the sidebar is a drawer it stays for the menu. */
+@media (min-width: 801px) {
+  .application-main:has(.video-session) .application-header { display: none; }
+}
+
+.session-pane {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  grid-template-rows: 48px minmax(0, 1fr);
+  background: var(--session-canvas);
+  transition: margin 160ms ease, border-radius 160ms ease;
+}
+
+.video-session.is-panel-open .session-pane {
+  overflow: hidden;
+  margin: 8px 0 8px 8px;
+  border: 1px solid var(--session-line);
+  border-radius: 8px;
+}
+
+.session-topbar {
+  z-index: 3;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 12px 0 16px;
+}
+
+.session-crumbs { display: flex; min-width: 0; align-items: center; gap: 10px; color: var(--session-ink-muted); }
+.session-crumbs a { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border-radius: 6px; color: #3f9a64; }
+.session-crumbs a:hover { background: var(--session-hover); }
+.session-crumbs svg { width: 17px; height: 17px; }
+.session-crumbs h1 { overflow: hidden; margin: 0; color: var(--session-ink); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+
+.session-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
+
+/* Study tools use the app's segmented control. */
+.session-tools,
+.session-segmented {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--application-control-surface, #f5f5f4);
+  box-shadow: inset 0 0 0 1px var(--session-hairline);
+}
+
+.session-tools button,
+.session-segmented button {
+  display: inline-flex;
+  height: 26px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #3d4043;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.session-tools button svg { width: 15px; height: 15px; stroke-width: 1.8; }
+.session-tools button:hover, .session-segmented button:hover { background: rgba(0, 0, 0, .045); }
+.session-tools button.is-active, .session-segmented button.is-active { background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .06); color: var(--session-ink); }
+.session-tools button.is-active svg { color: var(--session-blue); }
+
+.session-icon-button,
+.video-session .study-materials-toggle {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--session-ink-soft);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.session-icon-button { width: 28px; flex: 0 0 auto; padding: 0; }
+.session-icon-button svg { width: 17px; height: 17px; }
+.session-icon-button:hover, .video-session .study-materials-toggle:hover { background: var(--session-hover); color: var(--session-ink); text-decoration: none; }
+.session-icon-button:disabled { opacity: .4; cursor: default; }
+.session-icon-button:disabled:hover { background: transparent; }
+.session-icon-button[aria-pressed="true"] { background: var(--session-hover); color: var(--session-ink); }
+.video-session :is(button, a, input, textarea, select):focus-visible { outline: 2px solid var(--session-blue); outline-offset: 1px; }
+
+.video-session .study-materials { margin-left: 0; }
+.video-session .study-materials-toggle { min-height: 0; padding: 3px 9px; font-size: 13px; font-weight: 400; }
+.video-session .study-materials-toggle span { width: 18px; height: 18px; background: var(--session-hover); color: var(--session-ink-soft); font-size: 11px; }
+.video-session .study-materials-popover { padding: 8px; border: 1px solid var(--session-hairline); border-radius: 10px; background: #fff; box-shadow: 0 12px 32px rgba(0, 0, 0, .12); }
+.video-session .study-popover-heading { padding: 4px 6px 8px; border-bottom: 1px solid var(--session-hairline); }
+.video-session .study-popover-heading strong { font-family: inherit; font-size: 14px; font-weight: 600; }
+.video-session .study-popover-heading button { color: var(--session-ink-muted); font-size: 12px; font-weight: 500; }
+.video-session .study-materials-popover ul { margin-top: 6px; }
+.video-session .study-materials-popover li button { padding: 8px 6px; border-radius: 6px; color: var(--session-ink); }
+.video-session .study-materials-popover li button:hover, .video-session .study-materials-popover li button.is-active { background: var(--session-hover); }
+.video-session .study-materials-popover li button > span:nth-child(2) { font-family: inherit; font-size: 14px; }
+.video-session :is(.material-type, .study-materials-popover li small) { color: var(--session-ink-muted); font-size: 10px; }
+
+/* Canvas */
+.session-canvas { position: relative; overflow: hidden; touch-action: none; cursor: default; }
+.session-canvas:active { cursor: grabbing; }
+.session-canvas-layer { position: absolute; top: 50%; left: 50%; width: 0; height: 0; transform-origin: 0 0; pointer-events: none; }
+.session-card { position: absolute; overflow: hidden; border-radius: 4px; background: #111; box-shadow: 0 0 0 1px var(--session-hairline), 0 0 0 3px transparent; pointer-events: auto; transition: box-shadow 120ms ease; }
+.session-card.is-selected { box-shadow: 0 0 0 1px var(--session-blue), 0 0 0 3px rgba(40, 118, 220, .25); }
+.session-card .study-player, .session-card .study-player iframe { display: block; width: 100%; height: 100%; border: 0; }
+.session-card-select { position: absolute; inset: 0; z-index: 1; border: 0; background: transparent; cursor: pointer; }
+.session-card .study-player-state { position: absolute; inset: 0; z-index: 2; display: grid; align-content: center; justify-items: center; gap: 10px; padding: 25px; background: #1c1c1c; color: rgba(255, 255, 255, .86); text-align: center; pointer-events: none; }
+.session-card .study-player-state strong { font-size: 20px; font-weight: 500; }
+.session-card .study-player-state span { max-width: 380px; color: rgba(255, 255, 255, .6); font-size: 13px; line-height: 1.5; }
+.session-card .study-player-state a { color: #8ab8f5; font-size: 13px; font-weight: 500; text-decoration: underline; pointer-events: auto; }
+
+.session-zoom button {
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--session-ink-soft);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.session-zoom svg { width: 17px; height: 17px; }
+.session-zoom button:hover { background: var(--session-hover); }
+
+.session-zoom { position: absolute; right: 12px; bottom: 10px; z-index: 2; display: flex; align-items: center; gap: 2px; }
+.session-zoom .session-zoom-value { min-width: 59px; padding: 4px 10px; font-variant-numeric: tabular-nums; }
+
+/* Side panel: a separate card beside the canvas, like the canvas pane when it is open. */
+.session-panel { display: flex; overflow: hidden; width: min(440px, 42vw); flex: 0 0 auto; flex-direction: column; margin: 8px; border: 1px solid var(--session-line); border-radius: 8px; background: #fff; }
+.session-panel[hidden] { display: none; }
+.session-panel[data-view="code"] { width: min(640px, 50vw); }
+.session-tool-slot, .session-tool { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.session-tool-slot[hidden], .session-tool[hidden] { display: none; }
+.session-panel-bar { display: flex; height: 48px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid var(--session-hairline); }
+.session-panel-title { overflow: hidden; min-width: 0; flex: 1; margin: 0; color: var(--session-ink); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.session-panel-bar-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; }
+.session-tool-body { overflow: auto; min-height: 0; flex: 1; padding: 20px 24px 32px; scrollbar-color: rgba(0, 0, 0, .16) transparent; scrollbar-width: thin; }
+.session-muted { margin: 8px 0 0; color: var(--session-ink-muted); font-size: 13px; line-height: 1.5; }
+
+.session-primary-button,
+.session-secondary-button {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.session-primary-button { background: #1f1f1f; color: #fff; }
+.session-primary-button:hover { background: #000; }
+.session-primary-button:disabled { opacity: .55; cursor: default; }
+.session-secondary-button { border-color: var(--session-line); background: #fff; color: var(--session-ink); }
+.session-secondary-button:hover { background: var(--session-hover); }
+.session-link-button { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: var(--session-blue); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.session-link-button svg { width: 14px; height: 14px; }
+.session-select { height: 28px; padding: 0 8px; border: 1px solid var(--session-line); border-radius: 6px; background: #fff; color: var(--session-ink); font: inherit; font-size: 13px; }
+
+.session-tool-empty { display: grid; justify-items: start; gap: 14px; margin-top: 20px; }
+.session-tool-empty > p:first-child { margin: 0; color: var(--session-ink-soft); font-size: 14px; line-height: 1.55; }
+.session-tool-message { margin: 0; color: var(--session-ink-muted); font-size: 13px; }
+.session-tool-message.is-error { color: #b2483b; }
+.session-segmented { width: fit-content; }
+.session-notes-content { margin-top: 20px; color: var(--session-ink); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+
+/* Quiz */
+.session-quiz-count { padding: 0 6px; color: var(--session-ink-muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.session-quiz-prompt { margin: 0; color: var(--session-ink); font-size: 16px; font-weight: 500; line-height: 1.45; }
+.session-quiz-options { display: grid; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
+.session-quiz-option { display: grid; width: 100%; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--session-line); border-radius: 8px; background: #fff; color: var(--session-ink); font: inherit; font-size: 14px; line-height: 1.4; text-align: left; cursor: pointer; }
+.session-quiz-option > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--session-hover); color: var(--session-ink-soft); font-size: 12px; font-weight: 600; }
+.session-quiz-option svg { width: 16px; height: 16px; }
+.session-quiz-option:hover:not(:disabled) { border-color: rgba(0, 0, 0, .25); }
+.session-quiz-option:disabled { cursor: default; }
+.session-quiz-option.is-correct { border-color: #3f9a64; background: #f1f8f3; }
+.session-quiz-option.is-correct svg { color: #3f9a64; }
+.session-quiz-option.is-wrong { border-color: #d0786c; background: #fcf3f1; }
+.session-quiz-option.is-wrong svg { color: #b2483b; }
+.session-quiz-feedback { display: grid; justify-items: start; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--session-hairline); }
+.session-quiz-feedback strong { font-size: 14px; font-weight: 600; }
+.session-quiz-feedback p { margin: 0; color: var(--session-ink-soft); font-size: 14px; line-height: 1.55; }
+.session-quiz-result { display: grid; justify-items: start; gap: 8px; margin-top: 12px; }
+.session-quiz-result p { margin: 0; color: var(--session-ink-soft); font-size: 14px; }
+.session-quiz-result .session-quiz-score { color: var(--session-ink); font-size: 32px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.session-quiz-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* Code */
+.session-code-editor { position: relative; min-height: 0; flex: 1; }
+.session-code-editor > section { position: absolute; inset: 0; }
+.session-code-editor .session-muted { padding: 16px 24px; }
+
+/* AI chat */
+.chat-messages { overflow: auto; min-height: 0; flex: 1; padding: 16px 24px; }
+.chat-empty { display: grid; gap: 6px; padding-top: 8px; }
+.chat-empty p { margin: 0; color: var(--session-ink-muted); font-size: 13px; line-height: 1.5; }
+.chat-empty .chat-empty-title { color: var(--session-ink); font-size: 16px; font-weight: 500; }
+.chat-suggestions { display: grid; gap: 2px; margin: 14px 0 0; padding: 0; list-style: none; }
+.chat-suggestions button { display: flex; width: 100%; align-items: flex-start; gap: 10px; padding: 6px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--session-ink-soft); font: inherit; font-size: 14px; line-height: 1.4; text-align: left; cursor: pointer; }
+.chat-suggestions button:hover { background: var(--session-hover); color: var(--session-ink); }
+.chat-suggestions svg { width: 15px; height: 15px; flex: 0 0 auto; margin-top: 2px; color: var(--session-ink-muted); }
+.chat-message { display: grid; justify-items: start; gap: 10px; padding: 14px 0; }
+.chat-message + .chat-message { border-top: 1px solid var(--session-hairline); }
+.chat-message header { display: flex; align-items: center; gap: 8px; color: var(--session-ink-muted); font-size: 12px; }
+.chat-message header strong { color: var(--session-ink); font-size: 14px; font-weight: 600; }
+.chat-avatar { display: grid; width: 20px; height: 20px; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .04); color: var(--session-ink-soft); font-size: 11px; font-weight: 600; }
+.chat-avatar.is-ai { background: transparent; }
+.chat-avatar svg { width: 16px; height: 16px; }
+.chat-message p { margin: 0; color: var(--session-ink); font-size: 15px; line-height: 1.6; white-space: pre-wrap; }
+.chat-message.is-pending p { color: var(--session-ink-muted); }
+.chat-context-chip { display: inline-flex; overflow: hidden; max-width: 100%; height: 22px; align-items: center; gap: 6px; padding: 0 10px 0 8px; border-radius: 999px; background: rgba(0, 0, 0, .04); color: var(--session-ink-soft); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.chat-context-chip svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.chat-message-actions { display: flex; gap: 2px; margin-left: -6px; }
+.chat-message-actions .session-icon-button svg { width: 15px; height: 15px; }
+
+.chat-composer { display: grid; gap: 6px; margin: 0 10px 10px; padding: 10px; border-radius: 16px; background: rgba(247, 247, 247, .8); box-shadow: 0 0 0 1px var(--session-hairline); }
+.chat-composer:focus-within { box-shadow: 0 0 0 1px var(--session-line), 0 2px 8px rgba(0, 0, 0, .05); }
+.chat-context-card { display: inline-flex; overflow: hidden; width: fit-content; max-width: 70%; align-items: center; gap: 6px; padding: 6px 10px 6px 6px; border-radius: 10px; background: rgba(0, 0, 0, .045); color: var(--session-ink-soft); font-size: 12px; }
+.chat-context-card > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-context-card svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.chat-context-index { display: grid; width: 16px; height: 16px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .08); font-size: 10px; font-weight: 600; }
+.chat-composer textarea { width: 100%; min-height: 44px; max-height: 180px; resize: none; padding: 6px 4px; border: 0; background: transparent; color: var(--session-ink); font: inherit; font-size: 15px; line-height: 1.5; outline: none; field-sizing: content; }
+.chat-composer textarea::placeholder { color: rgba(0, 0, 0, .35); }
+.video-session .chat-composer textarea:focus-visible { outline: none; }
+.chat-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-composer-moment { display: inline-flex; align-items: center; gap: 6px; padding: 0 4px; color: var(--session-ink-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.chat-composer-moment svg { width: 14px; height: 14px; }
+.chat-send { display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #1f1f1f; color: #fff; cursor: pointer; }
+.chat-send:disabled { background: rgba(0, 0, 0, .1); color: rgba(0, 0, 0, .35); cursor: default; }
+.chat-send svg { width: 16px; height: 16px; }
+
+/* Course board: an imported course as section frames of lesson nodes joined by arrows. */
+.session-crumb-course { overflow: hidden; max-width: 220px; flex: 0 1 auto; color: var(--session-ink-muted); font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.session-course-count { flex: 0 0 auto; color: var(--session-ink-muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.course-frame { position: absolute; border: 2px solid hsl(var(--frame-hue) 55% 82%); border-radius: 18px; background: hsl(var(--frame-hue) 60% 96% / .7); pointer-events: none; }
+.course-frame-title { position: absolute; bottom: calc(100% + 22px); left: 0; max-width: 100%; overflow: hidden; margin: 0; padding: 14px 30px; border-radius: 16px; background: hsl(var(--frame-hue) 62% 66%); color: #1d1d1f; font-size: 44px; font-weight: 700; letter-spacing: -.02em; line-height: 1.15; text-overflow: ellipsis; white-space: nowrap; }
+.course-edges { position: absolute; overflow: visible; pointer-events: none; }
+.course-edge { fill: none; stroke-linecap: round; stroke-width: 5; }
+.course-edge.is-completed { stroke: #3f9a64; }
+.course-edge.is-current { stroke: #1f1f1f; }
+.course-edge.is-locked { stroke: rgba(0, 0, 0, .22); stroke-dasharray: 14 14; }
+.course-arrow.is-completed path { fill: #3f9a64; }
+.course-arrow.is-current path { fill: #1f1f1f; }
+.course-arrow.is-locked path { fill: rgba(0, 0, 0, .22); }
+.course-lessons { margin: 0; padding: 0; list-style: none; }
+.course-node { position: absolute; overflow: hidden; border-radius: 14px; background: #fff; box-shadow: 0 0 0 2px var(--session-hairline), 0 8px 24px rgba(0, 0, 0, .06); pointer-events: auto; }
+.course-node.is-current { box-shadow: 0 0 0 4px var(--session-blue), 0 18px 48px rgba(40, 118, 220, .22); }
+.course-node.is-completed { box-shadow: 0 0 0 2px rgba(63, 154, 100, .45), 0 8px 24px rgba(0, 0, 0, .06); }
+.course-node-media { position: relative; overflow: hidden; background: #111; }
+.course-node-media img { width: 100%; height: 100%; object-fit: cover; user-select: none; }
+.course-node.is-locked .course-node-media img { filter: grayscale(1); opacity: .45; }
+.course-node .session-card { border-radius: 0; }
+.course-node-badge { position: absolute; top: 20px; right: 20px; display: grid; width: 64px; height: 64px; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .92); color: var(--session-ink-soft); }
+.course-node.is-completed .course-node-badge { background: #3f9a64; color: #fff; }
+.course-node-badge svg { width: 34px; height: 34px; }
+.course-node-copy { display: grid; gap: 6px; padding: 16px 24px 20px; }
+.course-node-meta { color: var(--session-ink-muted); font-size: 18px; font-weight: 500; }
+.course-node.is-current .course-node-meta { color: var(--session-blue); }
+.course-node-copy h3 { overflow: hidden; margin: 0; color: var(--session-ink); font-size: 26px; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+.course-node.is-locked .course-node-copy h3 { color: var(--session-ink-muted); }
+/* Full view: the focused lesson is just the player, filling the pane. */
+.course-node.is-full-view { border-radius: 10px; box-shadow: 0 0 0 1px var(--session-hairline), 0 12px 40px rgba(0, 0, 0, .12); }
+.course-node.is-full-view .course-node-copy { display: none; }
+
+/* Session fullscreen: the bar, the video and any open tool share the screen. */
+.video-session:fullscreen { width: 100vw; height: 100dvh; }
+
+/* Tool labels give way to the title when space is short. */
+.video-session.is-panel-open .session-tools button > span { display: none; }
+.video-session.is-panel-open .session-tools button { padding: 0 7px; }
+
+@media (max-width: 900px) {
+  .session-tools button > span { display: none; }
+  .session-tools button { padding: 0 7px; }
+}
+
+@media (max-width: 800px) {
+  .video-session { height: calc(100dvh - 72px); }
+}
+
+@media (max-width: 640px) {
+  .video-session.is-panel-open .session-pane { display: none; }
+  .session-panel, .session-panel[data-view="code"] { width: auto; flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-pane, .session-card { transition: none; }
+}

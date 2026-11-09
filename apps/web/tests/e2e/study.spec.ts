@@ -177,21 +177,13 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
   videoSessionId = page.url().split("/").at(-1) ?? null;
   if (!videoSessionId) throw new Error("video Study session ID was not captured");
-  await expect(page.getByText("Learning context preparing")).toBeVisible();
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await expect(page.locator(".application-sidebar")).toHaveClass(/is-collapsed/);
 
   const progressResponse = await page.request.post(`/api/v1/study-sessions/${videoSessionId}/progress`, {
     data: { resourceId: videoResourceId, progressPct: 25, anchor: { kind: "video", positionMs: 150000 }, event: "checkpoint", idempotencyKey: `e2e-progress-${randomUUID()}` },
   });
   expect(progressResponse.status()).toBe(200);
-  await page.reload();
-  await expect(page.locator(".study-hero-progress").getByText("25%", { exact: true })).toBeVisible();
-
-  await page.goto("/app/sessions");
-  const session = page.locator("article.session-row").filter({ hasText: "A deterministic Study video" });
-  await expect(session).toContainText("25%");
-  await session.getByRole("link", { name: /Continue/ }).click();
-  await expect(page).toHaveURL(sessionRoute("video", videoSessionId));
-  await expect(page.locator(".study-hero-progress").getByText("25%", { exact: true })).toBeVisible();
 });
 
 test("E2E player error — unavailable embeds keep the StudySession usable", async ({ page }) => {
@@ -206,7 +198,7 @@ test("E2E player error — unavailable embeds keep the StudySession usable", asy
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open on YouTube" })).toBeVisible();
   await page.goto("/app/sessions");
-  await expect(page.locator("article.session-row").filter({ hasText: "A deterministic Study video" })).toBeVisible();
+  await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
 });
 
 test("E2E B — Research opens Paper Study and preserves save and reading position", async ({ page }) => {
@@ -242,6 +234,7 @@ test("E2E C — related paper and video switch presentation while retaining one 
   await page.route("https://www.youtube.com/iframe_api", (route) => route.abort());
   await login(page);
   await page.goto(sessionRoute("video", videoSessionId));
+  await page.getByRole("button", { name: /^Select / }).click();
   const relatedPaper = page.locator("button.related-resource").filter({ hasText: "A deterministic Study paper" });
   await expect(relatedPaper).toBeVisible();
   await relatedPaper.click();

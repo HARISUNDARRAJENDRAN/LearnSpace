@@ -177,6 +177,8 @@ test(
       const ownerFeed = await getHomeFeed(owner.id);
       const recommendation = ownerFeed.sections.recommendedVideos[0];
       assert.ok(recommendation?.runId);
+      // Sessions holds one thing at a time, so the seeded sessions are finished before starting a recommendation.
+      await migrator`UPDATE study.study_sessions SET status = 'completed', ended_at = now() WHERE user_id = ${owner.id}`;
       const startedRecommendation = await startOrResumeStudySession(owner.id, {
         resourceId: recommendation.resourceId,
         origin: "home",

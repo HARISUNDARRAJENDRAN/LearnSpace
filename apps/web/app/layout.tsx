@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import "../styles/marketing.css";
 import "../styles/auth.css";
+import "lenis/dist/lenis.css";
 import "../styles/application.css";
 import "../styles/home.css";
 import "../styles/profile.css";
@@ -13,6 +14,7 @@ import "../styles/discover.css";
 import "../styles/source-discovery.css";
 import "../styles/product.css";
 import "../styles/study.css";
+import "../styles/session.css";
 import "../styles/onboarding.css";
 import "../styles/motion.css";
 

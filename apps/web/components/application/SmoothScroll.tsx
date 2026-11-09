@@ -1,8 +1,15 @@
 "use client";
 
 import Lenis from "lenis";
-import "lenis/dist/lenis.css";
 import { useEffect } from "react";
+
+let scroller: ((element: HTMLElement) => void) | null = null;
+
+/** Scrolls the page to an element through the smoothing, so an in-flight wheel scroll cannot pull it back. */
+export function scrollToElement(element: HTMLElement) {
+  if (scroller) scroller(element);
+  else element.scrollIntoView({ behavior: "smooth", block: "start" });
+}
 
 /** Smooths wheel scrolling in the app. Frames run only while a scroll is moving, so an idle page does no work. */
 export function SmoothScroll() {
@@ -18,10 +25,16 @@ export function SmoothScroll() {
       lenis.raf(time);
       frame = lenis.isScrolling ? requestAnimationFrame(tick) : 0;
     };
-    const stop = lenis.on("virtual-scroll", () => {
+    const run = () => {
       if (!frame) frame = requestAnimationFrame(tick);
-    });
+    };
+    const stop = lenis.on("virtual-scroll", run);
+    scroller = (element) => {
+      lenis.scrollTo(element);
+      run();
+    };
     return () => {
+      scroller = null;
       stop();
       cancelAnimationFrame(frame);
       lenis.destroy();

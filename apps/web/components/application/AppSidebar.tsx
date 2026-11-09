@@ -66,7 +66,9 @@ const sharedNavigation = [
 ] as const;
 
 function isActivePath(pathname: string, href: string): boolean {
-  return href === "/app" ? pathname === href : pathname.startsWith(href);
+  if (href === "/app") return pathname === href;
+  // Sessions opens the current study session, so it stays lit inside one.
+  return pathname.startsWith(href) || (href === "/app/sessions" && pathname.startsWith("/app/study/"));
 }
 
 function modeFromPath(pathname: string): NavigationMode {

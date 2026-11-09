@@ -3,7 +3,7 @@ import type { CurriculumCategory, CurriculumItem } from "./curriculum";
 import { categoryEditorial, type EditorialClaim } from "./category-editorial";
 import generated from "./generated/category-intelligence.json";
 
-export const categoryIntelligenceVersion = "category-editorial-v2";
+export const categoryIntelligenceVersion = "category-editorial-v5";
 
 type Evidence = { resourceUrl: string; field: "track" | "title" | "coverageNotes" | "channel"; value: string };
 export type CurriculumObservation = {
@@ -125,8 +125,19 @@ export function analyzeCategoryCurriculum(category: CurriculumCategory): Categor
   };
   // Copy is compiled from grounded observations only; there is no title-to-prose model call.
   analysis.editorial.paragraphs = observations.map((item) => item.text);
+  // A syllabus lists core resources unit by unit, in teaching order.
+  const units = resources.filter((item) => item.curriculumRole === "Core" && item.track);
+  const unitTracks = units.map((item) => item.track!).filter((track, index, tracks) => track !== tracks[index - 1]);
+  const isSyllabus = unitTracks.length >= 4 && new Set(unitTracks).size === unitTracks.length;
   if (resources.length === 0) {
     analysis.editorial.paragraphs = ["This collection has no available lessons yet."];
+  } else if (!analysis.editorial.paragraphs.length && isSyllabus) {
+    analysis.curriculumType = "sequential";
+    analysis.learningProgression = unitTracks;
+    // One short paragraph: it is the summary shown over the course page's hero.
+    analysis.editorial.paragraphs = [`This syllabus runs in ${unitTracks.length} units, from “${unitTracks[0]}” to “${unitTracks.at(-1)}”, each building on the one before, so take them in order.`];
+    analysis.editorial.approach = "Start at unit 1 and continue in order. When a later unit leans on an earlier one, go back to that unit before moving on.";
+    analysis.editorial.startingPoint = { title: units[0]!.title, url: units[0]!.url! };
   } else if (resources.length === 1 || !analysis.editorial.paragraphs.length) {
     const first = resources[0]!;
     if (resources.length === 1) {

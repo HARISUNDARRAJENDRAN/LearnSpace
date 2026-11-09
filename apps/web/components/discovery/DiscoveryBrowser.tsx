@@ -1,88 +1,113 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, ArrowUpRight, ListVideo, Play, SlidersHorizontal } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import type { CurriculumArea, CurriculumCategory } from "../../lib/discovery/curriculum";
-import { browseItems } from "../../lib/discovery/browse";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ListVideo, Plus, Workflow } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { CurriculumCategory, CurriculumItem } from "../../lib/discovery/curriculum";
 import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
 
-export function DiscoveryBrowser({ areas, category, intelligencePanel }: { areas: CurriculumArea[]; category: CurriculumCategory; intelligencePanel: ReactNode }) {
-  const [format, setFormat] = useState("");
-  const [stage, setStage] = useState("");
-  const [sort, setSort] = useState("curated");
-  const [limit, setLimit] = useState(24);
-  const filterMenu = useRef<HTMLDetailsElement>(null);
-  const resources = category.items.filter((item) => item.url);
-  const items = browseItems([{ name: areas[0]?.name ?? "", categories: [category] }], { topic: "", format, stage, sort });
-  const notes = category.items.filter((item) => !item.url);
-  const levels = [...new Set(resources.map((item) => item.learningStage).filter((value): value is string => Boolean(value)))];
+function TheatreCard({ item, step, selected, onSelect }: { item: CurriculumItem; step: number; selected: boolean; onSelect: () => void }) {
+  return (
+    <li>
+      <button type="button" className="discover-theatre-card" aria-current={selected ? "step" : undefined} onClick={onSelect}>
+        <span className="discover-theatre-thumb">
+          {item.thumbnailUrl ? <YouTubeThumbnail src={item.thumbnailUrl} fallbackSrc={item.thumbnailFallbackUrl} alt="" fill loading="lazy" sizes="320px" /> : <ListVideo aria-hidden="true" />}
+          <span className="discover-theatre-number">{String(step).padStart(2, "0")}</span>
+        </span>
+        <strong>{item.title}</strong>
+        {item.track ? <small>{item.track}</small> : null}
+      </button>
+    </li>
+  );
+}
 
+function AddToLibraryButton({ slug }: { slug: string }) {
+  const router = useRouter();
+  const [state, setState] = useState<"idle" | "adding" | "error">("idle");
+  async function add() {
+    setState("adding");
+    try {
+      const response = await fetch("/api/v1/library/courses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug }) });
+      if (!response.ok) throw new Error("Adding the course failed");
+      router.push("/app/library");
+    } catch {
+      setState("error");
+    }
+  }
+  return <>
+    <button type="button" className="discover-theatre-add" onClick={() => void add()} disabled={state === "adding"}><Plus aria-hidden="true" />{state === "adding" ? "Adding…" : "Add this to Library"}</button>
+    {state === "error" ? <p className="discover-theatre-error" role="alert">This course could not be added. Try again.</p> : null}
+  </>;
+}
+
+function ImportToSessionsButton({ slug }: { slug: string }) {
+  const router = useRouter();
+  const [state, setState] = useState<"idle" | "importing" | "error">("idle");
+  const [message, setMessage] = useState("");
+  async function importCourse() {
+    setState("importing");
+    try {
+      const response = await fetch("/api/v1/study-sessions/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug }) });
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      if (!response.ok) throw new Error(body?.error?.message ?? "This course could not be imported. Try again.");
+      router.push("/app/sessions");
+      // Refresh the shell too: with a session in progress the header's add button steps aside.
+      router.refresh();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "This course could not be imported. Try again.");
+      setState("error");
+    }
+  }
+  return <>
+    <button type="button" className="discover-theatre-add discover-theatre-import" onClick={() => void importCourse()} disabled={state === "importing"}><Workflow aria-hidden="true" />{state === "importing" ? "Importing…" : "Import to Sessions"}</button>
+    {state === "error" ? <p className="discover-theatre-error" role="alert">{message}</p> : null}
+  </>;
+}
+
+export function DiscoveryBrowser({ category, initialStep, canImport }: { category: CurriculumCategory; initialStep: number; canImport: boolean }) {
+  const lessons = category.items.filter((item) => item.url);
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 1), lessons.length));
+  const hero = useRef<HTMLDivElement>(null);
+  const list = useRef<HTMLOListElement>(null);
+  const item = lessons[step - 1]!;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: step is the trigger; the effect reads the DOM it just rendered.
   useEffect(() => {
-    const closeOnOutsideTap = (event: PointerEvent) => {
-      if (event.target instanceof Node && !filterMenu.current?.contains(event.target) && filterMenu.current) filterMenu.current.open = false;
-    };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && filterMenu.current) filterMenu.current.open = false;
-    };
-    document.addEventListener("pointerdown", closeOnOutsideTap);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsideTap);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, []);
+    // Scroll only the row that holds the open lesson; scrollIntoView would also move the page.
+    const current = list.current?.querySelector<HTMLElement>("[aria-current]");
+    if (!current || !list.current) return;
+    const [card, frame] = [current.getBoundingClientRect(), list.current.getBoundingClientRect()];
+    if (card.left < frame.left || card.right > frame.right) list.current.scrollLeft += card.left - frame.left - (frame.width - card.width) / 2;
+  }, [step]);
+
+  function select(target: number) {
+    setStep(target);
+    // Keep the open step in the URL so a refresh, a shared link or a search result lands on the same lesson.
+    window.history.replaceState(null, "", `?step=${target}`);
+    if (hero.current && hero.current.getBoundingClientRect().top < 0) hero.current.scrollIntoView({ block: "start" });
+  }
 
   return (
-    <main className="discovery-canvas discovery-curriculum discover-browser discover-playlist-page" aria-labelledby="discover-page-heading">
-      <nav className="discover-playlist-nav" aria-label="Playlist navigation">
-        <Link className="discovery-category-back" href="/app/discover" aria-label="Back to Discover"><ArrowLeft aria-hidden="true" /></Link>
-        <div><Link href="/app/discover" aria-current="page">Browse</Link><Link href="/app/discover#discover-for-you-heading">For you</Link><Link href="/app/library">My library</Link></div>
-      </nav>
-
-      <header className="discover-playlist-hero">
-        <div className="discover-playlist-summary">
+    <main className="discover-course-page" aria-labelledby="discover-page-heading">
+      <div ref={hero} className="discover-theatre-hero">
+        <div className="discover-theatre-backdrop" aria-hidden="true">
+          {item.thumbnailUrl ? <YouTubeThumbnail key={item.id} src={item.thumbnailUrl} fallbackSrc={item.thumbnailFallbackUrl} alt="" fill sizes="100vw" /> : null}
+        </div>
+        <Link className="discover-theatre-back" href="/app/discover"><ArrowLeft aria-hidden="true" />Discover</Link>
+        <div className="discover-theatre-copy">
           <h1 id="discover-page-heading">{category.name}</h1>
-          <p className="discover-playlist-description">A curated route through {category.name.toLocaleLowerCase()}. Find your next lesson and learn at your own pace.</p>
-          <div className="discover-playlist-actions">
-            {resources[0]?.url ? <a className="discover-start" href={resources[0].url} target="_blank" rel="noreferrer"><Play aria-hidden="true" /> Start learning<span className="sr-only"> on YouTube (new tab)</span></a> : null}
+          <h2>{item.title}</h2>
+          <div className="discover-theatre-actions">
+            {canImport ? <ImportToSessionsButton slug={category.slug} /> : null}
+            <AddToLibraryButton slug={category.slug} />
           </div>
         </div>
-      </header>
-
-      <section id="playlist-lessons" className="discover-playlist-lessons" aria-label="Playlist lessons">
-          <div className="discover-playlist-tools">
-            <details ref={filterMenu} className="discover-playlist-filter-menu">
-              <summary><SlidersHorizontal aria-hidden="true" /> Filter &amp; sort</summary>
-              <div className="discover-filters">
-                <label>Format<select aria-label="Format" value={format} onChange={(event) => { setFormat(event.target.value); setLimit(24); }}><option value="">All formats</option><option value="video">Videos</option><option value="playlist">YouTube playlists</option></select></label>
-                <label>Level<select aria-label="Level" value={stage} onChange={(event) => { setStage(event.target.value); setLimit(24); }}><option value="">All levels</option>{levels.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
-                <label>Sort<select aria-label="Sort resources" value={sort} onChange={(event) => { setSort(event.target.value); setLimit(24); }}><option value="curated">Playlist order</option><option value="title">Title A–Z</option><option value="creator">Creator A–Z</option></select></label>
-                {format || stage ? <button type="button" className="discover-reset" onClick={() => { setFormat(""); setStage(""); setSort("curated"); }}>Clear filters</button> : null}
-              </div>
-            </details>
-          </div>
-          <div className="discover-playlist-columns" aria-hidden="true"><span>Lesson</span><span>Creator</span><span>Format</span><span>Level</span><span /></div>
-          <ol className="discover-playlist-items">
-            {items.slice(0, limit).map((item) => (
-              <li className="discover-playlist-row discovery-curriculum-card" key={item.id}>
-                <a className="discover-lesson-title" href={item.url ?? undefined} target="_blank" rel="noreferrer" aria-label={`Open ${item.title} on YouTube (new tab)`}>
-                  <span className="discover-lesson-thumbnail">{item.thumbnailUrl ? <YouTubeThumbnail src={item.thumbnailUrl} fallbackSrc={item.thumbnailFallbackUrl} alt="" fill loading="lazy" sizes="36px" /> : <ListVideo aria-hidden="true" />}</span>
-                  <strong>{item.title}</strong>
-                </a>
-                <span className="discover-lesson-creator" title={item.channel ?? ""}>{item.channel ?? "Independent creator"}</span>
-                <span className="discover-lesson-format">{item.resourceType}</span>
-                <span className="discover-lesson-level" title={item.learningStage ?? ""}>{item.learningStage ?? "All levels"}</span>
-                <a className="discover-lesson-open" href={item.url ?? undefined} target="_blank" rel="noreferrer" aria-label={`Open ${item.title} on YouTube (new tab)`}><ArrowUpRight aria-hidden="true" /></a>
-              </li>
-            ))}
-          </ol>
-          {items.length === 0 ? <div className="discover-empty"><h3>No matching lessons</h3><p>Choose another format or level.</p><button type="button" onClick={() => { setFormat(""); setStage(""); }}>Reset filters</button></div> : null}
-          {limit < items.length ? <div className="discover-load-more"><button type="button" onClick={() => setLimit((value) => value + 24)}>Show more resources</button><span>Showing {Math.min(limit, items.length)} of {items.length}</span></div> : null}
-          {notes.length > 0 ? <details className="discover-notes"><summary>About this collection</summary>{notes.map((item) => <p key={item.id}>{item.coverageNotes || item.title}</p>)}</details> : null}
+      </div>
+      <section className="discover-theatre-row" aria-label="Course units">
+        <h3>Course units<span>{lessons.length}</span></h3>
+        <ol ref={list}>{lessons.map((entry, index) => <TheatreCard key={entry.id} item={entry} step={index + 1} selected={index + 1 === step} onSelect={() => select(index + 1)} />)}</ol>
       </section>
-
-      {intelligencePanel}
     </main>
   );
 }

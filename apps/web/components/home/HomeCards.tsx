@@ -35,7 +35,7 @@ export function RecentStudy({ lessons, today }: { lessons: HomeLesson[]; today: 
   </Card>;
   const progress = Math.round(Math.max(0, Math.min(100, lesson.progressPct)));
   const thumbnail = youtubeThumbnailSources(lesson.youtubeId);
-  return <Card title="Recent study" className="home-recent" action={<Link className="home-card-link" href="/app/sessions">View all <ArrowUpRight aria-hidden="true" /></Link>}>
+  return <Card title="Recent study" className="home-recent">
     <article className="home-recent-hero">
       <div className="home-recent-media">
         {thumbnail ? <YouTubeThumbnail src={thumbnail.primary} fallbackSrc={thumbnail.fallback} alt="" fill sizes="160px" /> : <FileText aria-hidden="true" />}

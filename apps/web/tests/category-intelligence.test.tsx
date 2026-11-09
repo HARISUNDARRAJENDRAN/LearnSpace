@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderToStaticMarkup } from "react-dom/server";
-import { CategoryIntelligencePanel } from "../components/discovery/CategoryIntelligencePanel";
 import { analyzeCategoryCurriculum, categoryIntelligenceFingerprint, getCategoryIntelligence } from "../lib/discovery/category-intelligence";
 import { categoryEditorial } from "../lib/discovery/category-editorial";
 import { getCurriculum, getCurriculumCategoryBySlug, type CurriculumCategory, type CurriculumItem } from "../lib/discovery/curriculum";
@@ -19,14 +17,19 @@ function resource(id: string, overrides: Partial<CurriculumItem> = {}): Curricul
 
 test("every real category has distinct persisted editorial reasoning grounded in its actual resources", async () => {
   const categories = (await getCurriculum()).flatMap((area) => area.categories).filter((entry) => entry.items.some((item) => item.url));
-  assert.equal(categories.length, Object.keys(categoryEditorial).length);
+  assert.equal(categories.filter((entry) => categoryEditorial[entry.slug]).length, Object.keys(categoryEditorial).length);
   const summaries = new Set<string>();
   for (const entry of categories) {
     const analysis = analyzeCategoryCurriculum(entry);
     assert.deepEqual(getCategoryIntelligence(entry), analysis, entry.slug);
     assert.deepEqual((persisted as Record<string, unknown>)[entry.slug], analysis, `${entry.slug}: regenerate derived metadata`);
-    assert.ok(analysis.observations.length >= 5, entry.slug);
     assert.equal(analysis.resourceRoles.length, entry.items.filter((item) => item.url).length, entry.slug);
+    // Syllabus collections have no hand-written editorial; their reasoning comes from unit order.
+    if (!categoryEditorial[entry.slug]) {
+      assert.ok(analysis.editorial.paragraphs.length, entry.slug);
+      continue;
+    }
+    assert.ok(analysis.observations.length >= 5, entry.slug);
     const text = [...analysis.editorial.paragraphs, analysis.editorial.insight, analysis.editorial.approach].filter(Boolean).join(" ");
     assert.ok(text.split(/\s+/).length >= 120 && text.split(/\s+/).length <= 250, `${entry.slug}: keep copy compact`);
     assert.doesNotMatch(text, /dive into|unlock your potential|embark on|master the world|carefully curated|highly viewed|excellent mathematical depth/i);
@@ -97,6 +100,17 @@ test("empty, single-resource, and sparse collections never invent a curriculum",
   assert.match(pair.editorial.paragraphs.join(" "), /shared topic alone does not establish that both are necessary/);
 });
 
+test("ordered unit syllabi read as a sequence that starts at the first unit", () => {
+  const unit = (id: string, track: string) => resource(id, { curriculumRole: "Core", track });
+  const syllabus = analyzeCategoryCurriculum({ slug: "syllabus", name: "Syllabus", items: [unit("a", "Limits"), unit("b", "Derivatives"), unit("c", "Derivatives"), unit("d", "Applications"), unit("e", "Integrals")] });
+  assert.equal(syllabus.curriculumType, "sequential");
+  assert.deepEqual(syllabus.learningProgression, ["Limits", "Derivatives", "Applications", "Integrals"]);
+  assert.match(syllabus.editorial.paragraphs.join(" "), /4 units, from “Limits” to “Integrals”, each building on the one before/);
+  assert.deepEqual(syllabus.editorial.startingPoint, { title: "Resource a", url: "https://example.test/a" });
+  const revisited = analyzeCategoryCurriculum({ slug: "revisited", name: "Revisited", items: [unit("a", "Limits"), unit("b", "Derivatives"), unit("c", "Limits"), unit("d", "Integrals"), unit("e", "Series")] });
+  assert.equal(revisited.curriculumType, "exploratory");
+});
+
 test("fingerprints track curriculum changes while ignoring thumbnails and CSV row identities", async () => {
   const original = await category("physics");
   const signature = categoryIntelligenceFingerprint(original);
@@ -127,19 +141,4 @@ test("exploratory categories do not acquire an invented prerequisite ladder", as
     assert.equal(analysis.curriculumType, "exploratory");
     assert.doesNotMatch(analysis.editorial.paragraphs.join(" "), /must complete|prerequisite for|guarantees/);
   }
-});
-
-test("the panel presents editorial context while keeping internal evidence and analytics out of the UI", async () => {
-  const actual = await category("coding-programming");
-  const analysis = getCategoryIntelligence(actual);
-  const panel = <CategoryIntelligencePanel analysis={analysis} />;
-  const html = renderToStaticMarkup(panel);
-  assert.match(html, /Why this collection works|How to use it|CS50 supplies/);
-  assert.match(html, /aria-labelledby="category-intelligence-heading"/);
-  assert.match(html, /target="_blank"/);
-  assert.doesNotMatch(html, /discover-panel-level-chart|discover-panel-donut|Resource mix|Learning levels|AI Summary|confidence|fingerprint|recommendation score/);
-  const unsafe = analyzeCategoryCurriculum({ slug: "new-category", name: "New", items: [resource("one", { title: "<script>alert(1)</script>" })] });
-  const escaped = renderToStaticMarkup(<CategoryIntelligencePanel analysis={unsafe} />);
-  assert.doesNotMatch(escaped, /<script>/);
-  assert.match(escaped, /&lt;script&gt;/);
 });

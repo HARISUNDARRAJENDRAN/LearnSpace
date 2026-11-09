@@ -6,6 +6,18 @@ import { useState } from "react";
 
 type StartResponse = { route?: unknown };
 
+/** Sessions holds one thing at a time; a start refused for that reason sends the learner back to it. */
+class SessionInProgressError extends Error {}
+
+async function startedRoute(response: Response): Promise<string> {
+  if (response.status === 409) {
+    const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
+    if (body?.error?.code === "SESSION_IN_PROGRESS") throw new SessionInProgressError();
+  }
+  if (!response.ok) throw new Error("Study start failed");
+  return routeFrom(await response.json());
+}
+
 function routeFrom(value: unknown): string {
   if (!value || typeof value !== "object" || !("route" in value) || typeof (value as StartResponse).route !== "string") throw new Error("Study route missing");
   return (value as StartResponse).route as string;
@@ -13,8 +25,9 @@ function routeFrom(value: unknown): string {
 
 export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, recommendationRunId, label = "Start learning", className = "", onClick }: { resourceId?: string; sourceUrl?: string; sourceMode?: SourceDiscoveryMode; origin: StudyOrigin; recommendationRunId?: string | null; label?: string; className?: string; onClick?: () => void }) {
   const router = useRouter();
-  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "error" | "blocked">("idle");
   async function start() {
+    if (state === "blocked") return router.push("/app/sessions");
     setState("loading");
     try {
       let canonicalResourceId = resourceId;
@@ -30,14 +43,14 @@ export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, re
       }
       if (!canonicalResourceId) throw new Error("Study resource missing");
       const response = await fetch("/api/v1/study-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId: canonicalResourceId, origin, recommendationRunId: recommendationRunId ?? undefined, idempotencyKey: crypto.randomUUID(), correlationId: crypto.randomUUID() }) });
-      if (!response.ok) throw new Error("Study start failed");
+      const route = await startedRoute(response);
       onClick?.();
-      router.push(routeFrom(await response.json()));
-    } catch {
-      setState("error");
+      router.push(route);
+    } catch (error) {
+      setState(error instanceof SessionInProgressError ? "blocked" : "error");
     }
   }
-  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
+  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"} title={state === "blocked" ? "Finish your current session before starting something new." : undefined}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : state === "blocked" ? "Finish current session first" : label}</button>;
 }
 
 export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {
@@ -64,20 +77,16 @@ export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", cl
 
 export function StartCollectionButton({ collectionId, label }: { collectionId: string; label: string }) {
   const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
+  const [state, setState] = useState<"idle" | "loading" | "error" | "blocked">("idle");
   async function start() {
-    setLoading(true);
-    setError(false);
+    if (state === "blocked") return router.push("/app/sessions");
+    setState("loading");
     try {
       const response = await fetch(`/api/v1/library/collections/${collectionId}/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) });
-      if (!response.ok) throw new Error("Collection start failed");
-      router.push(routeFrom(await response.json()));
-    } catch {
-      setError(true);
-    } finally {
-      setLoading(false);
+      router.push(await startedRoute(response));
+    } catch (error) {
+      setState(error instanceof SessionInProgressError ? "blocked" : "error");
     }
   }
-  return <button type="button" onClick={() => void start()} disabled={loading}>{loading ? "Opening…" : error ? "Try again" : label}</button>;
+  return <button type="button" onClick={() => void start()} disabled={state === "loading"} title={state === "blocked" ? "Finish your current session before starting this course." : undefined}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : state === "blocked" ? "Finish current session first" : label}</button>;
 }

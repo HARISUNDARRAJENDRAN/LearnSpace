@@ -204,6 +204,13 @@
       "when": 1794067751912,
       "tag": "0028_plan_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794067811912,
+      "tag": "0029_curated_course_collections",
+      "breakpoints": true
     }
   ]
 }

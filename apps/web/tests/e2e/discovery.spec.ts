@@ -269,27 +269,28 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   for (const name of ["Trending Now", "Recommended For You", "Based on Your Interests"]) {
     await expect(page.getByRole("link", { name: new RegExp(name) })).toHaveCount(0);
   }
-  const codingCategory = page.getByRole("link", { name: /Coding & Programming/ });
+  await expect(page.getByRole("navigation", { name: "Learning stage" }).getByRole("link", { name: /School/ })).toHaveAttribute("aria-current", "page");
+  await page.getByRole("link", { name: /Skills & interests/ }).click();
+  await expect(page).toHaveURL(/\/app\/discover\?level=interests$/);
+  const codingCategory = page.getByRole("link", { name: /^Coding & Programming,/ });
   await expect(codingCategory).toHaveAttribute("href", "/app/discover/coding-programming");
   await expect(codingCategory.locator(".discover-category-art")).toHaveCount(1);
   await codingCategory.click();
   await expect(page).toHaveURL(/\/app\/discover\/coding-programming$/);
   await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
   await expect(page.locator(".application-header-view-group")).toHaveCount(0);
-  await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
-  const intelligencePanel = page.getByRole("complementary", { name: "Why this collection works" });
-  await expect(intelligencePanel).toBeVisible();
-  await expect(intelligencePanel).toContainText("CS50 supplies the connecting thread");
-  await expect(intelligencePanel).not.toContainText("Resource mix");
-  const categoryRationale = await intelligencePanel.innerText();
-  await expect(page.locator(".discover-lesson-title").nth(1)).toHaveAttribute("target", "_blank");
-  await page.getByText("Filter & sort", { exact: true }).click();
-  await page.getByLabel("Format", { exact: true }).selectOption("playlist");
-  await expect(page.locator(".discover-lesson-format").first()).toHaveText("playlist");
-  await expect(page.locator(".discover-lesson-format").filter({ hasText: "video" })).toHaveCount(0);
-  await expect(intelligencePanel).toHaveText(categoryRationale, { useInnerText: true });
-  await page.getByRole("button", { name: "Clear filters" }).click();
-  await page.getByText("Filter & sort", { exact: true }).click();
+  const units = page.getByRole("region", { name: "Course units" });
+  await expect(units.getByRole("button").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Outline" })).toHaveCount(0);
+  await units.getByRole("button").nth(1).click();
+  await expect(page).toHaveURL(/\/app\/discover\/coding-programming\?step=2$/);
+  await expect(units.getByRole("button").nth(1)).toHaveAttribute("aria-current", "step");
+  await expect(page.locator(".discover-theatre-copy h2")).toHaveText(await units.getByRole("button").nth(1).locator("strong").innerText());
+  await units.getByRole("button").first().click();
+  await expect(page).toHaveURL(/\/app\/discover\/coding-programming\?step=1$/);
+  await page.reload();
+  await expect(units.getByRole("button").first()).toHaveAttribute("aria-current", "step");
+  await expect(page.getByRole("button", { name: "Add this to Library" })).toBeVisible();
   for (const width of [1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
@@ -300,17 +301,17 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.reload();
   await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL(/\/app\/discover$/);
+  await expect(page).toHaveURL(/\/app\/discover\?level=interests$/);
   await page.goForward();
-  await expect(page).toHaveURL(/\/app\/discover\/coding-programming$/);
+  await expect(page).toHaveURL(/\/app\/discover\/coding-programming\?step=1$/);
   await page.goBack();
 
-  const dataScienceCategory = page.getByRole("link", { name: /Data Science & AI\/ML/ });
+  const dataScienceCategory = page.getByRole("link", { name: /^Data Science & AI\/ML,/ });
   await dataScienceCategory.focus();
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/app\/discover\/data-science-ai$/);
   await expect(page.getByRole("heading", { name: "Data Science & AI/ML", level: 1 })).toBeVisible();
-  await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+  await expect(page.locator(".discover-theatre-card").first()).toBeVisible();
 
   for (const { slug, name } of [
     { slug: "mathematics", name: "Mathematics" },
@@ -318,7 +319,7 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   ]) {
     await page.goto(`/app/discover/${slug}`);
     await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
-    await expect(page.locator(".discovery-curriculum-card").first()).toBeVisible();
+    await expect(page.locator(".discover-theatre-card").first()).toBeVisible();
   }
   await page.goto("/app/discover/this-does-not-exist");
   await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
@@ -328,18 +329,18 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/app/discover");
-  await page.getByRole("link", { name: /Mathematics/ }).click();
+  await page.goto("/app/discover?level=interests");
+  await page.getByRole("link", { name: /^Mathematics,/ }).click();
   await expect(page).toHaveURL(/\/app\/discover\/mathematics$/);
   await page.goto("/app/discover/cybersecurity");
   await expect(page.getByRole("heading", { name: "Cybersecurity & Privacy", level: 1 })).toBeVisible();
-  const categoryBackLink = page.locator(".discovery-category-back");
+  const categoryBackLink = page.locator(".discover-theatre-back");
   await expect(categoryBackLink).toBeVisible();
   expect(await categoryBackLink.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(40);
   await categoryBackLink.click();
   await expect(page).toHaveURL(/\/app\/discover$/);
   await page.getByRole("button", { name: "Open navigation" }).click();
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.locator(".application-nav")).toBeVisible();
   await page.getByRole("link", { name: "Discover" }).click();
   await expect(page).toHaveURL(/\/app\/discover$/);
   await expect(page.locator("main.discovery-canvas:not(.discover-home-loading)")).toBeVisible();

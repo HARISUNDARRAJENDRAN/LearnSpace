@@ -81,9 +81,42 @@ export const studyQuestionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
 }).strict();
 
+export const studyNotesKindSchema = z.enum(["primer", "summary"]);
+
+export const studyNotesRequestSchema = z.object({
+  kind: studyNotesKindSchema,
+  idempotencyKey: z.string().trim().min(8).max(128),
+}).strict();
+
+export const studyNotesResponseSchema = z.object({
+  kind: studyNotesKindSchema,
+  content: z.string(),
+}).strict();
+
+export const studyQuizRequestSchema = z.object({
+  idempotencyKey: z.string().trim().min(8).max(128),
+}).strict();
+
+export const studyQuizQuestionSchema = z.object({
+  id: z.string().min(1),
+  prompt: z.string().min(1),
+  options: z.array(z.string().min(1)).min(2).max(6),
+  answerIndex: z.number().int().min(0),
+  explanation: z.string().optional(),
+  anchor: studyAnchorSchema.optional(),
+}).strict().refine((value) => value.answerIndex < value.options.length, "The answer must be one of the options.");
+
+export const studyQuizResponseSchema = z.object({
+  questions: z.array(studyQuizQuestionSchema),
+}).strict();
+
 export const libraryItemRequestSchema = z.object({
   resourceId: z.string().uuid(),
   action: z.enum(["save", "remove"]),
+}).strict();
+
+export const addCourseRequestSchema = z.object({
+  slug: z.string().regex(/^[a-z0-9-]{1,96}$/),
 }).strict();
 
 export const startCollectionRequestSchema = z.object({
@@ -100,6 +133,10 @@ export type ActivateSessionResourceRequest = z.infer<typeof activateSessionResou
 export type StudyProgressRequest = z.infer<typeof studyProgressRequestSchema>;
 export type StudySessionActionRequest = z.infer<typeof studySessionActionRequestSchema>;
 export type StudyQuestionRequest = z.infer<typeof studyQuestionRequestSchema>;
+export type StudyNotesKind = z.infer<typeof studyNotesKindSchema>;
+export type StudyNotesResponse = z.infer<typeof studyNotesResponseSchema>;
+export type StudyQuizQuestion = z.infer<typeof studyQuizQuestionSchema>;
+export type StudyQuizResponse = z.infer<typeof studyQuizResponseSchema>;
 export type LibraryItemRequest = z.infer<typeof libraryItemRequestSchema>;
 export type StartCollectionRequest = z.infer<typeof startCollectionRequestSchema>;
 
@@ -161,6 +198,21 @@ export type StudySessionView = {
   activeResource: StudySessionResource | null;
   checkpoints: Array<{ id: string; resourceId: string | null; kind: string; label: string | null; anchor: StudyAnchor | null; createdAt: string }>;
   related: StudySessionResource[];
+  /** Set when the session is an imported course: every lesson in order, unlocked one at a time. */
+  course: StudySessionCourse | null;
+};
+
+export type StudyCourseLessonState = "completed" | "current" | "locked";
+
+export type StudySessionCourse = {
+  collectionId: string;
+  slug: string | null;
+  title: string;
+  sections: Array<{
+    id: string;
+    title: string;
+    lessons: Array<{ resourceId: string; title: string; youtubeId: string | null; channelTitle: string | null; state: StudyCourseLessonState; progressPct: number }>;
+  }>;
 };
 
 export type StartStudySessionResponse = {
@@ -189,6 +241,8 @@ export type LibraryCollectionSummary = {
   itemCount: number;
   progressPct: number | null;
   currentItemId: string | null;
+  /** The learner's enrollment: waiting in their queue, being studied, or finished; null when they own it but never enrolled. */
+  status: "queued" | "active" | "completed" | null;
 };
 
 export type LibraryCollectionDetail = LibraryCollectionSummary & {
@@ -205,6 +259,9 @@ export type LibraryCollectionDetail = LibraryCollectionSummary & {
       required: boolean;
       note: string | null;
       progressPct: number;
+      completed: boolean;
+      /** Set for YouTube lessons, so a finished one can be rewatched from the Library without reopening it in Sessions. */
+      youtubeId: string | null;
     }>;
   }>;
 };

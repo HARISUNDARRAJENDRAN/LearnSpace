@@ -7,7 +7,7 @@
 
   /* Cards rise into place as they scroll into view. Scroll-driven, so it needs no JS and costs nothing off-screen. */
   @supports (animation-timeline: view()) {
-    .application-page :is(.discovery-card, .discover-category-card, .collection-card, .research-card, .discover-playlist-row, .profile-achievements li, .profile-page > .home-card) {
+    .application-page :is(.discovery-card, .discover-category-card, .collection-card, .research-card, .profile-achievements li, .profile-page > .home-card) {
       animation: app-rise linear both;
       animation-timeline: view();
       animation-range: entry 0% entry 45%;
@@ -15,14 +15,14 @@
   }
 
   /* Cards lift under the pointer and settle when pressed. */
-  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row) {
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li) {
     transition: translate 220ms var(--motion-ease-out), box-shadow 220ms var(--motion-ease-out);
   }
-  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row):hover {
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li):hover {
     translate: 0 -3px;
     box-shadow: 0 10px 24px -14px rgb(0 0 0 / .22);
   }
-  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li, .discover-playlist-row):active {
+  .application-page :is(.discovery-card, .collection-card, .research-card, .home-next-item, .profile-achievements li):active {
     translate: 0 -1px;
     box-shadow: 0 4px 12px -8px rgb(0 0 0 / .2);
   }

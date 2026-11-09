@@ -1,16 +1,18 @@
 import { withUserTransaction } from "@learnspace/db";
 import { collections, concepts, libraryItems, resources, studySessions } from "@learnspace/db/schema";
 import type { ResourceType } from "@learnspace/shared";
-import { and, asc, desc, eq, ilike, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { searchCurriculum } from "./curriculum";
 
 export type GlobalSearchResult = {
   id: string;
-  kind: "resource" | "session" | "library" | "concept";
+  kind: "collection" | "lesson" | "resource" | "session" | "library" | "concept";
   title: string;
   subtitle: string;
   href: string | null;
   resourceId: string | null;
   resourceType: ResourceType | null;
+  thumbnailUrl?: string | null;
 };
 
 function likePattern(value: string): string {
@@ -22,7 +24,7 @@ function resourceLabel(type: ResourceType): string {
 }
 
 function sessionHref(type: ResourceType | null, sessionId: string): string {
-  return type === "video" ? `/app/study/video/${sessionId}` : type === "paper" || type === "pdf" ? `/app/study/paper/${sessionId}` : "/app/sessions";
+  return type === "video" ? `/app/study/video/${sessionId}` : type === "paper" || type === "pdf" ? `/app/study/paper/${sessionId}` : "/app";
 }
 
 export async function searchWorkspace(userId: string, rawQuery: string): Promise<GlobalSearchResult[]> {
@@ -30,12 +32,13 @@ export async function searchWorkspace(userId: string, rawQuery: string): Promise
   if (query.length < 2) return [];
   const pattern = likePattern(query);
 
-  return withUserTransaction(userId, async (tx) => {
+  const curriculum = await searchCurriculum(query);
+  const workspace = await withUserTransaction(userId, async (tx) => {
     const textMatch = or(ilike(resources.title, pattern), ilike(resources.description, pattern));
     const [resourceRows, sessionRows, libraryRows, collectionRows, conceptRows] = await Promise.all([
       tx.select({ id: resources.id, title: resources.title, description: resources.description, type: resources.type, provider: resources.provider })
         .from(resources)
-        .where(and(or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])), inArray(resources.type, ["video", "paper", "pdf"]), eq(resources.status, "ready"), isNull(resources.deletedAt), textMatch))
+        .where(and(or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])), inArray(resources.type, ["video", "paper", "pdf"]), eq(resources.status, "ready"), isNull(resources.deletedAt), sql`NOT (${resources.metadata} ? 'curriculumHash')`, textMatch))
         .orderBy(desc(resources.qualityScore), desc(resources.updatedAt))
         .limit(6),
       tx.select({ id: studySessions.id, title: studySessions.title, activeResourceId: studySessions.activeResourceId, resourceTitle: resources.title, resourceType: resources.type })
@@ -70,4 +73,5 @@ export async function searchWorkspace(userId: string, rawQuery: string): Promise
       ...conceptRows.map((row) => ({ id: row.id, kind: "concept" as const, title: row.name, subtitle: row.summary ?? "Concept", href: "/app/second-brain", resourceId: null, resourceType: null })),
     ];
   });
+  return [...curriculum, ...workspace];
 }

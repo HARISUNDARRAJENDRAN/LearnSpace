@@ -1,5 +1,5 @@
 import { notFound, redirect } from "next/navigation";
-import { StudyWorkspace } from "../../../../../components/study/StudyWorkspace";
+import { VideoSession } from "../../../../../components/study/VideoSession";
 import { AuthError } from "../../../../../lib/auth/errors";
 import { requireCompletedSession } from "../../../../../lib/discovery/access";
 import { getStudySession } from "../../../../../lib/study/service";
@@ -15,7 +15,7 @@ export default async function VideoStudyRoute({ params }: Props) {
     const session = await getStudySession(auth.user.id, sessionId);
     if (session.activeResource?.type === "paper") redirect(`/app/study/paper/${sessionId}`);
     if (!session.activeResource) notFound();
-    return <StudyWorkspace key={`${session.id}:${session.activeResourceId}`} session={session} kind="video" />;
+    return <VideoSession key={`${session.id}:${session.activeResourceId}`} session={session} active={session.activeResource} />;
   } catch (error) {
     if (error instanceof AuthError && error.status === 404) notFound();
     throw error;

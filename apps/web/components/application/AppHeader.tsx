@@ -2,7 +2,7 @@
 
 import { AlignJustify, Columns2, LayoutGrid, Menu, Plus } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
 
 export type ApplicationViewMode = "grid" | "compact" | "list";
@@ -27,12 +27,15 @@ function contextLabel(pathname: string): string {
 }
 
 type AppHeaderProps = {
+  /** Sessions holds one thing at a time, so adding a video waits until the current session is finished. */
+  canStartNew: boolean;
   onMenu: () => void;
   viewMode: ApplicationViewMode;
   onViewModeChange: (mode: ApplicationViewMode) => void;
+  search: ReactNode;
 };
 
-export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps) {
+export function AppHeader({ canStartNew, onMenu, viewMode, onViewModeChange, search }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [sourceDiscoveryOpen, setSourceDiscoveryOpen] = useState(false);
@@ -50,9 +53,11 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
           <button className="application-menu-button" type="button" onClick={onMenu} aria-label="Open navigation">
             <Menu aria-hidden="true" />
           </button>
-          <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
-            <span><Plus aria-hidden="true" /></span>
-          </button>
+          {canStartNew ? (
+            <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
+              <span><Plus aria-hidden="true" /></span>
+            </button>
+          ) : null}
           {isDiscover ? (
             <div className="discover-page-header">
               {pathname === "/app/discover" ? <h1>Discover</h1> : <span className="application-header-title">Discover</span>}
@@ -73,6 +78,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange }: AppHeaderProps
               ))}
             </fieldset>
           )}
+          {search}
         </div>
       </div>
 
