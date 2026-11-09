@@ -15,7 +15,6 @@ RUN npm install --global pnpm@11.24.0
 FROM base AS dependencies
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json .npmrc ./
-COPY patches ./patches
 COPY apps/web/package.json apps/web/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/shared/package.json packages/shared/package.json
@@ -31,7 +30,6 @@ COPY . .
 FROM base AS worker-build
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .npmrc ./
-COPY patches ./patches
 COPY packages/shared/package.json packages/shared/package.json
 COPY services/worker/package.json services/worker/package.json
 RUN pnpm install --frozen-lockfile --filter @learnspace/worker... --filter learnspace

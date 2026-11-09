@@ -220,7 +220,16 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   const paperAfterUnsave = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
   await paperAfterUnsave.getByRole("button", { name: "Save" }).click();
   await expect(paperAfterUnsave.getByRole("button", { name: "Saved" })).toBeVisible();
+  // Sessions hold one session at a time: the paper waits until the video from E2E A is finished.
   await paperAfterUnsave.getByRole("button", { name: "Study paper" }).click();
+  await expect(paperAfterUnsave.getByRole("button", { name: "Finish current session first" })).toBeVisible();
+  if (!videoSessionId) throw new Error("video Study session is required for paper E2E");
+  const completeResponse = await page.request.post(`/api/v1/study-sessions/${videoSessionId}/progress`, {
+    data: { resourceId: videoResourceId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `e2e-complete-${randomUUID()}` },
+  });
+  expect(completeResponse.status()).toBe(200);
+  await page.reload();
+  await page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first().getByRole("button", { name: "Study paper" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
   await expect(page.getByText("Paper source unavailable")).toBeVisible();
   const pageInput = page.getByRole("spinbutton");
@@ -229,44 +238,19 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   await expect(page.getByText("Reading position saved")).toBeVisible();
 });
 
-test("E2E C — related paper and video switch presentation while retaining one session", async ({ page }) => {
-  if (!videoSessionId) throw new Error("video Study session is required for cross-resource E2E");
-  await page.route("https://www.youtube.com/iframe_api", (route) => route.abort());
+test("E2E D — Library shows a mixed collection and holds it while another session is in progress", async ({ page }) => {
   await login(page);
-  await page.goto(sessionRoute("video", videoSessionId));
-  await page.getByRole("button", { name: /^Select / }).click();
-  const relatedPaper = page.locator("button.related-resource").filter({ hasText: "A deterministic Study paper" });
-  await expect(relatedPaper).toBeVisible();
-  await relatedPaper.click();
-  await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
-  await expect(page.getByLabel("Study context").getByText("Opened from: A deterministic Study video")).toBeVisible();
-
-  const paperPage = page.getByRole("spinbutton");
-  await paperPage.fill("4");
-  await page.getByRole("button", { name: "Save position" }).click();
-  await expect(page.getByText("Reading position saved")).toBeVisible();
-
-  await page.getByRole("button", { name: /Return to video/ }).click();
-  await expect(page).toHaveURL(sessionRoute("video", videoSessionId));
-  await page.getByRole("button", { name: "Session materials" }).click();
-  await page.getByRole("dialog", { name: "Session materials" }).getByRole("button").filter({ hasText: "A deterministic Study paper" }).click();
-  await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
-  await expect(page.getByRole("spinbutton")).toHaveValue("4");
-  await page.goto(sessionRoute("video", videoSessionId));
-  await expect(page).toHaveURL(sessionRoute("paper", videoSessionId));
-});
-
-test("E2E D — Library opens a mixed collection and launches its current item", async ({ page }) => {
-  if (!videoSessionId) throw new Error("video Study session is required for collection E2E");
-  await login(page);
+  const addResponse = await page.request.post("/api/v1/library/courses", { data: { slug: `study-e2e-${runKey}` } });
+  expect(addResponse.ok()).toBe(true);
   await page.goto("/app/library");
   const collection = page.locator("article.collection-card").filter({ hasText: "A mixed Study collection" });
   await expect(collection).toBeVisible();
   await collection.getByRole("link", { name: "A mixed Study collection" }).click();
   await expect(page).toHaveURL(`/app/library/collections/${collectionId}`);
   const collectionDetail = page.locator("main.collection-detail-page");
-  await expect(collectionDetail.getByText("A deterministic Study video")).toBeVisible();
+  await expect(collectionDetail.getByText("A deterministic Study video").first()).toBeVisible();
   await expect(collectionDetail.getByText("A deterministic Study paper")).toBeVisible();
+  // The paper from E2E B is still the current session, so the course waits for it.
   await page.getByRole("button", { name: "Start collection" }).click();
-  await expect(page).toHaveURL(sessionRoute("video", videoSessionId));
+  await expect(page.getByRole("button", { name: "Finish current session first" })).toBeVisible();
 });

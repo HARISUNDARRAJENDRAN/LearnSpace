@@ -163,7 +163,8 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     const focused = await getHomeFeed(userId, "discover", { topicId: ai });
     assert.ok(focused.sections.recommendedVideos.length > 0);
     const focusedIds = focused.sections.recommendedVideos.map((c) => c.resourceId);
-    const actualTopics = await db`SELECT DISTINCT resource_id FROM catalog.resource_concepts WHERE resource_id = ANY(${focusedIds}::uuid[]) AND concept_id = ${ai}`;
+    // A focused topic covers its subtopics two levels down, as focusProfile does.
+    const actualTopics = await db`WITH RECURSIVE topics AS (SELECT id, 0 depth FROM knowledge.concepts WHERE id = ${ai} UNION ALL SELECT c.id, t.depth + 1 FROM knowledge.concepts c JOIN topics t ON c.canonical_parent_id = t.id WHERE t.depth < 2 AND c.status = 'active') SELECT DISTINCT resource_id FROM catalog.resource_concepts WHERE resource_id = ANY(${focusedIds}::uuid[]) AND concept_id IN (SELECT id FROM topics)`;
     assert.equal(actualTopics.length, focusedIds.length);
     const focusedCard = focused.sections.recommendedVideos[0]!;
     await recordInteraction(userId, { runId: focused.runId!, resourceId: focusedCard.resourceId, action: "dismiss", correlationId: randomUUID(), metadata: {} });

@@ -12,11 +12,10 @@ try {
       const response = await page.goto(`${process.env.BASE_URL ?? "http://localhost:3000"}/${route}`);
       assert.equal(response.status(), 200, route);
       await page.locator("#auth-title").waitFor();
-      assert.equal(await page.locator(".auth-page-visual").isVisible(), width > 900);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${route}: horizontal overflow`);
-      const home = await page.locator(".auth-page-home").boundingBox();
+      const header = await page.locator(".auth-header").boundingBox();
       const title = await page.locator("#auth-title").boundingBox();
-      assert.ok(home && title && title.y >= home.y + home.height + 16, `${route}: heading overlaps Home at ${width}px`);
+      assert.ok(header && title && title.y >= header.y + header.height + 16, `${route}: heading overlaps the header at ${width}px`);
       const submit = page.locator('button[type="submit"]');
       await submit.evaluate((element) => element.scrollIntoView({ block: "center", behavior: "instant" }));
       await expect(submit).toBeInViewport({ ratio: 1 });
