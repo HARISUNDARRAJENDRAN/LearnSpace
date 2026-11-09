@@ -120,6 +120,8 @@ services:
       YOUTUBE_METRICS_MAX_AGE_DAYS: "${YOUTUBE_METRICS_MAX_AGE_DAYS:-7}"
       YOUTUBE_METRICS_BATCH_SIZE: "${YOUTUBE_METRICS_BATCH_SIZE:-200}"
       YOUTUBE_MIN_DURATION_SECONDS: "${YOUTUBE_MIN_DURATION_SECONDS:-60}"
+      # Firecrawl key for the transcript fallback. Without it the fallback is skipped.
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY:-}"
     depends_on:
       # The worker needs the schema, which the web container migrates.
       web:
