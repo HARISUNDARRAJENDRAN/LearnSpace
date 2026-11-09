@@ -157,6 +157,12 @@ DATABASE_WORKER_URL=<learnspace_worker URL> pnpm --filter @learnspace/worker tra
 The signer waits 10 seconds between requests and stops at 500 a day. At
 the first rate limit or bot check, it pauses for 6 hours.
 
+On the home laptop it runs as the systemd user service
+`learnspace-transcript-signer`, which starts at login and restarts after
+30 seconds if it exits. It reads `.env.production`. Check it with
+`journalctl --user -u learnspace-transcript-signer -f`. While the laptop
+is off, new videos go to Firecrawl after 10 minutes.
+
 ## Host-based database workflow
 
 If you prefer to run the TypeScript tools on the host, start only PostgreSQL:
