@@ -9,6 +9,7 @@ import { dailyUsage, recordUsage } from "./api-usage.js";
 import { configuredNumber } from "./config.js";
 import { type DiscoveryLane, discoveryLanes } from "./discovery-lanes.js";
 import { recommendationMaintenance, recommendationUpkeep } from "./recommendation-maintenance.js";
+import { transcriptUpkeep } from "./transcripts.js";
 import { purgeExpiredYoutubeStatistics, refreshYoutubeMetrics } from "./youtube-metrics.js";
 import {
   DISCOVERY_LEARNING_FORMATS,
@@ -774,6 +775,8 @@ export async function runDiscoveryWorker(options: { maintenance?: boolean; house
       const purged = await purgeExpiredYoutubeStatistics(sql);
       if (youtube.videos || purged) await redisCommands([["INCR", recommendationCatalogKey]]);
       await sql`DELETE FROM ops.rate_limit_counters WHERE reset_at < now()`;
+      // A transcript failure must not stop discovery housekeeping.
+      await transcriptUpkeep(sql).catch((error) => console.warn(JSON.stringify({ metric: "transcript_upkeep_failure", error: error instanceof Error ? error.message : "transcript upkeep failed" })));
       if (options.maintenance !== false) await recommendationMaintenance(sql);
       return { status: "idle", promotedJobId, scheduledCount, reclaimedCount };
     }

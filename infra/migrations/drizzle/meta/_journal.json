@@ -211,6 +211,13 @@
       "when": 1794067811912,
       "tag": "0029_curated_course_collections",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794238876863,
+      "tag": "0030_video_transcripts",
+      "breakpoints": true
     }
   ]
 }

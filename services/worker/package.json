@@ -8,13 +8,14 @@
     "bundle:edge": "node scripts/bundle-edge.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/discovery.test.ts src/discovery-lanes.test.ts src/youtube-metrics.test.ts src/discovery.integration.test.ts",
+    "test": "tsx --test src/discovery.test.ts src/discovery-lanes.test.ts src/youtube-metrics.test.ts src/transcripts.test.ts src/discovery.integration.test.ts",
     "start": "node dist/index.js",
     "discovery:once": "tsx src/index.ts",
     "discovery:worker": "tsx src/index.ts --loop",
     "discovery:smoke": "tsx src/discovery-smoke.ts",
     "recommendations:backfill": "tsx src/recommendation-backfill.ts",
-    "youtube:backfill": "tsx src/youtube-backfill.ts"
+    "youtube:backfill": "tsx src/youtube-backfill.ts",
+    "transcripts:signer": "tsx src/transcript-signer.ts"
   },
   "dependencies": {
     "@learnspace/shared": "workspace:*",

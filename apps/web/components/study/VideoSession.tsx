@@ -12,6 +12,7 @@ import { SessionCode } from "./SessionCode";
 import { SessionNotes } from "./SessionNotes";
 import { SessionQuiz } from "./SessionQuiz";
 import { useStudyTime } from "./useStudyTime";
+import { useTranscriptCapture } from "./useTranscriptCapture";
 
 type ProgressEvent = StudyProgressRequest["event"];
 
@@ -315,6 +316,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   // A finished lesson moves the session on (the next lesson, or an empty Sessions), so reload it from the server.
   const refresh = useCallback(() => router.refresh(), [router]);
   const lesson = useYouTubeLesson(session.id, active, refresh);
+  useTranscriptCapture(active.resourceId, Boolean(active.video?.youtubeId));
   const course = session.course;
   const layout = useMemo(() => (course ? layoutCourse(course) : null), [course]);
   // Every visit opens on the whole course; double-clicking the current lesson focuses it alone, and that is not remembered.

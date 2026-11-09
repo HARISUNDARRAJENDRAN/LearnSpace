@@ -131,14 +131,31 @@ for the next call.
 2. Set its secrets (`pnpm dlx supabase@3.0.0 secrets set --remote=<project-ref> ...`):
    `DATABASE_WORKER_URL` (learnspace_worker, transaction mode), a random
    `WORKER_TRIGGER_SECRET` (`openssl rand -hex 32`), `EXA_API_KEY`,
-   `YOUTUBE_API_KEY`, and optionally `OPENAI_API_KEY` with
-   `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
+   `YOUTUBE_API_KEY`, optionally `FIRECRAWL_API_KEY` (transcript fallback), and
+   optionally `OPENAI_API_KEY` with `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
 3. In the SQL editor, store the function URL and the same secret in Vault,
    then run `supabase/setup.sql` (its header shows both `vault.create_secret`
    calls).
 4. Sync the curated catalog after each curriculum change, since the function
    has no file system: `pnpm --filter @learnspace/worker recommendations:backfill`
    with `DATABASE_WORKER_URL` and `OPENAI_API_KEY` set.
+
+### Transcript signer on a home machine
+
+YouTube refuses caption requests from datacenter IPs, so a machine on a
+home connection signs caption URLs. It sends one anonymous request per new
+video, with no account or cookies. Learners' browsers then download the
+captions on their own connections. A transcript is shared with everyone
+only after two learners' downloads match. A video still unsigned after
+10 minutes falls back to Firecrawl in the worker's housekeeping, at most
+3 per run.
+
+```text
+DATABASE_WORKER_URL=<learnspace_worker URL> pnpm --filter @learnspace/worker transcripts:signer
+```
+
+The signer waits 10 seconds between requests and stops at 500 a day. At
+the first rate limit or bot check, it pauses for 6 hours.
 
 ## Host-based database workflow
 
