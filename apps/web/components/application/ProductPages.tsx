@@ -9,14 +9,6 @@ function typeLabel(type: string): string {
   return type === "video" ? "Video" : type === "paper" || type === "pdf" ? "Paper" : type[0]?.toUpperCase() + type.slice(1) || "Resource";
 }
 
-export function SessionsPage() {
-  return (
-    <main className="product-page sessions-page">
-      <div className="product-empty"><p className="product-empty-kicker">A clear desk</p><h2>Your next session is waiting.</h2><p>Sessions holds one thing at a time. Import a whole course from Discover, or add a single video, and work through it lesson by lesson.</p><Link className="product-primary-link" href="/app/discover">Find a course in Discover</Link></div>
-    </main>
-  );
-}
-
 export function LibraryPage({ data }: { data: LibraryPageData }) {
   const enrolled = (status: LibraryCollectionSummary["status"]) => data.collections.filter((collection) => collection.status === status);
   const owned = (kind: LibraryCollectionSummary["kind"]) => data.collections.filter((collection) => collection.ownership === "user" && collection.kind === kind);

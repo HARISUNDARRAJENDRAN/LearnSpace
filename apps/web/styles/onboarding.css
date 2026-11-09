@@ -548,12 +548,6 @@
 	white-space: nowrap;
 }
 
-.onboarding-first-own {
-	display: grid;
-	gap: 8px;
-	margin-top: 12px;
-}
-
 .onboarding-first .onboarding-choice-row {
 	margin-top: 24px;
 }

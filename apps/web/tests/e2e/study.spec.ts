@@ -140,7 +140,9 @@ async function completeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
 }
 

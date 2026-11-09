@@ -153,8 +153,6 @@ export function OnboardingFlow({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isHydrated, setIsHydrated] = useState(false);
-  // Where "Skip for now" goes once the profile is saved and the first-session step shows.
-  const [destination, setDestination] = useState<string | null>(null);
 
   useEffect(() => {
     setIsHydrated(true);
@@ -323,13 +321,11 @@ export function OnboardingFlow({
           conceptIds: selectedConcepts.map((concept) => concept.id),
         }),
       });
-      const data = (await response.json()) as ApiError & { destination?: string };
+      const data = (await response.json()) as ApiError;
       if (!response.ok) {
         setSubmitError(apiErrorMessage(data));
         return;
       }
-      if (data.destination !== "/app" && data.destination !== "/app/discover") throw new Error("Application destination missing");
-      setDestination(data.destination);
       setStep(6);
     } catch {
       setSubmitError("We could not finish setting up your space. Try again.");
@@ -389,7 +385,7 @@ export function OnboardingFlow({
                 {step === 3 ? <p>Pick at least three. You can always change these later.</p> : null}
                 {step === 4 ? <p>There is no wrong way to learn. Choose what feels useful.</p> : null}
                 {step === 5 ? <p>We&apos;ll use this as a starting point, never a label.</p> : null}
-                {step === 6 ? <p>Pick one and we&apos;ll put it on your calendar.</p> : null}
+                {step === 6 ? <p>Pick a video to start. It becomes your first session.</p> : null}
               </div>
 
               {step === 1 ? (
@@ -529,7 +525,7 @@ export function OnboardingFlow({
                 </fieldset>
               ) : null}
 
-              {step === 6 && destination ? <FirstSession preferredDuration={flow.preferredDuration} skipTo={destination} /> : null}
+              {step === 6 ? <FirstSession preferredDuration={flow.preferredDuration} /> : null}
 
               {saveError ? <p className="onboarding-inline-error" role="status">{saveError}</p> : null}
               {submitError ? <p className="onboarding-inline-error" role="alert">{submitError}</p> : null}

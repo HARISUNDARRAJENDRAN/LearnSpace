@@ -159,7 +159,9 @@ async function completeDiscoveryOnboarding(page: import("@playwright/test").Page
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
 }
 
@@ -192,16 +194,18 @@ test("the last onboarding step plans a first session onto the calendar", async (
 
   await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Start now" })).toBeDisabled();
-  await page.getByRole("button", { name: /Something else/ }).click();
-  await page.getByPlaceholder("e.g. Practise recursion problems").fill("Practise recursion problems");
-  await page.getByRole("button", { name: "Practice", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Skip for now" })).toHaveCount(0);
+  const picks = page.getByRole("group", { name: "What to study" }).getByRole("button");
+  await expect(picks.first()).toBeVisible();
+  await picks.first().click();
   await page.getByRole("button", { name: "45 min" }).click();
   await page.getByRole("button", { name: "Start now" }).click();
-  // Planning a first session skips the one-time landing on Discover.
-  await expect(page).toHaveURL(/\/app$/);
+  // The picked video is the learner's session as soon as onboarding ends.
+  await expect(page).toHaveURL(/\/app\/sessions$/);
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toHaveCount(0);
+  await page.goto("/app");
   const calendar = page.getByRole("region", { name: "Study plan" });
-  await expect(calendar.getByRole("button", { name: /Practise recursion problems/ }).first()).toBeVisible();
-  await expect(calendar.getByRole("button", { name: /Practise recursion problems/ }).first()).toHaveClass(/kind-practice/);
+  await expect(calendar.getByRole("button", { name: /Watch / }).first()).toHaveClass(/kind-watch/);
 });
 
 test("completed learner reaches Home and can use the app navigation", async ({ page }) => {
@@ -238,7 +242,9 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app\/discover$/);
 
   await page.goto("/onboarding");
@@ -246,6 +252,10 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Study plan" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent study", exact: true })).toBeVisible();
+  // With no session in progress, Sessions asks for the next video rather than showing an empty page.
+  await page.goto("/app/sessions");
+  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await page.goto("/app");
   const browserErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
