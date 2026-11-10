@@ -6,7 +6,7 @@ import {
   type MasteryVerdict, type MasteryView,
 } from "@learnspace/shared/mastery";
 import { strictJsonSchema } from "@learnspace/shared/tutor";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import { estimateCostUsd, openAiTutorModel, TUTOR_MODEL, type TutorModel, TutorModelError, type TutorModelResult, type TutorUsage } from "../ai/tutor-model";
 import { AuthError } from "../auth/errors";
 import { restoreLatex } from "../math";
@@ -18,6 +18,9 @@ import { fence, GRADING_INSTRUCTIONS, QUESTION_INSTRUCTIONS } from "./prompt";
 
 const PURPOSE = "mastery_check";
 const WATCHED_PCT = 95;
+const WRITE_GOAL = "Write a mastery check from the video transcript";
+// A writing run older than the routes' 150 s limit was cut off, so it no longer counts as in progress.
+const WRITING_WINDOW_MS = 150_000;
 const CREDIT: Record<MasteryVerdict, number> = { correct: 1, partial: 0.5, incorrect: 0 };
 
 type Base = { id: string; question: string; chunkIds: string[]; positionMs: number | null };
@@ -57,7 +60,10 @@ async function masteryContext(tx: Transaction, userId: string, sessionId: string
     : Number(progress?.pct ?? 0) < WATCHED_PCT ? "locked"
     : latest?.status === "failed" ? "failed"
     : "ready";
-  return { video, latest: latest ?? null, state };
+  if (state !== "ready" && state !== "failed") return { video, latest: latest ?? null, state };
+  const [writing] = await tx.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.studySessionId, video.sessionId), eq(agentRuns.goal, WRITE_GOAL),
+    eq(agentRuns.status, "executing"), gt(agentRuns.startedAt, new Date(Date.now() - WRITING_WINDOW_MS)))).limit(1);
+  return { video, latest: latest ?? null, state: writing ? "writing" as const : state };
 }
 
 async function viewOf(tx: Transaction, userId: string, sessionId: string): Promise<MasteryView> {
@@ -115,15 +121,17 @@ function parse<T>(schema: { safeParse: (value: unknown) => { success: true; data
 export async function startMastery(userId: string, sessionId: string, options: Options = {}): Promise<MasteryView> {
   const model = options.model ?? openAiTutorModel;
   const prepared = await withUserTransaction(userId, async (tx) => {
+    // The background write when the video ends and the learner's own request must not both start a set.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mastery.write:${userId}:${sessionId}`}, 0))`);
     const { video, latest, state } = await masteryContext(tx, userId, sessionId);
-    if (state === "open" || state === "passed") return { view: { state, passScore: MASTERY_PASS_SCORE, check: latest ? checkView(latest) : null } satisfies MasteryView };
+    if (state === "open" || state === "passed" || state === "writing") return { view: { state, passScore: MASTERY_PASS_SCORE, check: latest ? checkView(latest) : null } satisfies MasteryView };
     if (state === "unavailable" || !video.versionId) throw new AuthError("MASTERY_UNAVAILABLE", "This video has no transcript, so it has no mastery check.", 409);
     if (state === "locked") throw new AuthError("MASTERY_LOCKED", "Finish the video to unlock its mastery check.", 409);
     await admitTutorGeneration(tx, userId);
     const chunks = await tx.select({ id: resourceChunks.id, content: resourceChunks.content, startMs: resourceChunks.startMs }).from(resourceChunks)
       .where(eq(resourceChunks.resourceVersionId, video.versionId)).orderBy(asc(resourceChunks.ordinal));
     const earlier = await tx.select({ questions: masteryChecks.questions }).from(masteryChecks).where(and(eq(masteryChecks.userId, userId), eq(masteryChecks.resourceId, video.resourceId)));
-    const runId = await openRun(tx, userId, video.sessionId, "Write a mastery check from the video transcript");
+    const runId = await openRun(tx, userId, video.sessionId, WRITE_GOAL);
     return { video: { ...video, versionId: video.versionId }, chunks, avoid: earlier.flatMap((row) => (row.questions as StoredQuestion[]).map((question) => question.question)), runId };
   });
   if ("view" in prepared) return prepared.view;

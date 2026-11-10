@@ -213,7 +213,7 @@
 .session-quiz-prompt { margin: 0; color: var(--session-ink); font-size: 16px; font-weight: 500; line-height: 1.45; }
 .session-quiz-options { display: grid; gap: 8px; margin: 18px 0 0; padding: 0; list-style: none; }
 .session-quiz-option { display: grid; width: 100%; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--session-line); border-radius: 8px; background: #fff; color: var(--session-ink); font: inherit; font-size: 14px; line-height: 1.4; text-align: left; cursor: pointer; }
-.session-quiz-option > span { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--session-hover); color: var(--session-ink-soft); font-size: 12px; font-weight: 600; }
+.session-quiz-option > span:first-child { display: grid; width: 24px; height: 24px; place-items: center; border-radius: 6px; background: var(--session-hover); color: var(--session-ink-soft); font-size: 12px; font-weight: 600; }
 .session-quiz-option svg { width: 16px; height: 16px; }
 .session-quiz-option:hover:not(:disabled) { border-color: rgba(0, 0, 0, .25); }
 .session-quiz-option:disabled { cursor: default; }
@@ -230,6 +230,7 @@
 .session-quiz-actions { display: flex; gap: 8px; margin-top: 8px; }
 .mastery-written-form { display: grid; justify-items: start; gap: 10px; margin-top: 18px; }
 .mastery-written-form textarea { width: 100%; resize: vertical; padding: 10px 12px; border: 1px solid var(--session-line); border-radius: 8px; background: #fff; color: var(--session-ink); font: inherit; font-size: 14px; line-height: 1.5; }
+.mastery-written-actions { display: flex; align-items: center; gap: 8px; }
 .mastery-written { margin: 18px 0 0; padding: 10px 12px; border-left: 2px solid var(--session-line); color: var(--session-ink-soft); font-size: 14px; line-height: 1.55; white-space: pre-wrap; }
 .mastery-review { display: grid; gap: 10px; margin: 8px 0 0; padding: 0; list-style: none; }
 .mastery-review li { display: grid; justify-items: start; gap: 4px; color: var(--session-ink); font-size: 14px; line-height: 1.45; }

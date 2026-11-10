@@ -36,7 +36,7 @@ export type MasteryCheckView = { id: string; status: "open" | "passed" | "failed
  * unavailable: no transcript, so no check (finishing the video completes it); locked: not watched yet;
  * ready: watched, no set yet; open/failed/passed: the latest set.
  */
-export type MasteryView = { state: "unavailable" | "locked" | "ready" | "open" | "failed" | "passed"; passScore: number; check: MasteryCheckView | null };
+export type MasteryView = { state: "unavailable" | "locked" | "ready" | "writing" | "open" | "failed" | "passed"; passScore: number; check: MasteryCheckView | null };
 
 export const masteryAnswerRequestSchema = z.union([
   z.object({ checkId: z.string().uuid(), questionId: z.string().regex(/^q\d{1,2}$/), choice: z.number().int().min(0).max(3) }).strict(),

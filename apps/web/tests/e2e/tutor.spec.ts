@@ -201,15 +201,16 @@ test("watching the video to the end opens a hard check that must be passed to mo
   await page.goto(`/app/study/video/${sessionId}`);
   await page.getByRole("button", { name: "Check", exact: true }).click();
   const panel = page.locator(".session-tool-slot:not([hidden])");
-  await panel.getByRole("button", { name: "Start the check" }).click();
+  // Finishing the video wrote the set in the background, so the panel opens on the first question.
   await expect(panel.getByText("1 / 5")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Start the check" })).toHaveCount(0);
   for (let index = 0; index < 3; index += 1) {
     await panel.getByRole("button", { name: /It overshoots the minimum/ }).click();
     await expect(panel.getByText("Large steps jump past the minimum.")).toBeVisible();
     await panel.getByRole("button", { name: "Next question" }).click();
   }
   for (let index = 0; index < 2; index += 1) {
-    await panel.getByLabel("Your answer").fill("Big steps overshoot the minimum, so the loss grows.");
+    await panel.getByLabel("Your answer", { exact: true }).fill("Big steps overshoot the minimum, so the loss grows.");
     await panel.getByRole("button", { name: "Submit answer" }).click();
     await expect(panel.getByText("Right: big steps overshoot the minimum.")).toBeVisible();
     await panel.getByRole("button", { name: index === 1 ? "See results" : "Next question" }).click();

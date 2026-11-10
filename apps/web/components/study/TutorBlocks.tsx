@@ -182,7 +182,7 @@ function CheckBlock({ block, message, actions }: BlockProps<"check">) {
       <ol className="session-quiz-options" aria-labelledby={`${message.id}-${block.id}`}>
         {block.options.map((option, index) => {
           const state = !result ? "" : index === result.answer ? " is-correct" : index === result.choice ? " is-wrong" : "";
-          return <li key={option}><button className={`session-quiz-option${state}`} type="button" disabled={Boolean(result) || actions.busy} aria-pressed={result?.choice === index} onClick={() => actions.answer(message.id, block.id, index)}><span>{String.fromCharCode(65 + index)}</span><Rich text={option} />{state === " is-correct" ? <Check aria-label="Correct answer" /> : state === " is-wrong" ? <X aria-label="Your answer" /> : null}</button></li>;
+          return <li key={option}><button className={`session-quiz-option${state}`} type="button" disabled={Boolean(result) || actions.busy} aria-pressed={result?.choice === index} onClick={() => actions.answer(message.id, block.id, index)}><span>{String.fromCharCode(65 + index)}</span><span className="session-quiz-option-text"><Rich text={option} /></span>{state === " is-correct" ? <Check aria-label="Correct answer" /> : state === " is-wrong" ? <X aria-label="Your answer" /> : null}</button></li>;
         })}
       </ol>
       {result ? (

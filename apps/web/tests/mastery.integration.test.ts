@@ -80,8 +80,18 @@ test("a watched video completes only once its mastery check is passed", { skip: 
     assert.equal(await progressStatus(videoId), "active");
     assert.equal((await mastery.getMastery(owner.id, sessionId)).state, "ready");
 
+    // While a set is being written (in the background once the video ends), the panel sees "writing" and a second start waits on it.
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const writing = mastery.startMastery(owner.id, sessionId, { model: async (request, hooks) => { await gate; return model(request, hooks); } });
+    for (let tries = 0; tries < 100 && (await mastery.getMastery(owner.id, sessionId)).state !== "writing"; tries++) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal((await mastery.getMastery(owner.id, sessionId)).state, "writing");
+    assert.equal((await mastery.startMastery(owner.id, sessionId, { model })).state, "writing");
+    assert.equal(calls.length, 0);
+    release();
+
     // A set is written from the whole transcript; a question citing a passage it wasn't shown is dropped, and no key leaves the server.
-    const first = await mastery.startMastery(owner.id, sessionId, { model });
+    const first = await writing;
     assert.equal(first.state, "open");
     assert.equal(first.check?.questions.length, 5);
     assert.ok(calls[0]!.user.includes("[5] 4:00"));
