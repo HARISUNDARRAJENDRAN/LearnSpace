@@ -1101,16 +1101,9 @@ export async function pauseSession(userId: string, sessionId: string, idempotenc
   });
 }
 
-export async function askStudyQuestion(userId: string, sessionId: string, question: string, anchor: StudyAnchor | undefined, idempotencyKey: string): Promise<{ status: "preparing"; message: string; chunkCount: number; citations: [] }> {
-  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
-  return withUserTransaction(userId, async (tx) => {
-    const session = await lockSession(tx, userId, normalizedSessionId);
-    const type = session.activeResourceId ? await loadResource(tx, userId, session.activeResourceId, true).then((resource) => resource ? studyType(resource.type) : null) : null;
-    if (!type || (anchor && anchor.kind !== type)) throw new AuthError("INVALID_STUDY_ANCHOR", "That question context does not match this material.", 422);
-    const chunkRows = session.activeVersionId ? await tx.select({ id: resourceChunks.id }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, session.activeVersionId)).limit(1) : [];
-    await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: session.activeResourceId, resourceVersionId: session.activeVersionId, eventType: "question.asked", actorType: "user", source: "web", correlationId: randomUUID(), idempotencyKey: `study:question:${normalizedSessionId}:${idempotencyKey}`, occurredAt: new Date(), payload: { question, anchor: jsonAnchor(anchor) } });
-    return { status: "preparing", message: chunkRows.length === 0 ? "The lesson context is still preparing. Grounded questions will be available when source text is ready." : "The lesson context is ready, but grounded answers are not connected yet. No generic answer was generated.", chunkCount: chunkRows.length, citations: [] };
-  });
+/** Counts a tutor question as study activity (Home stats, plan levels), once per request. */
+export async function recordStudyQuestion(tx: Transaction, input: { userId: string; sessionId: string; resourceId: string; resourceVersionId: string; question: string; positionMs: number; idempotencyKey: string }): Promise<void> {
+  await insertStudyEvent(tx, { schemaVersion: 1, userId: input.userId, studySessionId: input.sessionId, resourceId: input.resourceId, resourceVersionId: input.resourceVersionId, eventType: "question.asked", actorType: "user", source: "web", correlationId: randomUUID(), idempotencyKey: `study:question:${input.sessionId}:${input.idempotencyKey}`, occurredAt: new Date(), payload: { question: input.question, anchor: { kind: "video", positionMs: input.positionMs } } });
 }
 
 export async function listStudySessions(userId: string): Promise<Array<{ id: string; title: string; status: SessionRow["status"]; mode: SessionRow["mode"]; lastActiveAt: string; resourceCount: number; progressPct: number; activeResource: { id: string; title: string; type: StudyType; youtubeId: string | null; readiness: StudyResourceReadiness } | null; route: string | null }>> {

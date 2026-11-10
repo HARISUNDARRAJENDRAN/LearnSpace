@@ -75,12 +75,6 @@ export const studySessionActionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
 }).strict();
 
-export const studyQuestionRequestSchema = z.object({
-  question: z.string().trim().min(1).max(2_000),
-  anchor: studyAnchorSchema.optional(),
-  idempotencyKey: z.string().trim().min(8).max(128),
-}).strict();
-
 export const studyNotesKindSchema = z.enum(["primer", "summary"]);
 
 export const studyNotesRequestSchema = z.object({
@@ -132,7 +126,6 @@ export type StartStudySessionRequest = z.infer<typeof startStudySessionRequestSc
 export type ActivateSessionResourceRequest = z.infer<typeof activateSessionResourceRequestSchema>;
 export type StudyProgressRequest = z.infer<typeof studyProgressRequestSchema>;
 export type StudySessionActionRequest = z.infer<typeof studySessionActionRequestSchema>;
-export type StudyQuestionRequest = z.infer<typeof studyQuestionRequestSchema>;
 export type StudyNotesKind = z.infer<typeof studyNotesKindSchema>;
 export type StudyNotesResponse = z.infer<typeof studyNotesResponseSchema>;
 export type StudyQuizQuestion = z.infer<typeof studyQuizQuestionSchema>;

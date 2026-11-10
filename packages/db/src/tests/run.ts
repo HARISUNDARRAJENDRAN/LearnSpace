@@ -716,8 +716,8 @@ const tests: Array<[string, () => Promise<void>]> = [
     );
     await expectRejected(
       () => migrator`
-        INSERT INTO study.tutor_threads (id, user_id, study_session_id, mode, status, metadata)
-        VALUES ('00000000-0000-0000-0000-000000000845', ${ids.userB}, ${ids.sessionA}, 'guided', 'active', '{}'::jsonb)
+        INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode, status, metadata)
+        VALUES ('00000000-0000-0000-0000-000000000845', ${ids.userB}, ${ids.sessionA}, ${ids.publicResource}, 'guided', 'active', '{}'::jsonb)
       `,
       "tutor thread user mismatch",
     );
@@ -979,10 +979,10 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
 
     await migrator`
-      INSERT INTO study.tutor_threads (id, user_id, study_session_id, mode, status, metadata)
+      INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode, status, metadata)
       VALUES
-        (${ids.hardeningThreadA}, ${ids.userA}, ${ids.sessionA}, 'text', 'active', '{}'::jsonb),
-        (${ids.hardeningThreadB}, ${ids.userB}, ${ids.sessionB}, 'text', 'active', '{}'::jsonb)
+        (${ids.hardeningThreadA}, ${ids.userA}, ${ids.sessionA}, ${ids.publicResource}, 'text', 'active', '{}'::jsonb),
+        (${ids.hardeningThreadB}, ${ids.userB}, ${ids.sessionB}, ${ids.publicResource}, 'text', 'active', '{}'::jsonb)
     `;
     await migrator`
       INSERT INTO agent.agent_runs (id, user_id, study_session_id, tutor_thread_id, purpose, status, goal, policy_version, max_iterations, max_tool_calls, max_tokens)
@@ -1153,10 +1153,10 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${recommendationRunA}, ${recommendationRunB})`;
     await migrator`DELETE FROM discovery.recommendation_runs WHERE id IN (${recommendationRunA}, ${recommendationRunB})`;
     await migrator`
-      INSERT INTO study.tutor_threads (id, user_id, study_session_id, mode, status, metadata)
+      INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode, status, metadata)
       VALUES
-        (${threadA}, ${ids.userA}, ${ids.sessionA}, 'text', 'active', '{}'::jsonb),
-        (${threadB}, ${ids.userB}, ${ids.sessionB}, 'text', 'active', '{}'::jsonb)
+        (${threadA}, ${ids.userA}, ${ids.sessionA}, ${ids.publicResource}, 'text', 'active', '{}'::jsonb),
+        (${threadB}, ${ids.userB}, ${ids.sessionB}, ${ids.publicResource}, 'text', 'active', '{}'::jsonb)
     `;
     await migrator`
       INSERT INTO agent.agent_runs (id, user_id, study_session_id, tutor_thread_id, purpose, status, goal, policy_version, max_iterations, max_tool_calls, max_tokens)

@@ -435,7 +435,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
         {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes sessionId={session.id} onCollapse={collapse} /></div> : null}
         {quizPanel ? <div className="session-tool-slot" {...quizPanel}><SessionQuiz sessionId={session.id} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
         {codePanel ? <div className="session-tool-slot" {...codePanel}><SessionCode sessionId={session.id} onCollapse={collapse} /></div> : null}
-        {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat sessionId={session.id} resource={active} currentMs={lesson.currentMs} onCollapse={collapse} /></div> : null}
+        {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} currentMs={lesson.currentMs} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
       </aside>
     </main>
   );

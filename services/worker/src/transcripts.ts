@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { normalizeSegments, type TranscriptSegment } from "@learnspace/shared/transcripts";
+import { TRANSCRIPT_EMBEDDING_PROFILE } from "@learnspace/shared/tutor";
+import type { EmbeddingProvider } from "./embeddings.js";
 
 type SqlClient = ReturnType<typeof postgres>;
 type CaptionTrack = { baseUrl?: string; languageCode?: string; kind?: string };
@@ -8,8 +10,8 @@ type CaptionTrack = { baseUrl?: string; languageCode?: string; kind?: string };
 // The Android app's player answers without a proof-of-origin token; bump the version if YouTube starts refusing it.
 const ANDROID_CLIENT = { clientName: "ANDROID", clientVersion: "20.10.38", androidSdkVersion: 34, hl: "en" };
 const ANDROID_USER_AGENT = "com.google.android.youtube/20.10.38 (Linux; U; Android 14) gzip";
-// The home signer gets this long to sign a video before the worker spends a Firecrawl credit on it.
-const FIRECRAWL_AFTER = "10 minutes";
+// Housekeeping's fallback for when the home signer is off; the signer itself hands videos to Firecrawl far sooner.
+const FIRECRAWL_AFTER = "2 minutes";
 
 export type SignOutcome =
   | { kind: "signed"; captionUrl: string; language: string; expiresAt: Date }
@@ -108,7 +110,8 @@ async function firecrawlTranscript(youtubeId: string, apiKey: string): Promise<T
   const response = await fetch("https://api.firecrawl.dev/v2/scrape", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${youtubeId}`, formats: ["markdown"], location: { languages: ["en"] } }),
+    // A cached render (Firecrawl keeps pages for two days by default) can lack the transcript panel; fresh ones have it.
+    body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${youtubeId}`, formats: ["markdown"], location: { languages: ["en"] }, maxAge: 0 }),
     signal: AbortSignal.timeout(90_000),
   });
   if (!response.ok) throw new Error(`Firecrawl HTTP ${response.status}`);
@@ -117,10 +120,15 @@ async function firecrawlTranscript(youtubeId: string, apiKey: string): Promise<T
   return segments.length ? segments : null;
 }
 
-/** Stores a transcript as the video's current version with timed chunks, and closes its request. */
-export async function publishTranscript(sql: SqlClient, resourceId: string, language: string, segments: TranscriptSegment[], source: string): Promise<string> {
+/**
+ * Stores a transcript as the video's current version with timed chunks, and closes its request. A learner's published
+ * download keeps its row, emptied, as the record of who supplied it; other downloads are dropped.
+ */
+export async function publishTranscript(sql: SqlClient, resourceId: string, language: string, segments: TranscriptSegment[], source: string, submittedBy: string | null = null): Promise<string> {
   const hash = transcriptHash(segments);
   return sql.begin(async (tx) => {
+    // The signer and worker housekeeping both publish; one video's versions are written one at a time.
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${resourceId}))`;
     const [existing] = await tx<{ id: string }[]>`SELECT id FROM catalog.resource_versions WHERE resource_id = ${resourceId} AND source_sha256 = ${hash}`;
     let versionId = existing?.id;
     if (!versionId) {
@@ -140,47 +148,98 @@ export async function publishTranscript(sql: SqlClient, resourceId: string, lang
     }
     await tx`UPDATE catalog.resources SET current_version_id = ${versionId}, updated_at = now() WHERE id = ${resourceId}`;
     await tx`UPDATE ops.transcript_requests SET status = 'ready', caption_url = NULL, detail = ${source}, updated_at = now() WHERE resource_id = ${resourceId}`;
-    await tx`DELETE FROM catalog.transcript_submissions WHERE resource_id = ${resourceId}`;
+    await tx`DELETE FROM catalog.transcript_submissions WHERE resource_id = ${resourceId} AND user_id IS DISTINCT FROM ${submittedBy}`;
+    if (submittedBy) await tx`UPDATE catalog.transcript_submissions SET segments = '[]'::jsonb WHERE resource_id = ${resourceId} AND user_id = ${submittedBy}`;
     return versionId;
   });
 }
 
-/** Housekeeping: publish captions two learners agree on, then fall back to Firecrawl for videos the signer never reached. */
-export async function transcriptUpkeep(sql: SqlClient): Promise<{ published: number; firecrawl: number; failed: number }> {
-  const result = { published: 0, firecrawl: 0, failed: 0 };
-  const agreed = await sql<{ resource_id: string; content_sha256: string }[]>`
-    SELECT resource_id, content_sha256 FROM catalog.transcript_submissions
-    GROUP BY resource_id, content_sha256 HAVING count(*) >= 2 LIMIT 10`;
-  for (const row of agreed) {
-    const [copy] = await sql<{ language: string; segments: TranscriptSegment[] }[]>`
-      SELECT language, segments FROM catalog.transcript_submissions WHERE resource_id = ${row.resource_id} AND content_sha256 = ${row.content_sha256} LIMIT 1`;
-    if (!copy) continue;
-    await publishTranscript(sql, row.resource_id, copy.language, copy.segments, "learner-captions");
-    result.published += 1;
+/** Embeds current transcript chunks that have no embedding yet, so the tutor can retrieve by meaning as well as by words. */
+export async function embedTranscriptChunks(sql: SqlClient, provider: EmbeddingProvider | null, limit = 300, versionIds: string[] | null = null): Promise<number> {
+  if (!provider) return 0;
+  const rows = await sql<{ id: string; content: string }[]>`
+    SELECT c.id, c.content FROM retrieval.resource_chunks c
+    JOIN catalog.resources r ON r.current_version_id = c.resource_version_id
+    WHERE c.chunk_type = 'transcript' ${versionIds ? sql`AND c.resource_version_id = ANY(${versionIds}::uuid[])` : sql``}
+      AND NOT EXISTS (SELECT 1 FROM retrieval.chunk_embeddings e WHERE e.chunk_id = c.id AND e.embedding_profile_id = ${TRANSCRIPT_EMBEDDING_PROFILE})
+    ORDER BY c.resource_version_id, c.ordinal LIMIT ${limit}`;
+  let embedded = 0;
+  for (let index = 0; index < rows.length; index += 100) {
+    const batch = rows.slice(index, index + 100);
+    const vectors = await provider.embedDocuments(batch.map((row) => row.content));
+    const values = batch.map((row, position) => ({ chunk_id: row.id, embedding_profile_id: TRANSCRIPT_EMBEDDING_PROFILE, embedding: JSON.stringify(vectors[position]) }));
+    await sql`INSERT INTO retrieval.chunk_embeddings ${sql(values)} ON CONFLICT DO NOTHING`;
+    embedded += batch.length;
   }
+  return embedded;
+}
+
+/**
+ * Publishes the first learner download of each video still waiting for one. The download came from a URL the signer
+ * handed out and passed the app's checks; its row records who sent it, so a bad copy can be traced and removed.
+ */
+export async function publishSubmissions(sql: SqlClient): Promise<string[]> {
+  const pending = await sql<{ resource_id: string; user_id: string; language: string; segments: TranscriptSegment[] }[]>`
+    SELECT DISTINCT ON (s.resource_id) s.resource_id, s.user_id, s.language, s.segments
+    FROM catalog.transcript_submissions s JOIN ops.transcript_requests q ON q.resource_id = s.resource_id
+    WHERE q.status = 'signed' ORDER BY s.resource_id, s.created_at LIMIT 10`;
+  const versions: string[] = [];
+  for (const row of pending) versions.push(await publishTranscript(sql, row.resource_id, row.language, row.segments, "learner-captions", row.user_id));
+  return versions;
+}
+
+/**
+ * Claims the oldest video nobody delivered and fills it from Firecrawl, which fetches from its own servers, not ours.
+ * Waiting means the signer could not sign it, or no learner's copy arrived `after` it was signed or queued. The claim
+ * keeps the signer and housekeeping from paying for one video twice; null when nothing is waiting.
+ */
+export async function firecrawlNext(sql: SqlClient, apiKey: string, after: string): Promise<{ youtubeId: string; found: boolean; versionId: string | null } | null> {
+  const [row] = await sql<{ resource_id: string; youtube_id: string }[]>`
+    UPDATE ops.transcript_requests SET detail = 'firecrawl', updated_at = now()
+    WHERE resource_id = (
+      SELECT resource_id FROM ops.transcript_requests
+      WHERE detail IS DISTINCT FROM 'firecrawl_no_transcript' AND (
+        (status = 'queued' AND attempts > 0 AND detail IS DISTINCT FROM 'firecrawl')
+        OR (status IN ('queued', 'signed') AND updated_at < now() - ${after}::interval))
+      ORDER BY requested_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+    RETURNING resource_id, youtube_id`;
+  if (!row) return null;
+  const segments = await firecrawlTranscript(row.youtube_id, apiKey);
+  if (!segments) {
+    // A signed video has captions, so a learner's download can still deliver it; Firecrawl is not asked again either way.
+    await sql`UPDATE ops.transcript_requests SET status = CASE WHEN status = 'signed' THEN 'signed' ELSE 'failed' END, detail = 'firecrawl_no_transcript', updated_at = now() WHERE resource_id = ${row.resource_id} AND status <> 'ready'`;
+    return { youtubeId: row.youtube_id, found: false, versionId: null };
+  }
+  // A learner's download may have landed meanwhile; it has exact timestamps, so it stays.
+  const [open] = await sql`SELECT 1 FROM ops.transcript_requests WHERE resource_id = ${row.resource_id} AND status <> 'ready'`;
+  const versionId = open ? await publishTranscript(sql, row.resource_id, "en", segments, "firecrawl") : null;
+  return { youtubeId: row.youtube_id, found: true, versionId };
+}
+
+/** Housekeeping: publish learners' downloads the signer has not, fall back to Firecrawl for videos nobody delivered, then embed. */
+export async function transcriptUpkeep(sql: SqlClient, provider: EmbeddingProvider | null = null): Promise<{ published: number; firecrawl: number; failed: number; embedded: number }> {
+  const result = { published: 0, firecrawl: 0, failed: 0, embedded: 0 };
+  result.published = (await publishSubmissions(sql)).length;
+  // Tutor answers cached for a transcript that has since been replaced can never be served again.
+  await sql`DELETE FROM retrieval.answer_cache a USING catalog.resource_versions v JOIN catalog.resources r ON r.id = v.resource_id
+    WHERE a.resource_version_id = v.id AND r.current_version_id IS DISTINCT FROM v.id`;
   const apiKey = process.env.FIRECRAWL_API_KEY;
-  if (!apiKey) return result;
-  // A few per run: credits are scarce, and the signer usually catches up first.
-  const stale = await sql<{ resource_id: string; youtube_id: string }[]>`
-    SELECT resource_id, youtube_id FROM ops.transcript_requests
-    WHERE status = 'queued' AND requested_at < now() - ${FIRECRAWL_AFTER}::interval
-    ORDER BY requested_at LIMIT 3`;
-  for (const row of stale) {
-    let segments: TranscriptSegment[] | null;
+  // A few per run: credits are scarce.
+  for (let index = 0; apiKey && index < 3; index += 1) {
+    let rescued: Awaited<ReturnType<typeof firecrawlNext>>;
     try {
-      segments = await firecrawlTranscript(row.youtube_id, apiKey);
+      rescued = await firecrawlNext(sql, apiKey, FIRECRAWL_AFTER);
     } catch (error) {
-      // Out of credits or Firecrawl down: leave the queue as it is and try on a later run.
+      // Out of credits or Firecrawl down: the claim lapses and a later run tries again.
       console.warn(JSON.stringify({ metric: "transcript_firecrawl_failure", error: error instanceof Error ? error.message : "firecrawl failed" }));
       break;
     }
-    if (segments) {
-      await publishTranscript(sql, row.resource_id, "en", segments, "firecrawl");
-      result.firecrawl += 1;
-    } else {
-      await sql`UPDATE ops.transcript_requests SET status = 'failed', detail = 'firecrawl_no_transcript', updated_at = now() WHERE resource_id = ${row.resource_id}`;
-      result.failed += 1;
-    }
+    if (!rescued) break;
+    if (rescued.found) result.firecrawl += 1; else result.failed += 1;
   }
+  result.embedded = await embedTranscriptChunks(sql, provider).catch((error) => {
+    console.warn(JSON.stringify({ metric: "transcript_embedding_failure", error: error instanceof Error ? error.message : "embedding failed" }));
+    return 0;
+  });
   return result;
 }

@@ -63,13 +63,18 @@
       "types": "./src/transcripts.ts",
       "import": "./dist/transcripts.js",
       "default": "./dist/transcripts.js"
+    },
+    "./tutor": {
+      "types": "./src/tutor.ts",
+      "import": "./dist/tutor.js",
+      "default": "./dist/tutor.js"
     }
   },
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts"
+    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts src/tutor.test.ts"
   },
   "dependencies": {
     "ioredis": "^6.0.0",

@@ -35,10 +35,13 @@ export async function enforceRateLimit(input: RateLimitInput): Promise<void> {
   const identifierHash = input.identifier
     ? hashIpAddress(input.identifier.trim().toLowerCase(), secret)
     : "none";
-  const key = `learnspace:auth:${input.bucket}:${ipHash}:${identifierHash}`;
-  const counter = await increment(key, input.windowSeconds);
+  await consumeRateLimit(`learnspace:auth:${input.bucket}:${ipHash}:${identifierHash}`, input.limit, input.windowSeconds);
+}
 
-  if (counter.count > input.limit) {
+/** Counts one request against `key` and throws a 429 with Retry-After once the window's limit is passed. */
+export async function consumeRateLimit(key: string, limit: number, windowSeconds: number): Promise<void> {
+  const counter = await increment(key, windowSeconds);
+  if (counter.count > limit) {
     const retryAfterSeconds = Math.max(
       1,
       Math.ceil((counter.resetAt - Date.now()) / 1000),

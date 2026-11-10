@@ -18,7 +18,7 @@ export type TranscriptStatus =
 
 const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
 
-/** Same captions in, same segments out, so two learners' downloads hash identically. */
+/** Same captions in, same segments out, so one transcript always hashes to one version. */
 export function normalizeSegments(segments: TranscriptSegment[]): TranscriptSegment[] {
   return segments.flatMap(([startMs, durationMs, text]) => {
     const clean = collapse(text);

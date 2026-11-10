@@ -145,17 +145,25 @@ for the next call.
 YouTube refuses caption requests from datacenter IPs, so a machine on a
 home connection signs caption URLs. It sends one anonymous request per new
 video, with no account or cookies. Learners' browsers then download the
-captions on their own connections. A transcript is shared with everyone
-only after two learners' downloads match. A video still unsigned after
-10 minutes falls back to Firecrawl in the worker's housekeeping, at most
-3 per run.
+captions on their own connections; the server never downloads them itself.
+The signer publishes the first valid download within seconds and embeds it,
+and keeps that learner's emptied submission row as the record of who
+supplied the transcript. If no download arrives 15 seconds after signing
+(the learner's network may be one YouTube is refusing), the signer has
+Firecrawl fetch it from Firecrawl's own servers, at most 100 a day. A new
+video is usually answerable in about 10 seconds, and in under 40 when it
+needs Firecrawl. While the signer is off, the worker's housekeeping sends
+videos waiting over 2 minutes to Firecrawl, at most 3 per run.
 
 ```text
 DATABASE_WORKER_URL=<learnspace_worker URL> pnpm --filter @learnspace/worker transcripts:signer
 ```
 
-The signer waits 10 seconds between requests and stops at 500 a day. At
-the first rate limit or bot check, it pauses for 6 hours.
+The signer waits 10 seconds between YouTube requests and stops at 500 a
+day. At the first rate limit or bot check, it pauses signing for 6 hours;
+publishing and Firecrawl keep running. It needs `OPENAI_API_KEY` for
+embeddings and `FIRECRAWL_API_KEY` for the fallback. Locally, the
+`transcript-signer` compose service runs it against the local database.
 
 On the home laptop it runs as the systemd user service
 `learnspace-transcript-signer`, which starts at login and restarts after

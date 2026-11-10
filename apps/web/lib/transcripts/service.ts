@@ -38,7 +38,7 @@ export async function transcriptStatus(userId: string, resourceId: string): Prom
   });
 }
 
-/** Keeps the learner's own download; the worker shares it once another learner's download matches it exactly. */
+/** Keeps the learner's download; the home signer shares the first valid one for this video within seconds. */
 export async function submitTranscript(userId: string, resourceId: string, input: TranscriptSubmission): Promise<TranscriptStatus> {
   const segments = normalizeSegments(input.segments);
   if (segments.length === 0) throw new AuthError("EMPTY_TRANSCRIPT", "That transcript has no text.", 422);
@@ -53,6 +53,10 @@ export async function submitTranscript(userId: string, resourceId: string, input
     // Only captions for a URL the signer handed out are accepted, in the language it chose.
     if (!request || request.status !== "signed") throw new AuthError("TRANSCRIPT_NOT_REQUESTED", "This video is not waiting for captions.", 409);
     if (input.language !== request.language) throw new AuthError("TRANSCRIPT_LANGUAGE_MISMATCH", "Those captions are in a different language.", 422);
+    // YouTube's caption events come in time order; a shuffled or rewound copy was not downloaded from it.
+    if (segments.some(([startMs], index) => index > 0 && startMs < segments[index - 1]![0])) {
+      throw new AuthError("TRANSCRIPT_OUT_OF_ORDER", "Those captions are not in time order.", 422);
+    }
     if (request.durationMs && segments.some(([startMs]) => startMs > request.durationMs! + DURATION_SLACK_MS)) {
       throw new AuthError("TRANSCRIPT_OUT_OF_RANGE", "Those captions run past the end of the video.", 422);
     }

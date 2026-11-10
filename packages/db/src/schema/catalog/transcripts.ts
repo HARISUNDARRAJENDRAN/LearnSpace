@@ -3,7 +3,7 @@ import { catalogSchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { resources } from "./resources.js";
 
-/** A learner's browser download of a video's captions; published for everyone once a second learner's copy matches. */
+/** A learner's browser download of a video's captions. The first one is published for everyone; its row then stays, emptied, as the record of who supplied it. */
 export const transcriptSubmissions = catalogSchema.table("transcript_submissions", {
   resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "cascade" }),
   userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),

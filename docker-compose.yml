@@ -47,6 +47,8 @@ services:
       APP_URL: "${APP_URL:-http://localhost:3000}"
       # The source picker searches Exa directly for instant results.
       EXA_API_KEY: "${EXA_API_KEY:-}"
+      # The study tutor (GPT-6 Luna) and its query embeddings.
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       AUTH_SECRET: "${AUTH_SECRET:-local-development-auth-secret-change-me-please}"
       AUTH_SECURE_COOKIES: "${AUTH_SECURE_COOKIES:-false}"
       AUTH_EXPOSE_VERIFICATION_LINK: "${AUTH_EXPOSE_VERIFICATION_LINK:-true}"
@@ -93,6 +95,7 @@ services:
   # Discovery worker: finds videos and papers through Exa and keeps YouTube metrics fresh.
   backend:
     mem_limit: ${BACKEND_MEMORY_LIMIT:-1024m}
+    image: learnspace-backend
     build:
       context: .
       dockerfile: Dockerfile
@@ -126,6 +129,22 @@ services:
       # The worker needs the schema, which the web container migrates.
       web:
         condition: service_healthy
+    restart: unless-stopped
+
+  # Signs caption URLs for local videos from this machine's home IP, then publishes and embeds the first download.
+  transcript-signer:
+    mem_limit: 256m
+    # The backend's own image, so the signer can never run older worker code than the worker does.
+    image: learnspace-backend
+    command: ["node", "worker/dist/transcript-signer.js"]
+    environment:
+      DATABASE_WORKER_URL: postgres://learnspace_worker:learnspace_worker@postgres:5432/learnspace
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      # Fetches a transcript when no learner's browser could download it.
+      FIRECRAWL_API_KEY: "${FIRECRAWL_API_KEY:-}"
+    depends_on:
+      backend:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

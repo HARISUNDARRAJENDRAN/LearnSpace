@@ -50,6 +50,8 @@ export const modelInvocations = agentSchema.table(
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     cachedTokens: integer("cached_tokens"),
+    reasoningTokens: integer("reasoning_tokens"),
+    firstOutputMs: integer("first_output_ms"),
     latencyMs: integer("latency_ms"),
     estimatedCostUsd: numeric("estimated_cost_usd", { precision: 18, scale: 8 }),
     cacheStatus: text("cache_status"),

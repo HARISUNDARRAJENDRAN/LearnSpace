@@ -15,6 +15,9 @@ process.env.PLAYWRIGHT_E2E_EMAIL = `browser-e2e-${runId}@example.test`;
 process.env.AUTH_TEST_GOOGLE_AUTHORIZATION_URL = "http://127.0.0.1:4010/o/oauth2/v2/auth";
 process.env.AUTH_TEST_GOOGLE_TOKEN_URL = "http://127.0.0.1:4010/token";
 process.env.AUTH_TEST_GOOGLE_USERINFO_URL = "http://127.0.0.1:4010/userinfo";
+// The tutor talks to a scripted Responses API, never the real one.
+process.env.OPENAI_BASE_URL = "http://127.0.0.1:4011/v1";
+process.env.OPENAI_API_KEY = "playwright-openai-key";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -34,6 +37,12 @@ export default defineConfig({
     {
       command: "corepack pnpm exec tsx tests/e2e/mock-google-provider.ts",
       url: "http://127.0.0.1:4010/health",
+      timeout: 120_000,
+      reuseExistingServer: true,
+    },
+    {
+      command: "corepack pnpm exec tsx tests/e2e/mock-openai-provider.ts",
+      url: "http://127.0.0.1:4011/health",
       timeout: 120_000,
       reuseExistingServer: true,
     },

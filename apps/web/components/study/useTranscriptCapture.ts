@@ -3,9 +3,9 @@
 import { parseJson3Captions, type TranscriptStatus } from "@learnspace/shared/transcripts";
 import { useEffect } from "react";
 
-// The home signer may take a few minutes to reach a new video; stop asking once the learner has been here a while.
-const POLL_MS = 30_000;
-const MAX_POLLS = 20;
+// The home signer usually signs a new video within seconds; after two minutes Firecrawl takes over, so stop asking.
+const POLL_MS = 3_000;
+const MAX_POLLS = 40;
 
 /** Downloads the video's captions from YouTube on the learner's own connection, once per video, for the shared transcript. */
 export function useTranscriptCapture(resourceId: string, enabled: boolean) {

@@ -86,7 +86,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "knowledge.artifact_details": ["artifact_details_owner_policy"],
   "knowledge.artifact_sources": ["artifact_sources_owner_policy"],
   "knowledge.artifact_concepts": ["artifact_concepts_owner_policy"],
-  "agent.agent_runs": ["agent_runs_owner_policy"],
+  "agent.agent_runs": ["agent_runs_owner_policy", "agent_runs_owner_insert_policy", "agent_runs_owner_update_policy"],
   "agent.agent_steps": ["agent_steps_owner_policy"],
   "agent.tool_invocations": ["tool_invocations_owner_policy"],
   "agent.model_invocations": ["model_invocations_owner_policy"],
@@ -104,11 +104,12 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "projection.session_summary": ["session_summary_owner_policy", "session_summary_worker_policy"],
   "ops.idempotency_records": ["idempotency_records_select_policy"],
   "ops.outbox_events": ["outbox_events_owner_policy", "outbox_events_owner_insert_policy", "outbox_events_worker_policy", "outbox_events_worker_update_policy"],
-  "ops.api_usage_daily": ["api_usage_daily_worker_select", "api_usage_daily_worker_insert", "api_usage_daily_worker_update"],
+  "ops.api_usage_daily": ["api_usage_daily_worker_select", "api_usage_daily_worker_insert", "api_usage_daily_worker_update", "api_usage_daily_app_select", "api_usage_daily_app_insert", "api_usage_daily_app_update"],
+  "retrieval.answer_cache": ["answer_cache_public_select", "answer_cache_public_insert", "answer_cache_worker_select", "answer_cache_worker_delete"],
   "ops.rate_limit_counters": ["rate_limit_counters_auth_select", "rate_limit_counters_auth_insert", "rate_limit_counters_auth_update", "rate_limit_counters_worker_delete", "rate_limit_counters_worker_select"],
   "ops.jobs": ["jobs_worker_policy", "jobs_worker_insert_policy", "jobs_worker_update_policy", "jobs_worker_delete_policy"],
   "ops.transcript_requests": ["transcript_requests_app_select", "transcript_requests_app_insert", "transcript_requests_app_requeue", "transcript_requests_worker_select", "transcript_requests_worker_update"],
-  "catalog.transcript_submissions": ["transcript_submissions_owner_select", "transcript_submissions_owner_insert", "transcript_submissions_owner_update", "transcript_submissions_worker_select", "transcript_submissions_worker_delete"],
+  "catalog.transcript_submissions": ["transcript_submissions_owner_select", "transcript_submissions_owner_insert", "transcript_submissions_owner_update", "transcript_submissions_worker_select", "transcript_submissions_worker_update", "transcript_submissions_worker_delete"],
 };
 
 const requiredConstraints = [
@@ -225,7 +226,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 87, `expected 87 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 88, `expected 88 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count
