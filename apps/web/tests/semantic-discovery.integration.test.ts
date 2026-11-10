@@ -170,7 +170,8 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await recordInteraction(userId, { runId: focused.runId!, resourceId: focusedCard.resourceId, action: "dismiss", correlationId: randomUUID(), metadata: {} });
     await projectRecommendationProfiles(worker, provider, [userId]);
     assert.ok(!(await getHomeFeed(userId, "discover", { topicId: ai })).sections.recommendedVideos.some((c) => c.resourceId === focusedCard.resourceId));
-    const completed = resources[25]!;
+    // The dismissed card is excluded for good, so the lessons below must be other fixtures.
+    const [completed, nextLesson] = resources.slice(25).filter((id) => id !== focusedCard.resourceId) as [string, string];
     await db`INSERT INTO study.user_resource_progress (user_id,resource_id,status,progress_pct,completed_at) VALUES (${userId},${completed},'completed',100,now())`;
     await projectRecommendationProfiles(worker, provider, [userId]);
     assert.ok(!(await getHomeFeed(userId, "discover")).sections.recommendedVideos.some((c) => c.resourceId === completed));
@@ -178,13 +179,13 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     collections.push(collectionId);
     await db`INSERT INTO catalog.collections (id,kind,title,visibility) VALUES (${collectionId},'playlist','Integration progression','public')`;
     await db`INSERT INTO catalog.collection_sections (id,collection_id,title,position) VALUES (${firstSection},${collectionId},'Foundations',0),(${nextSection},${collectionId},'Application',1)`;
-    await db`INSERT INTO catalog.collection_items (id,section_id,resource_id,position) VALUES (${firstItem},${firstSection},${completed},0),(${nextItem},${nextSection},${resources[26]!},0)`;
+    await db`INSERT INTO catalog.collection_items (id,section_id,resource_id,position) VALUES (${firstItem},${firstSection},${completed},0),(${nextItem},${nextSection},${nextLesson},0)`;
     await db`INSERT INTO catalog.collection_enrollments (user_id,collection_id,current_item_id,status,progress_pct) VALUES (${userId},${collectionId},${firstItem},'active',50)`;
     const candidates = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false));
-    assert.ok(candidates.continuationIds.includes(resources[26]!), "continuation crosses sections and skips completed lessons");
+    assert.ok(candidates.continuationIds.includes(nextLesson), "continuation crosses sections and skips completed lessons");
     await db`UPDATE catalog.collection_enrollments SET current_item_id = ${nextItem} WHERE user_id = ${userId} AND collection_id = ${collectionId}`;
     const resume = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false));
-    assert.ok(resume.continuationIds.includes(resources[26]!), "the unfinished active lesson remains resumable");
+    assert.ok(resume.continuationIds.includes(nextLesson), "the unfinished active lesson remains resumable");
     assert.ok(candidates.ids.length <= config.candidateCount);
     assert.equal(new Set(candidates.ids).size, candidates.ids.length);
     assert.equal(candidates.fallback, false);
