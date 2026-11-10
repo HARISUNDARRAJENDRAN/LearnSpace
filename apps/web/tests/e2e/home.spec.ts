@@ -84,6 +84,8 @@ test("first app entry goes to Discover once; empty Home works across later sessi
     const study = await started.json() as { route: string };
     await page.goto(study.route);
     const measured = page.waitForResponse((response) => response.url().endsWith("/focus") && response.request().method() === "POST" && response.status() === 200);
+    // The lesson card takes the first click to select it; only then does the player take input.
+    await page.getByRole("button", { name: "Select Home E2E Python lesson" }).click();
     await page.getByRole("button", { name: "Play fixture video" }).click();
     await measured;
     const recorded = await database`SELECT sum(duration_sec)::int AS seconds FROM study.focus_sessions WHERE user_id = ${fresh.userId}`;

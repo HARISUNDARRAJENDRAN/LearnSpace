@@ -106,6 +106,12 @@ async function completeOnboarding(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/app/);
 }
 
+async function finishCurrentSession(page: Page): Promise<void> {
+  const sessionId = page.url().split("/").at(-1);
+  const response = await page.request.patch(`/api/v1/study-sessions/${sessionId}`, { data: { action: "complete", idempotencyKey: `e2e-complete-${randomUUID()}` } });
+  expect(response.status()).toBe(200);
+}
+
 test("catalog discovery starts the correct StudySession and preserves mode context", async ({ page }) => {
   await page.goto("/register");
   await page.getByLabel("Your name").fill("Source Picker Learner");
@@ -142,6 +148,8 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   const requestBody = (await studyRequest).postDataJSON() as { recommendationRunId?: string };
   expect(requestBody.recommendationRunId).toBeTruthy();
   await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
+  // Sessions hold one session at a time, so the header only offers a new source once this one is finished.
+  await finishCurrentSession(page);
 
   await page.goto("/app/research");
   await page.getByRole("button", { name: "Start research", exact: true }).click();
@@ -153,6 +161,8 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(SOURCE_DISCOVERY_MAX_RESULTS);
   await page.locator(".source-discovery-result").first().getByRole("button", { name: "Start researching" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
+  await finishCurrentSession(page);
+  await page.reload();
 
   await page.getByRole("button", { name: "Start research", exact: true }).click();
   await expect(page.getByLabel("What do you want to research?")).toBeFocused();

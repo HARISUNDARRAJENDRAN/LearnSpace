@@ -124,6 +124,8 @@ test.afterAll(async () => {
   await db`DELETE FROM discovery.recommendation_impressions WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM discovery.recommendation_candidates WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM activity.activity_events WHERE resource_id IN ${db(seededResourceIds)}`;
+  // Onboarding starts a session on a seeded video; deleting it cascades its session rows.
+  await db`DELETE FROM study.study_sessions WHERE id IN (SELECT study_session_id FROM study.session_resources WHERE resource_id IN ${db(seededResourceIds)})`;
   await db`DELETE FROM catalog.library_items WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(seededResourceIds)}`;

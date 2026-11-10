@@ -109,7 +109,8 @@ test("signup → interests → Discover preview → full feed → topic controls
     expect(await full.count()).toBeLessThanOrEqual(24);
     const focusedResponse = await (await page.request.get(`/api/v1/discovery/explore?topic=${physics}`)).json();
     const focusedIds = focusedResponse.sections.recommendedVideos.map((card: { resourceId: string }) => card.resourceId);
-    const grounded = await db`SELECT DISTINCT resource_id FROM catalog.resource_concepts WHERE resource_id = ANY(${focusedIds}::uuid[]) AND concept_id = ${physics}`;
+    // A focused topic covers its subtopics two levels down, as focusProfile does.
+    const grounded = await db`WITH RECURSIVE topics AS (SELECT id, 0 depth FROM knowledge.concepts WHERE id = ${physics} UNION ALL SELECT c.id, t.depth + 1 FROM knowledge.concepts c JOIN topics t ON c.canonical_parent_id = t.id WHERE t.depth < 2 AND c.status = 'active') SELECT DISTINCT resource_id FROM catalog.resource_concepts WHERE resource_id = ANY(${focusedIds}::uuid[]) AND concept_id IN (SELECT id FROM topics)`;
     expect(grounded.length).toBe(focusedIds.length);
     if (process.env.PLAYWRIGHT_E2E_SERVER === "production") {
       expect(focusedIds.every((id: string) => !resources.includes(id))).toBe(true);
