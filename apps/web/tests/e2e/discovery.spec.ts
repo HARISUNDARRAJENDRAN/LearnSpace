@@ -124,8 +124,20 @@ test.afterAll(async () => {
   await db`DELETE FROM discovery.recommendation_impressions WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM discovery.recommendation_candidates WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM activity.activity_events WHERE resource_id IN ${db(seededResourceIds)}`;
-  // Onboarding starts a session on a seeded video; deleting it cascades its session rows.
-  await db`DELETE FROM study.study_sessions WHERE id IN (SELECT study_session_id FROM study.session_resources WHERE resource_id IN ${db(seededResourceIds)})`;
+  // Onboarding starts a session on a seeded video and plans it on the calendar; every reference to the session restricts its delete.
+  const sessionRows = await db<{ id: string }[]>`SELECT DISTINCT study_session_id AS id FROM study.session_resources WHERE resource_id IN ${db(seededResourceIds)}`;
+  if (sessionRows.length > 0) {
+    const sessionIds = sessionRows.map((row) => row.id);
+    await db`DELETE FROM ops.outbox_events WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM activity.activity_events WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.user_resource_progress WHERE last_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.focus_sessions WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.schedule_items WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.session_resources WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.study_sessions WHERE id IN ${db(sessionIds)}`;
+  }
   await db`DELETE FROM catalog.library_items WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(seededResourceIds)}`;
