@@ -62,6 +62,7 @@ test.afterAll(async () => {
   await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
   await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
   await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+  await db`DELETE FROM study.mastery_checks WHERE user_id = ${userId}`;
   await db`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
   await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
   await db`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${userId}`;
@@ -71,7 +72,7 @@ test.afterAll(async () => {
   await db`DELETE FROM ops.transcript_requests WHERE resource_id = ${videoId}`;
   await db`DELETE FROM catalog.video_details WHERE resource_id = ${videoId}`;
   await db`DELETE FROM catalog.resources WHERE id = ${videoId}`;
-  await db`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:tutor:%${userId}`}`;
+  await db`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:tutor:%${userId}`} OR key LIKE ${`learnspace:mastery:%${userId}`}`;
   await db`DELETE FROM identity.users WHERE id = ${userId}`;
   await db.end({ timeout: 5 });
 });
@@ -140,12 +141,47 @@ test("the tutor answers from the transcript, checks understanding, seeks the vid
   await expect(panel.getByRole("heading", { name: "What does the learning rate do?" })).toBeVisible();
   await expect(panel.getByRole("paragraph").filter({ hasText: "What does the learning rate do?" })).toBeVisible();
   await expect(panel.getByRole("region", { name: "Check your understanding" }).getByText("Not quite")).toBeVisible();
+  // Asking for help with a graded check sends straight away, as a reply to it.
+  await panel.getByRole("region", { name: "Check your understanding" }).first().getByRole("button", { name: "Help me understand" }).click();
+  await expect(panel.getByRole("paragraph").filter({ hasText: "Help me understand why my answer was wrong." })).toBeVisible();
+  await expect(panel.getByRole("region", { name: "Check your understanding" })).toHaveCount(2);
 
-  // Questions outside the video get the fixed scope notice, not an answer.
-  await panel.getByLabel("Ask the tutor").fill("What is the capital of France?");
+  // Messages that aren't learning questions get the fixed scope notice, not an answer.
+  await panel.getByLabel("Ask the tutor").fill("What should I cook for dinner?");
   await panel.getByRole("button", { name: "Send" }).click();
-  await expect(panel.getByText("I can only help with what this video teaches.")).toBeVisible();
+  await expect(panel.getByText("I can only help with learning")).toBeVisible();
+
+  // A learning question the video doesn't cover is answered from general knowledge and labelled as such.
+  await panel.getByLabel("Ask the tutor").fill("May I know what's the value of e in maths?");
+  await panel.getByRole("button", { name: "Send" }).click();
+  await expect(panel.getByText("General knowledge, not from this video")).toBeVisible();
+  await expect(panel.getByText(/2\.71828/)).toBeVisible();
+  // Math is typeset, not shown as LaTeX source.
+  await expect(panel.locator(".chat-message .katex").last()).toBeVisible();
+  await expect(panel.locator(".chat-message").last()).not.toContainText("$");
   await expect(panel.getByText(/Paris/)).toHaveCount(0);
+
+  // Highlighting words in an answer asks about just them, in a thread under that passage that "Got it" folds away.
+  const definition = panel.getByText("How big each step against the gradient is.").first();
+  await definition.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  });
+  await definition.dispatchEvent("pointerup");
+  await panel.getByLabel("Ask about the highlighted words").fill("Why against the gradient?");
+  await panel.getByLabel("Ask about the highlighted words").press("Enter");
+  const doubt = panel.getByRole("region", { name: /Doubt about/ });
+  await expect(doubt.getByText("Why against the gradient?")).toBeVisible();
+  await expect(doubt.getByText(/that is the way downhill/)).toBeVisible();
+  // The main conversation is untouched: its latest answer is still the general-knowledge one.
+  await expect(panel.locator(".chat-messages > .chat-message").last()).toContainText("2.71828");
+  await doubt.getByRole("button", { name: "Got it" }).click();
+  await expect(doubt.getByText("1 reply · Resolved")).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await expect(panel.getByRole("region", { name: /Doubt about/ }).getByText("1 reply · Resolved")).toBeVisible();
 });
 
 test("the tutor API refuses other learners' sessions and malformed actions", async ({ page }) => {
@@ -157,4 +193,29 @@ test("the tutor API refuses other learners' sessions and malformed actions", asy
   expect(unknownAction.status()).toBe(422);
   const tooLong = await page.request.post(`/api/v1/study-sessions/${sessionId}/tutor`, { data: { question: "x".repeat(9_000), positionMs: 0, idempotencyKey: randomUUID() } });
   expect(tooLong.status()).toBe(413);
+});
+
+test("watching the video to the end opens a hard check that must be passed to move on", async ({ page }) => {
+  const watched = await page.request.post(`/api/v1/study-sessions/${sessionId}/progress`, { data: { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 239_000 }, event: "complete", idempotencyKey: `complete-${randomUUID()}` } });
+  expect((await watched.json()).masteryRequired).toBe(true);
+  await page.goto(`/app/study/video/${sessionId}`);
+  await page.getByRole("button", { name: "Check", exact: true }).click();
+  const panel = page.locator(".session-tool-slot:not([hidden])");
+  await panel.getByRole("button", { name: "Start the check" }).click();
+  await expect(panel.getByText("1 / 5")).toBeVisible();
+  for (let index = 0; index < 3; index += 1) {
+    await panel.getByRole("button", { name: /It overshoots the minimum/ }).click();
+    await expect(panel.getByText("Large steps jump past the minimum.")).toBeVisible();
+    await panel.getByRole("button", { name: "Next question" }).click();
+  }
+  for (let index = 0; index < 2; index += 1) {
+    await panel.getByLabel("Your answer").fill("Big steps overshoot the minimum, so the loss grows.");
+    await panel.getByRole("button", { name: "Submit answer" }).click();
+    await expect(panel.getByText("Right: big steps overshoot the minimum.")).toBeVisible();
+    await panel.getByRole("button", { name: index === 1 ? "See results" : "Next question" }).click();
+  }
+  await expect(panel.getByText("100%")).toBeVisible();
+  await expect(panel.getByText("Mastered. The next video is unlocked.")).toBeVisible();
+  // The pass is stored, so the lesson stays complete after a reload.
+  expect((await (await page.request.get(`/api/v1/study-sessions/${sessionId}/mastery`)).json()).state).toBe("passed");
 });

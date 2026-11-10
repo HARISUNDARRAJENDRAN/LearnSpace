@@ -87,23 +87,6 @@ export const studyNotesResponseSchema = z.object({
   content: z.string(),
 }).strict();
 
-export const studyQuizRequestSchema = z.object({
-  idempotencyKey: z.string().trim().min(8).max(128),
-}).strict();
-
-export const studyQuizQuestionSchema = z.object({
-  id: z.string().min(1),
-  prompt: z.string().min(1),
-  options: z.array(z.string().min(1)).min(2).max(6),
-  answerIndex: z.number().int().min(0),
-  explanation: z.string().optional(),
-  anchor: studyAnchorSchema.optional(),
-}).strict().refine((value) => value.answerIndex < value.options.length, "The answer must be one of the options.");
-
-export const studyQuizResponseSchema = z.object({
-  questions: z.array(studyQuizQuestionSchema),
-}).strict();
-
 export const libraryItemRequestSchema = z.object({
   resourceId: z.string().uuid(),
   action: z.enum(["save", "remove"]),
@@ -128,8 +111,6 @@ export type StudyProgressRequest = z.infer<typeof studyProgressRequestSchema>;
 export type StudySessionActionRequest = z.infer<typeof studySessionActionRequestSchema>;
 export type StudyNotesKind = z.infer<typeof studyNotesKindSchema>;
 export type StudyNotesResponse = z.infer<typeof studyNotesResponseSchema>;
-export type StudyQuizQuestion = z.infer<typeof studyQuizQuestionSchema>;
-export type StudyQuizResponse = z.infer<typeof studyQuizResponseSchema>;
 export type LibraryItemRequest = z.infer<typeof libraryItemRequestSchema>;
 export type StartCollectionRequest = z.infer<typeof startCollectionRequestSchema>;
 
@@ -221,6 +202,8 @@ export type StudyProgressResponse = {
   resourceId: string;
   progressPct: number;
   status: z.infer<typeof progressStatusSchema>;
+  /** The video was watched to the end, but it counts as complete only once its mastery check is passed. */
+  masteryRequired: boolean;
 };
 
 export type LibraryCollectionSummary = {

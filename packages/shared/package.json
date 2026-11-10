@@ -9,6 +9,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./mastery": {
+      "types": "./src/mastery.ts",
+      "import": "./dist/mastery.js",
+      "default": "./dist/mastery.js"
+    },
     "./domain-values": {
       "types": "./src/domain-values.ts",
       "import": "./dist/domain-values.js",

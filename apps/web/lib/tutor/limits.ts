@@ -10,14 +10,16 @@ const dollars = (name: string, fallback: number) => {
 };
 
 /**
- * Defaults assume about $0.004 a turn (≈6K evidence tokens in, ≈5K reasoning + answer tokens out at high effort):
- * a learner's $0.40 is ~100 turns a day, and the $10 global cap stops a runaway month at ~$300.
+ * Defaults assume under $0.002 a turn on average (≈6K evidence tokens in, ≈500 answer tokens out; the few questions that
+ * need reasoning add a few thousand reasoning tokens): a learner's $0.40 is ~200 turns a day, and the $10 global cap stops a runaway month at ~$300.
  */
 export function tutorLimits() {
   return {
     perMinute: 6,
     perHour: 60,
     interactionsPerMinute: 30,
+    // A check is a start and a few graded answers; its own counter, so chatting with the tutor never blocks it.
+    masteryPerMinute: 12,
     userDailyUsd: dollars("TUTOR_USER_DAILY_USD", 0.4),
     globalDailyUsd: dollars("TUTOR_GLOBAL_DAILY_USD", 10),
     // A pending answer older than this died with its server; it no longer blocks the learner.
@@ -38,9 +40,13 @@ export async function admitTutorInteraction(userId: string): Promise<void> {
   await consumeRateLimit(`learnspace:tutor:interaction:${userId}`, tutorLimits().interactionsPerMinute, 60);
 }
 
+export async function admitMasteryRequest(userId: string): Promise<void> {
+  await consumeRateLimit(`learnspace:mastery:minute:${userId}`, tutorLimits().masteryPerMinute, 60);
+}
+
 const untilUtcMidnight = () => Math.max(60, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1_000));
 
-/** One answer at a time per learner, and no new spending once the learner's or everyone's daily budget is used. Holds the learner's lock. */
+/** One answer at a time per learner, and no new spending once the learner's or everyone's daily budget (tutor and mastery checks) is used. Holds the learner's lock. */
 export async function admitTutorGeneration(tx: Transaction, userId: string): Promise<void> {
   const limits = tutorLimits();
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.tutor:${userId}`}, 0))`);
@@ -55,7 +61,7 @@ export async function admitTutorGeneration(tx: Transaction, userId: string): Pro
   const [spent] = await tx.execute<{ usd: string }>(sql`
     SELECT coalesce(sum(mi.estimated_cost_usd), 0)::text AS usd
     FROM agent.agent_runs r JOIN agent.model_invocations mi ON mi.agent_run_id = r.id
-    WHERE r.user_id = ${userId} AND r.purpose = 'video_tutor' AND r.created_at >= (now() AT TIME ZONE 'UTC')::date`);
+    WHERE r.user_id = ${userId} AND r.purpose IN ('video_tutor', 'mastery_check') AND r.created_at >= (now() AT TIME ZONE 'UTC')::date`);
   if (Number(spent?.usd ?? 0) >= limits.userDailyUsd) throw new AuthError("TUTOR_DAILY_LIMIT", "You've reached today's tutor limit. It resets at midnight UTC.", 429, untilUtcMidnight());
   const [global] = await tx.execute<{ units: string }>(sql`
     SELECT units::text FROM ops.api_usage_daily WHERE provider = ${GLOBAL_USAGE_PROVIDER} AND usage_date = (now() AT TIME ZONE 'UTC')::date`);

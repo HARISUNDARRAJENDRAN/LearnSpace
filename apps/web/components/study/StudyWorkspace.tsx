@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { StudyAnchor, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { formatClock } from "../../lib/tutor/scope";
 import { useStudyTime } from "./useStudyTime";
 
 type StudyKind = "video" | "paper";
@@ -19,12 +20,8 @@ export async function openMaterialRoute(sessionId: string, resourceId: string, r
   return routeFromResponse(await response.json());
 }
 
-export function formatTime(valueMs: number): string {
-  const totalSeconds = Math.max(0, Math.floor(valueMs / 1_000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = String(totalSeconds % 60).padStart(2, "0");
-  return `${minutes}:${seconds}`;
-}
+// One clock for the whole session, so a citation in a 25-hour course reads 8:40:14, not 520:14.
+export const formatTime = formatClock;
 
 function formatDate(value: string): string {
   const date = new Date(value);

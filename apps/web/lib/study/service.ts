@@ -1008,83 +1008,107 @@ async function startNextQueuedCollection(tx: Transaction, userId: string): Promi
   await tx.transaction((savepoint) => startCollectionInTransaction(savepoint, userId, queued.collectionId, randomUUID())).catch((error: unknown) => console.warn(JSON.stringify({ metric: "queue_advance_failure", collectionId: queued.collectionId, error: error instanceof Error ? error.message : "start failed" })));
 }
 
+/** A video with a ready transcript is complete only once the learner passes its mastery check. */
+async function masteryPending(tx: Transaction, userId: string, resourceId: string): Promise<boolean> {
+  const [row] = await tx.execute<{ pending: boolean }>(sql`
+    SELECT EXISTS (
+      SELECT 1 FROM catalog.resources r JOIN catalog.resource_versions v ON v.id = r.current_version_id
+      WHERE r.id = ${resourceId} AND r.type = 'video' AND v.processing_status = 'ready'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM study.mastery_checks c WHERE c.user_id = ${userId} AND c.resource_id = ${resourceId} AND c.status = 'passed'
+    ) AS pending`);
+  return row?.pending === true;
+}
+
 export async function updateStudyProgress(userId: string, sessionId: string, input: StudyProgressRequest): Promise<StudyProgressResponse> {
   const normalizedSessionId = studySessionIdSchema.parse(sessionId);
-  return withUserTransaction(userId, async (tx) => {
-    const session = await lockSession(tx, userId, normalizedSessionId);
-    if (session.activeResourceId !== input.resourceId) throw new AuthError("INACTIVE_STUDY_RESOURCE", "Switch to this material before saving progress.", 409);
-    const resource = await loadResource(tx, userId, input.resourceId, true);
-    const type = resource ? studyType(resource.type) : null;
-    if (!resource || !type || input.anchor.kind !== type) throw new AuthError("INVALID_STUDY_ANCHOR", "That progress anchor does not match this material.", 422);
-    if (input.event === "seek" && type !== "video") throw new AuthError("INVALID_PROGRESS_EVENT", "Paper progress cannot use a video seek event.", 422);
-    if (input.event === "complete" && input.progressPct < 95) throw new AuthError("INVALID_COMPLETION", "Complete the material before marking it complete.", 422);
-    await tx.execute(sql`SELECT user_id FROM study.user_resource_progress WHERE user_id = ${userId} AND resource_id = ${input.resourceId} FOR UPDATE`);
-    const previous = await loadProgress(tx, userId, input.resourceId);
-    const previousPct = Number(previous?.progressPct ?? 0);
-    const stale = input.event === "checkpoint" && input.progressPct < previousPct;
-    const progressPct = stale ? previousPct : Math.max(previousPct, input.progressPct);
-    const eventType = input.event === "complete" ? "resource.completed" : input.event === "play" ? "video.played" : input.event === "pause" ? type === "video" ? "video.paused" : "resource.progressed" : input.event === "seek" ? "video.seeked" : "resource.progressed";
-    const milestone = input.event === "complete" ? "completed" : input.event === "checkpoint" ? [90, 75, 50, 25].find((value) => previousPct < value && progressPct >= value)?.toString() ?? null : null;
-    const now = new Date();
-    const [time] = await tx.select({ seconds: sql<number>`COALESCE(sum(${focusSessions.durationSec}), 0)::int` }).from(focusSessions)
-      .where(and(eq(focusSessions.userId, userId), eq(focusSessions.studySessionId, normalizedSessionId), eq(focusSessions.resourceId, input.resourceId)));
-    const watchedSeconds = Number(time?.seconds ?? 0);
-    const attribution = session.metadata.recommendationRuns as Record<string, string> | undefined;
-    const eventInserted = stale ? false : await insertStudyEvent(tx, {
-      schemaVersion: 1,
-      userId,
-      studySessionId: normalizedSessionId,
-      resourceId: input.resourceId,
-      resourceVersionId: session.activeVersionId,
-      eventType,
-      actorType: "user",
-      source: "web",
-      idempotencyKey: `study:${milestone ? "milestone" : "progress"}:${normalizedSessionId}:${input.resourceId}:${milestone ?? input.idempotencyKey}`,
-      occurredAt: now,
-      payload: { progressPct, watchedSeconds, milestone, runId: attribution?.[input.resourceId] ?? null, anchor: jsonAnchor(input.anchor), event: input.event },
-    });
-    const shouldPersist = !stale && (eventInserted || input.event === "checkpoint");
-    if (shouldPersist) {
-      await tx
-        .insert(userResourceProgress)
-        .values({
-          userId,
-          resourceId: input.resourceId,
+  return withUserTransaction(userId, (tx) => recordProgress(tx, userId, normalizedSessionId, input));
+}
+
+/** Completes a lesson whose mastery check was just passed in this transaction, as the end of the video would have. */
+export async function completeMasteredLesson(tx: Transaction, userId: string, sessionId: string, resourceId: string, checkId: string): Promise<void> {
+  const progress = await loadProgress(tx, userId, resourceId);
+  const anchor = parsedAnchor(progress?.lastAnchor, "video") ?? { kind: "video", positionMs: 0 };
+  await recordProgress(tx, userId, sessionId, { resourceId, progressPct: 100, anchor, event: "complete", idempotencyKey: `mastery-${checkId}` });
+}
+
+async function recordProgress(tx: Transaction, userId: string, normalizedSessionId: string, input: StudyProgressRequest): Promise<StudyProgressResponse> {
+  const session = await lockSession(tx, userId, normalizedSessionId);
+  if (session.activeResourceId !== input.resourceId) throw new AuthError("INACTIVE_STUDY_RESOURCE", "Switch to this material before saving progress.", 409);
+  const resource = await loadResource(tx, userId, input.resourceId, true);
+  const type = resource ? studyType(resource.type) : null;
+  if (!resource || !type || input.anchor.kind !== type) throw new AuthError("INVALID_STUDY_ANCHOR", "That progress anchor does not match this material.", 422);
+  if (input.event === "seek" && type !== "video") throw new AuthError("INVALID_PROGRESS_EVENT", "Paper progress cannot use a video seek event.", 422);
+  if (input.event === "complete" && input.progressPct < 95) throw new AuthError("INVALID_COMPLETION", "Complete the material before marking it complete.", 422);
+  // Watching to the end is recorded as progress; the lesson completes when its mastery check is passed.
+  const masteryRequired = input.event === "complete" && await masteryPending(tx, userId, input.resourceId);
+  const completing = input.event === "complete" && !masteryRequired;
+  await tx.execute(sql`SELECT user_id FROM study.user_resource_progress WHERE user_id = ${userId} AND resource_id = ${input.resourceId} FOR UPDATE`);
+  const previous = await loadProgress(tx, userId, input.resourceId);
+  const previousPct = Number(previous?.progressPct ?? 0);
+  const stale = input.event === "checkpoint" && input.progressPct < previousPct;
+  const progressPct = stale ? previousPct : Math.max(previousPct, input.progressPct);
+  const eventType = completing ? "resource.completed" : input.event === "play" ? "video.played" : input.event === "pause" ? type === "video" ? "video.paused" : "resource.progressed" : input.event === "seek" ? "video.seeked" : "resource.progressed";
+  const milestone = completing ? "completed" : input.event === "checkpoint" || masteryRequired ? [90, 75, 50, 25].find((value) => previousPct < value && progressPct >= value)?.toString() ?? null : null;
+  const now = new Date();
+  const [time] = await tx.select({ seconds: sql<number>`COALESCE(sum(${focusSessions.durationSec}), 0)::int` }).from(focusSessions)
+    .where(and(eq(focusSessions.userId, userId), eq(focusSessions.studySessionId, normalizedSessionId), eq(focusSessions.resourceId, input.resourceId)));
+  const watchedSeconds = Number(time?.seconds ?? 0);
+  const attribution = session.metadata.recommendationRuns as Record<string, string> | undefined;
+  const eventInserted = stale ? false : await insertStudyEvent(tx, {
+    schemaVersion: 1,
+    userId,
+    studySessionId: normalizedSessionId,
+    resourceId: input.resourceId,
+    resourceVersionId: session.activeVersionId,
+    eventType,
+    actorType: "user",
+    source: "web",
+    idempotencyKey: `study:${milestone ? "milestone" : "progress"}:${normalizedSessionId}:${input.resourceId}:${milestone ?? input.idempotencyKey}`,
+    occurredAt: now,
+    payload: { progressPct, watchedSeconds, milestone, runId: attribution?.[input.resourceId] ?? null, anchor: jsonAnchor(input.anchor), event: input.event },
+  });
+  const shouldPersist = !stale && (eventInserted || input.event === "checkpoint" || masteryRequired);
+  if (shouldPersist) {
+    await tx
+      .insert(userResourceProgress)
+      .values({
+        userId,
+        resourceId: input.resourceId,
+        lastSessionId: normalizedSessionId,
+        status: completing ? "completed" : "active",
+        progressPct,
+        lastAnchor: jsonAnchor(input.anchor),
+        firstStartedAt: previous?.firstStartedAt ?? now,
+        lastOpenedAt: previous?.lastOpenedAt ?? now,
+        completedAt: completing ? now : previous?.completedAt ?? null,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [userResourceProgress.userId, userResourceProgress.resourceId],
+        set: {
           lastSessionId: normalizedSessionId,
-          status: input.event === "complete" ? "completed" : "active",
+          status: completing ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active",
           progressPct,
           lastAnchor: jsonAnchor(input.anchor),
-          firstStartedAt: previous?.firstStartedAt ?? now,
-          lastOpenedAt: previous?.lastOpenedAt ?? now,
-          completedAt: input.event === "complete" ? now : previous?.completedAt ?? null,
+          lastOpenedAt: now,
+          completedAt: completing ? now : previous?.completedAt ?? null,
           updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [userResourceProgress.userId, userResourceProgress.resourceId],
-          set: {
-            lastSessionId: normalizedSessionId,
-            status: input.event === "complete" ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active",
-            progressPct,
-            lastAnchor: jsonAnchor(input.anchor),
-            lastOpenedAt: now,
-            completedAt: input.event === "complete" ? now : previous?.completedAt ?? null,
-            updatedAt: now,
-          },
-        });
-      await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
-      await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
-      if (eventInserted && input.event === "complete") {
-        await advanceCollectionEnrollment(tx, userId, input.resourceId);
-        // Last, so a finished session has made room before the next queued course starts.
-        if (await advanceSessionAfterCompletion(tx, userId, session, input.resourceId)) await startNextQueuedCollection(tx, userId);
-      }
+        },
+      });
+    await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
+    await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
+    if (eventInserted && completing) {
+      await advanceCollectionEnrollment(tx, userId, input.resourceId);
+      // Last, so a finished session has made room before the next queued course starts.
+      if (await advanceSessionAfterCompletion(tx, userId, session, input.resourceId)) await startNextQueuedCollection(tx, userId);
     }
-    if (eventInserted && input.event === "pause" && type === "video" && watchedSeconds < 30 && progressPct < 10 && now.getTime() - session.startedAt.getTime() < 120_000) {
-      await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: input.resourceId, eventType: "resource.abandoned", actorType: "user", source: "web", idempotencyKey: `study:abandon:${normalizedSessionId}:${input.resourceId}`, occurredAt: now, payload: { progressPct, watchedSeconds, runId: attribution?.[input.resourceId] ?? null } });
-    }
-    const status = input.event === "complete" ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active";
-    return { sessionId: normalizedSessionId, resourceId: input.resourceId, progressPct, status };
-  });
+  }
+  if (eventInserted && input.event === "pause" && type === "video" && watchedSeconds < 30 && progressPct < 10 && now.getTime() - session.startedAt.getTime() < 120_000) {
+    await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: input.resourceId, eventType: "resource.abandoned", actorType: "user", source: "web", idempotencyKey: `study:abandon:${normalizedSessionId}:${input.resourceId}`, occurredAt: now, payload: { progressPct, watchedSeconds, runId: attribution?.[input.resourceId] ?? null } });
+  }
+  const status = completing ? "completed" : previous?.status === "completed" && progressPct >= 100 ? "completed" : "active";
+  return { sessionId: normalizedSessionId, resourceId: input.resourceId, progressPct, status, masteryRequired: masteryRequired && status !== "completed" };
 }
 
 export async function pauseSession(userId: string, sessionId: string, idempotencyKey: string, action: "pause" | "complete"): Promise<void> {

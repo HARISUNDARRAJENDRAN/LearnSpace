@@ -3,9 +3,10 @@ import { openAiBaseUrl } from "./openai";
 export const TUTOR_MODEL = {
   provider: "openai",
   id: "gpt-6-luna",
-  effort: "high",
-  // High reasoning spends most of this on reasoning tokens; the visible answer is a few hundred tokens.
-  maxOutputTokens: 16_000,
+  // Every turn is first asked without reasoning, so a direct answer streams within about a second. The model's first
+  // output says whether the question needs working through; if so the turn is asked again with reasoning.
+  // quick: the visible answer is a few hundred tokens, the limit only stops a runaway; deep: most of it goes on reasoning.
+  depths: { quick: { effort: "none", maxOutputTokens: 4_000 }, deep: { effort: "medium", maxOutputTokens: 16_000 } },
   timeoutMs: 110_000,
   // USD per token, from developers.openai.com/api/docs/models/gpt-6-luna (Standard tier, prompts under 272K tokens).
   // Cache writes are 1.25x input for the default 30-minute lifetime (developers.openai.com/api/docs/guides/prompt-caching).
@@ -13,9 +14,10 @@ export const TUTOR_MODEL = {
 } as const;
 
 export type TutorUsage = { inputTokens: number; cachedTokens: number; cacheWriteTokens: number; outputTokens: number; reasoningTokens: number };
-export type TutorModelRequest = { instructions: string; developer: string; user: string; schema: Record<string, unknown>; cacheKey: string };
+export type TutorDepth = keyof typeof TUTOR_MODEL.depths;
+export type TutorModelRequest = { depth: TutorDepth; instructions: string; developer: string; user: string; schema: Record<string, unknown>; cacheKey: string };
 export type TutorModelResult = { text: string; refusal: string | null; usage: TutorUsage; firstOutputMs: number | null; latencyMs: number };
-export type TutorModel = (request: TutorModelRequest, hooks: { signal: AbortSignal; onFirstOutput?: () => void }) => Promise<TutorModelResult>;
+export type TutorModel = (request: TutorModelRequest, hooks: { signal: AbortSignal; onFirstOutput?: () => void; onText?: (text: string) => void }) => Promise<TutorModelResult>;
 
 export class TutorModelError extends Error {
   constructor(readonly code: string, readonly usage: TutorUsage | null = null) {
@@ -49,7 +51,7 @@ function usageOf(usage: ResponsesUsage | undefined): TutorUsage {
 }
 
 /** One streamed Responses API call with strict structured output. Never retried here: a retry is a new, separately admitted turn. */
-export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOutput }) => {
+export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOutput, onText }) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new TutorModelError("provider_not_configured");
   const started = performance.now();
@@ -60,7 +62,7 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: TUTOR_MODEL.id,
-        reasoning: { effort: TUTOR_MODEL.effort },
+        reasoning: { effort: TUTOR_MODEL.depths[request.depth].effort },
         // One explicit breakpoint after the static instructions (and the schema rendered before them): every turn of every
         // learner reads that prefix, and nothing per-turn is written. Per-turn guidance follows the data so it stays outside it.
         input: [
@@ -69,7 +71,7 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
           { role: "developer", content: request.developer },
         ],
         text: { format: { type: "json_schema", name: "tutor_turn", strict: true, schema: request.schema } },
-        max_output_tokens: TUTOR_MODEL.maxOutputTokens,
+        max_output_tokens: TUTOR_MODEL.depths[request.depth].maxOutputTokens,
         prompt_cache_key: request.cacheKey,
         prompt_cache_options: { mode: "explicit" },
         // Conversations stay in LearnSpace's database, not on the provider.
@@ -90,8 +92,10 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
   const handle = (event: ResponsesEvent): TutorModelResult | null => {
     if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
       if (firstOutputMs === null) { firstOutputMs = Math.round(performance.now() - started); onFirstOutput?.(); }
-      if (event.type === "response.output_text.delta") text += event.delta ?? "";
-      else refusal += event.delta ?? "";
+      if (event.type === "response.output_text.delta") {
+        text += event.delta ?? "";
+        onText?.(text);
+      } else refusal += event.delta ?? "";
       return null;
     }
     if (event.type === "response.completed") return { text, refusal: refusal || null, usage: usageOf(event.response?.usage), firstOutputMs, latencyMs: Math.round(performance.now() - started) };

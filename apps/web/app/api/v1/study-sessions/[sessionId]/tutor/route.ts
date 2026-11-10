@@ -1,14 +1,15 @@
 import { studySessionIdSchema } from "@learnspace/shared";
-import { type TutorStreamEvent, tutorTurnRequestSchema } from "@learnspace/shared/tutor";
+import { type TutorStreamEvent, tutorThreadActionSchema, tutorTurnRequestSchema } from "@learnspace/shared/tutor";
 import { NextResponse } from "next/server";
+import { embedText } from "../../../../../../lib/ai/openai";
 import { AuthError, authErrorResponse } from "../../../../../../lib/auth/errors";
 import { requireCompletedSession } from "../../../../../../lib/discovery/access";
 import { admitTutorRequest } from "../../../../../../lib/tutor/limits";
-import { admitTutorTurn, endTutorThread, getTutorThread, runTutorTurn } from "../../../../../../lib/tutor/service";
+import { admitTutorTurn, endTutorThread, getTutorThread, resolveTutorDoubt, restoreTutorThread, runTutorTurn } from "../../../../../../lib/tutor/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// High reasoning can think for a minute or more; the model call itself times out first.
+// A question that needs reasoning can think for a minute or more; the model call itself times out first.
 export const maxDuration = 150;
 
 type Context = { params: Promise<{ sessionId: string }> };
@@ -27,6 +28,7 @@ export async function GET(_request: Request, context: Context) {
 /** Asks the tutor. Admission errors are plain JSON with a status; once admitted, progress and the answer stream as NDJSON. */
 export async function POST(request: Request, context: Context) {
   let turn: Awaited<ReturnType<typeof admitTutorTurn>>;
+  let embedding: Promise<number[] | null> | null = null;
   try {
     const session = await requireCompletedSession();
     const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
@@ -39,7 +41,10 @@ export async function POST(request: Request, context: Context) {
     } catch {
       throw new AuthError("INVALID_JSON", "Send a valid JSON request body.");
     }
-    turn = await admitTutorTurn(session.user.id, sessionId, tutorTurnRequestSchema.parse(json));
+    const input = tutorTurnRequestSchema.parse(json);
+    // The question is embedded while the turn is admitted; a reply or a doubt is embedded with its context, so it waits.
+    embedding = input.replyTo || input.doubt ? null : embedText(input.question, request.signal);
+    turn = await admitTutorTurn(session.user.id, sessionId, input);
   } catch (error) {
     return authErrorResponse(error);
   }
@@ -58,7 +63,8 @@ export async function POST(request: Request, context: Context) {
         emit({ type: "done", message: turn.assistant });
       } else {
         emit({ type: "accepted", user: turn.user, assistantId: turn.assistantId });
-        const message = await runTutorTurn(turn, { signal: request.signal, emit });
+        const early = embedding;
+        const message = await runTutorTurn(turn, { signal: request.signal, emit, ...(early ? { embed: () => early } : {}) });
         if (message) emit({ type: "done", message });
       }
       try {
@@ -77,6 +83,21 @@ export async function DELETE(_request: Request, context: Context) {
     const session = await requireCompletedSession();
     const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
     await endTutorThread(session.user.id, sessionId);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return authErrorResponse(error);
+  }
+}
+
+/** Restores an earlier conversation about this video, or resolves a doubt in the current one. */
+export async function PATCH(request: Request, context: Context) {
+  try {
+    const session = await requireCompletedSession();
+    const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
+    const body = await request.json().catch(() => { throw new AuthError("INVALID_JSON", "Send a valid JSON request body."); });
+    const action = tutorThreadActionSchema.parse(body);
+    if (action.action === "restore") await restoreTutorThread(session.user.id, sessionId, action.threadId);
+    else await resolveTutorDoubt(session.user.id, sessionId, action.doubtId, action.resolved);
     return new Response(null, { status: 204 });
   } catch (error) {
     return authErrorResponse(error);

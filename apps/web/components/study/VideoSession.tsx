@@ -1,16 +1,17 @@
 "use client";
 
-import type { StudyAnchor, StudyProgressRequest, StudySessionResource, StudySessionView } from "@learnspace/shared";
+import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import { Code, Crosshair, Expand, ListChecks, Maximize, Minus, NotebookPen, Plus, Shrink, Sparkles, Video, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CollapseSidebarContext } from "../application/ApplicationShell";
 import { type CanvasRect, CourseGraph, layoutCourse } from "./CourseGraph";
+import { PanelResizer } from "./PanelResizer";
+import { MasteryCheck } from "./MasteryCheck";
 import { SessionChat } from "./SessionChat";
 import { SessionCode } from "./SessionCode";
 import { SessionNotes } from "./SessionNotes";
-import { SessionQuiz } from "./SessionQuiz";
 import { useStudyTime } from "./useStudyTime";
 import { useTranscriptCapture } from "./useTranscriptCapture";
 
@@ -71,7 +72,7 @@ async function youtubeApi(): Promise<YouTubeApi> {
   });
 }
 
-function useProgressSync(sessionId: string, resource: StudySessionResource, onComplete: () => void) {
+function useProgressSync(sessionId: string, resource: StudySessionResource, onComplete: (progress: StudyProgressResponse) => void) {
   const playerRef = useRef<YouTubePlayer | null>(null);
   const lastPositionRef = useRef(0);
   const sync = useCallback(async (event: ProgressEvent, force = false) => {
@@ -86,7 +87,7 @@ function useProgressSync(sessionId: string, resource: StudySessionResource, onCo
     try {
       const response = await fetch(`/api/v1/study-sessions/${sessionId}/progress`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId: resource.resourceId, progressPct, anchor, event, idempotencyKey: `${event}-${event === "checkpoint" ? Math.floor(positionMs / 15_000) : Math.floor(positionMs / 1_000)}` }) });
       if (!response.ok) throw new Error("Progress sync failed");
-      if (event === "complete") onComplete();
+      if (event === "complete") onComplete((await response.json()) as StudyProgressResponse);
     } catch {
       // Progress is retried on the next checkpoint.
     }
@@ -94,7 +95,7 @@ function useProgressSync(sessionId: string, resource: StudySessionResource, onCo
   return { playerRef, sync };
 }
 
-function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onComplete: () => void) {
+function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onComplete: (progress: StudyProgressResponse) => void) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { playerRef, sync } = useProgressSync(sessionId, resource, onComplete);
   const syncRef = useRef(sync);
@@ -281,11 +282,11 @@ function useCanvas(onBackgroundClick: () => void, onBackgroundDoubleClick: () =>
   return { viewportRef, view, setView, size, fit, frameHome, zoomBy, handlers };
 }
 
-type PanelView = "notes" | "quiz" | "code" | "ai";
+type PanelView = "notes" | "check" | "code" | "ai";
 
 const tools = [
   { view: "notes", label: "Notes", Icon: NotebookPen },
-  { view: "quiz", label: "Quiz", Icon: ListChecks },
+  { view: "check", label: "Check", Icon: ListChecks },
   { view: "code", label: "Code", Icon: Code },
   { view: "ai", label: "AI", Icon: Sparkles },
 ] as const;
@@ -311,11 +312,19 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   const router = useRouter();
   const [selected, setSelected] = useState(false);
   const [panel, setPanel] = useState<PanelView | null>(null);
-  // Tools stay mounted once opened, so a chat or quiz survives switching between them.
+  // Tools stay mounted once opened, so a chat or check survives switching between them.
   const [opened, setOpened] = useState<PanelView[]>([]);
-  // A finished lesson moves the session on (the next lesson, or an empty Sessions), so reload it from the server.
-  const refresh = useCallback(() => router.refresh(), [router]);
-  const lesson = useYouTubeLesson(session.id, active, refresh);
+  // Remounts the check when the video is watched, so it reloads unlocked.
+  const [watched, setWatched] = useState(0);
+  // A finished lesson moves the session on (the next lesson, or an empty Sessions), so reload it from the server; one with
+  // a mastery check still to pass opens the check instead.
+  const finished = useCallback((progress: StudyProgressResponse) => {
+    if (!progress.masteryRequired) return router.refresh();
+    setWatched((value) => value + 1);
+    setPanel("check");
+    setOpened((current) => (current.includes("check") ? current : [...current, "check"]));
+  }, [router]);
+  const lesson = useYouTubeLesson(session.id, active, finished);
   useTranscriptCapture(active.resourceId, Boolean(active.video?.youtubeId));
   const course = session.course;
   const layout = useMemo(() => (course ? layoutCourse(course) : null), [course]);
@@ -392,7 +401,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   const { view } = canvas;
   const panelView = (target: PanelView) => (opened.includes(target) ? { hidden: panel !== target } : null);
   const notesPanel = panelView("notes");
-  const quizPanel = panelView("quiz");
+  const checkPanel = panelView("check");
   const codePanel = panelView("code");
   const aiPanel = panelView("ai");
   return (
@@ -432,8 +441,9 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
         </div>
       </div>
       <aside className="session-panel" aria-label="Side panel" data-view={panel ?? undefined} hidden={!panel} onPointerDown={collapseSidebar}>
+        {panel === "ai" ? <PanelResizer label="Resize chat" /> : null}
         {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes sessionId={session.id} onCollapse={collapse} /></div> : null}
-        {quizPanel ? <div className="session-tool-slot" {...quizPanel}><SessionQuiz sessionId={session.id} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
+        {checkPanel ? <div className="session-tool-slot" {...checkPanel}><MasteryCheck key={`${active.resourceId}-${watched}`} sessionId={session.id} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
         {codePanel ? <div className="session-tool-slot" {...codePanel}><SessionCode sessionId={session.id} onCollapse={collapse} /></div> : null}
         {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} currentMs={lesson.currentMs} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
       </aside>

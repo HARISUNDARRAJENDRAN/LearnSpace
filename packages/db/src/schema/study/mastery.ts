@@ -1,0 +1,38 @@
+import { sql } from "drizzle-orm";
+import { check, foreignKey, index, jsonb, numeric, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { studySchema } from "../namespaces.js";
+import { resources, resourceVersions } from "../catalog/resources.js";
+import { users } from "../identity/users.js";
+import { studySessions } from "./sessions.js";
+
+/**
+ * The hard questions a learner must pass (80%) after watching a video before it counts as complete. Questions keep their
+ * answer keys here and reach the browser without them; a failed set is kept, and the next set avoids its questions.
+ */
+export const masteryChecks = studySchema.table(
+  "mastery_checks",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
+    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
+    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("open"),
+    questions: jsonb("questions").$type<unknown[]>().notNull(),
+    answers: jsonb("answers").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    score: numeric("score", { precision: 5, scale: 4 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("mastery_checks_user_resource_idx").on(table.userId, table.resourceId, table.createdAt.desc()),
+    // One set at a time per video, so two tabs cannot each start one.
+    uniqueIndex("mastery_checks_open_uq").on(table.userId, table.resourceId).where(sql`${table.status} = 'open'`),
+    check("mastery_checks_status_chk", sql`${table.status} IN ('open', 'passed', 'failed')`),
+    foreignKey({
+      name: "mastery_checks_user_session_fkey",
+      columns: [table.userId, table.studySessionId],
+      foreignColumns: [studySessions.userId, studySessions.id],
+    }).onDelete("restrict"),
+  ],
+);

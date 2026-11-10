@@ -9,8 +9,8 @@ import type { GroundedAnswer } from "./grounding";
 // Paraphrases of one question score ~0.9 with this embedding model; different questions about one topic score lower still.
 // Only near-identical wording is treated as the same question.
 export const SEMANTIC_MATCH = 0.95;
-// The model and effort are part of the contract, so a model change never serves an older model's answers.
-const CONTRACT = `${TUTOR_CONTRACT_VERSION}:${TUTOR_MODEL.id}:${TUTOR_MODEL.effort}`;
+// The model is part of the contract, so a model change never serves an older model's answers.
+const CONTRACT = `${TUTOR_CONTRACT_VERSION}:${TUTOR_MODEL.id}`;
 
 export type CachedAnswer = GroundedAnswer & { learner: TutorModelOutput["learner"]; match: "exact" | "semantic" };
 
@@ -56,7 +56,7 @@ export async function storeCachedAnswer(tx: Transaction, versionId: string, scop
     questionSha256: createHash("sha256").update(normalizeQuestion(question)).digest("hex"),
     questionEmbedding: vector,
     // The learner's goal and open questions are theirs; a cached answer carries only the concepts it taught.
-    answer: { outcome: answer.outcome, blocks: answer.blocks, sources: answer.sources, learner: { goal: null, concepts: learner.concepts, openQuestions: [], nextStep: learner.nextStep } },
+    answer: { outcome: answer.outcome, blocks: answer.blocks, sources: answer.sources, followUps: answer.followUps ?? [], learner: { goal: null, concepts: learner.concepts, openQuestions: [], nextStep: learner.nextStep } },
     chunkIds,
   }).onConflictDoNothing();
 }
