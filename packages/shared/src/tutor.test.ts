@@ -26,7 +26,7 @@ test("the tutor output schema is valid for OpenAI strict structured outputs", ()
 });
 
 test("model output and browser views are validated by the shared schemas", () => {
-  const output = { outcome: "answer", blocks: [{ type: "check", question: "Q?", options: ["a", "b"], answer: 1, explanation: "e", hint: "h", concept: "c", cite: [1] }], learner: { goal: null, concepts: [], openQuestions: [], nextStep: "next" } };
+  const output = { outcome: "answer", needsReasoning: false, followUps: ["Why?"], blocks: [{ type: "check", question: "Q?", options: ["a", "b"], answer: 1, explanation: "e", hint: "h", concept: "c", cite: [1] }], learner: { goal: null, concepts: [], openQuestions: [], nextStep: "next" } };
   assert.equal(tutorModelOutputSchema.safeParse(output).success, true);
   assert.equal(tutorModelOutputSchema.safeParse({ ...output, blocks: [{ type: "iframe", src: "https://evil.example" }] }).success, false);
   assert.equal(tutorModelOutputSchema.safeParse({ ...output, blocks: [{ type: "text", text: "x", cite: [1], html: "<b>x</b>" }] }).success, false);
