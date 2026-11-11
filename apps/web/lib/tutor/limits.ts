@@ -20,6 +20,10 @@ export function tutorLimits() {
     interactionsPerMinute: 30,
     // A check is a start and a few graded answers; its own counter, so chatting with the tutor never blocks it.
     masteryPerMinute: 12,
+    // Talking with Luna is a turn per spoken utterance, ended by a pause of a fifth of a second, and an interrupted turn is
+    // asked again with the next one.
+    notesPerMinute: 40,
+    notesPerHour: 1_000,
     userDailyUsd: dollars("TUTOR_USER_DAILY_USD", 0.4),
     globalDailyUsd: dollars("TUTOR_GLOBAL_DAILY_USD", 10),
     // A pending answer older than this died with its server; it no longer blocks the learner.
@@ -40,13 +44,19 @@ export async function admitTutorInteraction(userId: string): Promise<void> {
   await consumeRateLimit(`learnspace:tutor:interaction:${userId}`, tutorLimits().interactionsPerMinute, 60);
 }
 
+export async function admitNotesTurn(userId: string): Promise<void> {
+  const limits = tutorLimits();
+  await consumeRateLimit(`learnspace:notes:minute:${userId}`, limits.notesPerMinute, 60);
+  await consumeRateLimit(`learnspace:notes:hour:${userId}`, limits.notesPerHour, 3_600);
+}
+
 export async function admitMasteryRequest(userId: string): Promise<void> {
   await consumeRateLimit(`learnspace:mastery:minute:${userId}`, tutorLimits().masteryPerMinute, 60);
 }
 
 const untilUtcMidnight = () => Math.max(60, Math.ceil((Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) - Date.now()) / 1_000));
 
-/** One answer at a time per learner, and no new spending once the learner's or everyone's daily budget (tutor and mastery checks) is used. Holds the learner's lock. */
+/** One answer at a time per learner, and no new spending once the learner's or everyone's daily budget (tutor, mastery checks and Luna) is used. Holds the learner's lock. */
 export async function admitTutorGeneration(tx: Transaction, userId: string): Promise<void> {
   const limits = tutorLimits();
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.tutor:${userId}`}, 0))`);
@@ -61,7 +71,7 @@ export async function admitTutorGeneration(tx: Transaction, userId: string): Pro
   const [spent] = await tx.execute<{ usd: string }>(sql`
     SELECT coalesce(sum(mi.estimated_cost_usd), 0)::text AS usd
     FROM agent.agent_runs r JOIN agent.model_invocations mi ON mi.agent_run_id = r.id
-    WHERE r.user_id = ${userId} AND r.purpose IN ('video_tutor', 'mastery_check') AND r.created_at >= (now() AT TIME ZONE 'UTC')::date`);
+    WHERE r.user_id = ${userId} AND r.purpose IN ('video_tutor', 'mastery_check', 'voice_notes') AND r.created_at >= (now() AT TIME ZONE 'UTC')::date`);
   if (Number(spent?.usd ?? 0) >= limits.userDailyUsd) throw new AuthError("TUTOR_DAILY_LIMIT", "You've reached today's tutor limit. It resets at midnight UTC.", 429, untilUtcMidnight());
   const [global] = await tx.execute<{ units: string }>(sql`
     SELECT units::text FROM ops.api_usage_daily WHERE provider = ${GLOBAL_USAGE_PROVIDER} AND usage_date = (now() AT TIME ZONE 'UTC')::date`);

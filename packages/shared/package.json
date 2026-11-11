@@ -9,6 +9,11 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./notes": {
+      "types": "./src/notes.ts",
+      "import": "./dist/notes.js",
+      "default": "./dist/notes.js"
+    },
     "./mastery": {
       "types": "./src/mastery.ts",
       "import": "./dist/mastery.js",
@@ -79,7 +84,7 @@
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts src/tutor.test.ts"
+    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts src/tutor.test.ts src/notes.test.ts"
   },
   "dependencies": {
     "ioredis": "^6.0.0",

@@ -29,7 +29,7 @@ function fakeModel(reply: (request: TutorModelRequest) => Omit<TutorModelOutput,
       if (signal.aborted) throw new TutorModelError("cancelled");
       await new Promise((resolve) => setTimeout(resolve, 60));
     }
-    return { text, refusal: null, usage: { inputTokens: 4_000, cachedTokens: 1_500, cacheWriteTokens: 0, outputTokens: 2_500, reasoningTokens: 2_000 }, firstOutputMs: 900, latencyMs: 3_000 };
+    return { text, refusal: null, usage: { inputTokens: 4_000, cachedTokens: 1_500, cacheWriteTokens: 0, outputTokens: 2_500, reasoningTokens: 2_000, fast: false }, firstOutputMs: 900, latencyMs: 3_000 };
   };
 }
 

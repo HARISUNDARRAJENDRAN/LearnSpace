@@ -53,8 +53,18 @@ const server = createServer((request, response) => {
     const input = (JSON.parse(body) as { input: Array<{ role: string; content: string | Array<{ text: string }> }> }).input;
     const first = input[0]?.content;
     const instructions = Array.isArray(first) ? (first[0]?.text ?? "") : "";
-    const user = String(input.find((item) => item.role === "user")?.content ?? "");
-    const text = JSON.stringify(instructions.includes("mastery check") ? mastery(instructions, user) : { needsReasoning: false, ...(reply(user) as object) });
+    const content = input.find((item) => item.role === "user")?.content;
+    const user = Array.isArray(content) ? content.map((part) => part.text ?? "").join("\n") : String(content ?? "");
+    const notes = () => {
+      const updating = /Actually change/.test(user.split("<learner>")[1] ?? "");
+      const fields = { after: null, done: null };
+      return { opener: "", say: "The learning rate controls the step size. I put the diagram in your notes.",
+        ops: updating ? [{ ...fields, action: "update", id: "p1", type: "paragraph", text: "Smaller steps can help avoid overshooting." }] : [
+          { ...fields, action: "insert", id: "p1", type: "paragraph", text: "The learning rate controls the step size." },
+          { ...fields, action: "insert", id: "d1", type: "diagram", text: JSON.stringify({ nodes: [{ id: "a", label: "Gradient", x: .15, y: .5 }, { id: "b", label: "Step", x: .85, y: .5 }], edges: [{ from: "a", to: "b", label: "learning rate" }] }) },
+        ], visual: { clear: false, seekMs: null, playback: null, marks: [{ id: "m1", kind: "arrow", points: [{ x: .2, y: .2 }, { x: .5, y: .5 }], text: "Learning rate", color: "cyan" }] } };
+    };
+    const text = JSON.stringify(instructions.startsWith("You are Luna") ? notes() : instructions.includes("mastery check") ? mastery(instructions, user) : { needsReasoning: false, ...(reply(user) as object) });
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (event: Record<string, unknown>) => response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     send({ type: "response.created" });

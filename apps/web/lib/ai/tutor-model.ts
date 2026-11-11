@@ -11,11 +11,14 @@ export const TUTOR_MODEL = {
   // USD per token, from developers.openai.com/api/docs/models/gpt-6-luna (Standard tier, prompts under 272K tokens).
   // Cache writes are 1.25x input for the default 30-minute lifetime (developers.openai.com/api/docs/guides/prompt-caching).
   price: { input: 0.10 / 1e6, cachedInput: 0.01 / 1e6, cacheWrite: 0.125 / 1e6, output: 0.50 / 1e6 },
+  // Fast processing (`service_tier: "fast"`) bills every rate twice over and starts answering ~0.3 s sooner.
+  fastMultiplier: 2,
 } as const;
 
-export type TutorUsage = { inputTokens: number; cachedTokens: number; cacheWriteTokens: number; outputTokens: number; reasoningTokens: number };
+/** `fast`: the call ran (and is billed) on Fast processing; a Fast request the provider downgraded is not. */
+export type TutorUsage = { inputTokens: number; cachedTokens: number; cacheWriteTokens: number; outputTokens: number; reasoningTokens: number; fast: boolean };
 export type TutorDepth = keyof typeof TUTOR_MODEL.depths;
-export type TutorModelRequest = { depth: TutorDepth; instructions: string; developer: string; user: string; schema: Record<string, unknown>; cacheKey: string };
+export type TutorModelRequest = { depth: TutorDepth; instructions: string; developer: string; user: string; schema: Record<string, unknown>; cacheKey: string; image?: string | null; fast?: boolean };
 export type TutorModelResult = { text: string; refusal: string | null; usage: TutorUsage; firstOutputMs: number | null; latencyMs: number };
 export type TutorModel = (request: TutorModelRequest, hooks: { signal: AbortSignal; onFirstOutput?: () => void; onText?: (text: string) => void }) => Promise<TutorModelResult>;
 
@@ -29,24 +32,28 @@ export class TutorModelError extends Error {
 export function estimateCostUsd(usage: TutorUsage): number {
   const { price } = TUTOR_MODEL;
   const uncached = usage.inputTokens - usage.cachedTokens - usage.cacheWriteTokens;
-  return uncached * price.input + usage.cachedTokens * price.cachedInput + usage.cacheWriteTokens * price.cacheWrite + usage.outputTokens * price.output;
+  const standard = uncached * price.input + usage.cachedTokens * price.cachedInput + usage.cacheWriteTokens * price.cacheWrite + usage.outputTokens * price.output;
+  return usage.fast ? standard * TUTOR_MODEL.fastMultiplier : standard;
 }
 
 type ResponsesUsage = { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } };
+type ResponsesResponse = { usage?: ResponsesUsage; service_tier?: string; incomplete_details?: { reason?: string }; error?: { code?: string } };
 type ResponsesEvent = {
   type?: string;
   delta?: string;
-  response?: { usage?: ResponsesUsage; incomplete_details?: { reason?: string }; error?: { code?: string } };
+  response?: ResponsesResponse;
   error?: { code?: string };
 };
 
-function usageOf(usage: ResponsesUsage | undefined): TutorUsage {
+function usageOf(response: ResponsesResponse | undefined): TutorUsage {
+  const usage = response?.usage;
   return {
     inputTokens: usage?.input_tokens ?? 0,
     cachedTokens: usage?.input_tokens_details?.cached_tokens ?? 0,
     cacheWriteTokens: usage?.input_tokens_details?.cache_write_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
     reasoningTokens: usage?.output_tokens_details?.reasoning_tokens ?? 0,
+    fast: response?.service_tier === "fast" || response?.service_tier === "priority",
   };
 }
 
@@ -67,7 +74,7 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
         // learner reads that prefix, and nothing per-turn is written. Per-turn guidance follows the data so it stays outside it.
         input: [
           { role: "developer", content: [{ type: "input_text", text: request.instructions, prompt_cache_breakpoint: { mode: "explicit" } }] },
-          { role: "user", content: request.user },
+          { role: "user", content: request.image ? [{ type: "input_text", text: request.user }, { type: "input_image", image_url: request.image, detail: "high" }] : request.user },
           { role: "developer", content: request.developer },
         ],
         text: { format: { type: "json_schema", name: "tutor_turn", strict: true, schema: request.schema } },
@@ -77,6 +84,7 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
         // Conversations stay in LearnSpace's database, not on the provider.
         store: false,
         stream: true,
+        ...(request.fast ? { service_tier: "fast" } : {}),
       }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(TUTOR_MODEL.timeoutMs)]),
     });
@@ -98,9 +106,9 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
       } else refusal += event.delta ?? "";
       return null;
     }
-    if (event.type === "response.completed") return { text, refusal: refusal || null, usage: usageOf(event.response?.usage), firstOutputMs, latencyMs: Math.round(performance.now() - started) };
-    if (event.type === "response.incomplete") throw new TutorModelError(`provider_incomplete_${event.response?.incomplete_details?.reason ?? "unknown"}`, usageOf(event.response?.usage));
-    if (event.type === "response.failed") throw new TutorModelError(`provider_failed_${event.response?.error?.code ?? "unknown"}`, usageOf(event.response?.usage));
+    if (event.type === "response.completed") return { text, refusal: refusal || null, usage: usageOf(event.response), firstOutputMs, latencyMs: Math.round(performance.now() - started) };
+    if (event.type === "response.incomplete") throw new TutorModelError(`provider_incomplete_${event.response?.incomplete_details?.reason ?? "unknown"}`, usageOf(event.response));
+    if (event.type === "response.failed") throw new TutorModelError(`provider_failed_${event.response?.error?.code ?? "unknown"}`, usageOf(event.response));
     if (event.type === "error") throw new TutorModelError(`provider_error_${event.error?.code ?? "unknown"}`);
     return null;
   };

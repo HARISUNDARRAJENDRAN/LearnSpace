@@ -8,13 +8,7 @@ export type SpeechState = "idle" | "recording" | "transcribing";
 const SAMPLE_RATE = 16_000;
 const MAX_RECORDING_MS = 30_000;
 
-// One worker for the whole page, so the loaded model survives the chat remounting (every lesson switch) instead of loading again.
-let shared: Worker | null = null;
 let persistRequested = false;
-const speechWorker = () => {
-  shared ??= new Worker(new URL("./speech.worker.ts", import.meta.url), { type: "module" });
-  return shared;
-};
 
 /** The recording as 16 kHz mono samples, the input the speech model expects. */
 async function decode(blob: Blob): Promise<Float32Array> {
@@ -36,6 +30,10 @@ export function useSpeechInput(onText: (text: string) => void) {
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  const generation = useRef(0);
+  const starting = useRef(false);
+  const release = useCallback(() => { workerRef.current?.terminate(); workerRef.current = null; }, []);
   const onTextRef = useRef(onText);
   onTextRef.current = onText;
 
@@ -52,16 +50,19 @@ export function useSpeechInput(onText: (text: string) => void) {
     else if (message.type === "error") {
       setProgress(null);
       setError("Voice input couldn't start. Check your connection and try again.");
+      release();
       setState((current) => (current === "transcribing" ? "idle" : current));
     } else {
+      release();
       setState("idle");
       if (message.text) onTextRef.current(message.text);
       else setError("Didn't catch that. Try again a little closer to the mic.");
     }
-  }, []);
+  }, [release]);
 
   const send = useCallback((request: SpeechRequest, transfer: Transferable[] = []) => {
-    const worker = speechWorker();
+    workerRef.current ??= new Worker(new URL("./speech.worker.ts", import.meta.url), { type: "module" });
+    const worker = workerRef.current;
     worker.onmessage = handle;
     worker.postMessage(request, transfer);
   }, [handle]);
@@ -71,14 +72,20 @@ export function useSpeechInput(onText: (text: string) => void) {
   }, []);
 
   const start = useCallback(async () => {
+    if (starting.current || recorderRef.current) return;
+    starting.current = true;
+    const id = ++generation.current;
     setError(null);
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
     } catch {
+      starting.current = false;
       setError("Microphone access is blocked. Allow it in your browser to dictate.");
       return;
     }
+    starting.current = false;
+    if (id !== generation.current) { stream.getTracks().forEach((track) => { track.stop(); }); return; }
     const recorder = new MediaRecorder(stream);
     const chunks: Blob[] = [];
     const limit = window.setTimeout(() => { if (recorder.state === "recording") recorder.stop(); }, MAX_RECORDING_MS);
@@ -87,10 +94,11 @@ export function useSpeechInput(onText: (text: string) => void) {
       window.clearTimeout(limit);
       for (const track of stream.getTracks()) track.stop();
       recorderRef.current = null;
+      if (id !== generation.current) return;
       setState("transcribing");
       try {
         const audio = await decode(new Blob(chunks, { type: recorder.mimeType }));
-        send({ type: "transcribe", audio }, [audio.buffer]);
+        if (id === generation.current) send({ type: "transcribe", audio }, [audio.buffer]);
       } catch {
         setState("idle");
         setError("That recording couldn't be read. Try again.");
@@ -103,9 +111,10 @@ export function useSpeechInput(onText: (text: string) => void) {
   }, [send]);
 
   useEffect(() => () => {
+    generation.current++;
     recorderRef.current?.stream.getTracks().forEach((track) => { track.stop(); });
-    if (shared?.onmessage === handle) shared.onmessage = null;
-  }, [handle]);
+    release();
+  }, [release]);
 
   return { state, progress, error, start, stop };
 }

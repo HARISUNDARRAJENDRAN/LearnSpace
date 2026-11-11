@@ -75,18 +75,6 @@ export const studySessionActionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
 }).strict();
 
-export const studyNotesKindSchema = z.enum(["primer", "summary"]);
-
-export const studyNotesRequestSchema = z.object({
-  kind: studyNotesKindSchema,
-  idempotencyKey: z.string().trim().min(8).max(128),
-}).strict();
-
-export const studyNotesResponseSchema = z.object({
-  kind: studyNotesKindSchema,
-  content: z.string(),
-}).strict();
-
 export const libraryItemRequestSchema = z.object({
   resourceId: z.string().uuid(),
   action: z.enum(["save", "remove"]),
@@ -109,8 +97,6 @@ export type StartStudySessionRequest = z.infer<typeof startStudySessionRequestSc
 export type ActivateSessionResourceRequest = z.infer<typeof activateSessionResourceRequestSchema>;
 export type StudyProgressRequest = z.infer<typeof studyProgressRequestSchema>;
 export type StudySessionActionRequest = z.infer<typeof studySessionActionRequestSchema>;
-export type StudyNotesKind = z.infer<typeof studyNotesKindSchema>;
-export type StudyNotesResponse = z.infer<typeof studyNotesResponseSchema>;
 export type LibraryItemRequest = z.infer<typeof libraryItemRequestSchema>;
 export type StartCollectionRequest = z.infer<typeof startCollectionRequestSchema>;
 

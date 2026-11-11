@@ -2,7 +2,8 @@
 
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
-import { createContext, useCallback, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState } from "react";
+import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
 import { AppSidebar, type RecentSession } from "./AppSidebar";
 import { HeaderSearch } from "./HeaderSearch";
@@ -28,6 +29,7 @@ export function ApplicationShell({ user, recentSessions, hasCurrentSession, chil
   }, []);
   const collapseSidebar = useCallback(() => setSidebarCollapsed(true), []);
   const searchMode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
+  useEffect(prefetchSpeechModels, []);
 
   return (
     <div className={`application-page${sidebarCollapsed ? " is-sidebar-collapsed" : ""}${pathname.startsWith("/app/discover") ? " application-page--discover" : ""}`} data-view={viewMode}>

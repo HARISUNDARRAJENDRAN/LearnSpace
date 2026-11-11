@@ -63,6 +63,57 @@ Shorts, live, private and non-embeddable videos, and score quality. It spends
 30 days are deleted, as YouTube's API policy requires. To enrich existing videos
 at once, run `pnpm --filter @learnspace/worker youtube:backfill`.
 
+## Notes with Luna
+
+A session's Notes panel is a page the learner and Luna write together by
+talking. All speech runs in the learner's browser and no audio leaves the
+device. Silero VAD detects turns, Moonshine Tiny transcribes, and Supertonic
+speaks (`apps/web/components/study/voice/`). All three run on the CPU through
+WebAssembly, which on integrated GPUs beat WebGPU. App pages send
+`Document-Isolation-Policy`, so they use every core (Chrome and Edge); other
+browsers run them on one thread, about half as fast. Entering the app downloads
+the speech models (~360 MB with dictation's) into the browser cache in the
+background, except on data saver or 2G, where they download on first use.
+Nothing is loaded until voice is turned on; the loaded models take ~570 MB and
+are released immediately when voice is turned off or Notes is closed. Chat dictation releases its separate model after each transcription. Playback keeps at most two audio buffers; the orb reads the existing meter and pauses offscreen. The model weights, ASR precision and TTS voice/steps are unchanged.
+
+Each utterance is one streamed GPT-6 Luna turn (`lib/notes/`) that returns its
+spoken reply first, then note edits. The reply is spoken a sentence at a time
+while it streams. Edits apply only when the whole output is valid. Talking over
+Luna cancels her turn and its edits, and the cut-off words are sent again with
+what comes next. Luna's edits never overwrite a block the learner changed while
+she was answering, and her last edit can be undone. Turns share the tutor's
+daily budget (`voice_notes` runs). The panel shows the last turn's delay, from
+the end of speech to Luna's first sound. Notes are stored in
+`study.session_notes` (migration 0034).
+
+Notes opens with a voice orb. Speak to write, revise, move or remove notes,
+check off tasks, or say “undo that”. Diagrams, images and source links are
+stored as note blocks; source/image requests use the existing Exa integration.
+Use **Share lesson** and choose the current LearnSpace browser tab for visual
+tutoring. Each spoken/typed turn sends one cropped JPEG of the video, pointer,
+selected text and drawings. Frames are not stored. Without sharing, Luna uses
+the transcript and notes and does not claim to see the video. **Draw** lets the
+learner mark a region; Luna can add arrows, circles, boxes and short labels
+that stay attached to the video through zoom/fullscreen. Browser tab capture
+requires a supported desktop browser and an explicit sharing action.
+
+### Production Docker runtime
+
+`Dockerfile` has a `web-production` target containing the traced Next runtime
+and static assets, running as `node`. Dependency installs use a BuildKit cache;
+environment files at every depth are excluded from the build context.
+Apply/verify migrations before starting it, then run:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+```
+
+The production override removes the source/dependency mounts and startup
+install/migrate/seed work. It sets a 768 MB container ceiling and a 384 MB JS
+heap. Plain `docker compose up -d web` restores the development service.
+Production on Vercel continues to use the existing project and Mumbai region.
+
 ## Manual disposable E2E login
 
 Run `pnpm e2e:manual` to start a loopback-only test app at

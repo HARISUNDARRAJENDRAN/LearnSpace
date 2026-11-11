@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { TutorModelOutput } from "@learnspace/shared/tutor";
+import { estimateCostUsd } from "../lib/ai/tutor-model";
 import { answerText, blockView, emptyLearner, type Evidence, groundOutput, mergeLearner, recordCheck, suggestMove } from "../lib/tutor/grounding";
 import { mathParts, restoreLatex } from "../lib/math";
 import { buildTutorPrompt } from "../lib/tutor/prompt";
@@ -169,4 +170,11 @@ test("a message after a graded check asks for more; an answer to an open questio
   const prompt = buildTutorPrompt({ title: "Exponents", durationMs: 600_000, positionMs: 0, scope: resolveScope("next", 0, 600_000), timed: true, coverage: "full", evidence: [], learner: emptyLearner(), history: [], question: "Got it. Give me the next question.", move: "Go on.", replyTo: right, doubt: null });
   assert.match(prompt.developer, /already answered your check[\s\S]*not an answer/);
   assert.match(prompt.user, /Your earlier check: Simplify \$y\^4 \\cdot y\^7\$\.\nThe learner chose: "\$y\^\{11\}\$" \(correct\)\nLearner's message: Got it\. Give me the next question\./);
+});
+
+test("a call billed on Fast processing costs twice the Standard rates", () => {
+  const usage = { inputTokens: 2_000, cachedTokens: 1_000, cacheWriteTokens: 0, outputTokens: 100, reasoningTokens: 0, fast: false };
+  const standard = estimateCostUsd(usage);
+  assert.ok(Math.abs(standard - (1_000 * 0.10 + 1_000 * 0.01 + 100 * 0.50) / 1e6) < 1e-12);
+  assert.ok(Math.abs(estimateCostUsd({ ...usage, fast: true }) - 2 * standard) < 1e-12);
 });

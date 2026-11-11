@@ -206,7 +206,82 @@
 .session-tool-message { margin: 0; color: var(--session-ink-muted); font-size: 13px; }
 .session-tool-message.is-error { color: #b2483b; }
 .session-segmented { width: fit-content; }
-.session-notes-content { margin-top: 20px; color: var(--session-ink); font-size: 14px; line-height: 1.65; white-space: pre-wrap; }
+
+/* A quiet, voice-first page beside the lesson. */
+.session-panel[data-view="notes"] { --session-ink: #eeefed; --session-ink-soft: #c1c5c3; --session-ink-muted: #858d89; --session-line: #303633; --session-hairline: #242b27; --session-hover: #202722; --session-blue: #78e5d4; background: #101412; color: var(--session-ink); }
+.notes-tool { background: #101412; }
+.notes-tool .session-panel-header { border-bottom-color: #242b27; }
+.notes-tool .session-icon-button { color: #929d96; }
+.notes-body { padding: 0 20px 20px; background-image: linear-gradient(#ffffff03 1px, transparent 1px), linear-gradient(90deg, #ffffff03 1px, transparent 1px); background-size: 32px 32px; }
+.notes-hero { display: flex; min-height: 360px; flex-direction: column; align-items: center; justify-content: center; padding: 32px 0 28px; text-align: center; }
+.notes-eyebrow { display: flex; align-items: center; gap: 7px; color: #87968f; font-size: 9px; font-weight: 500; letter-spacing: .12em; }
+.notes-eyebrow > span:first-child { width: 4px; height: 4px; border-radius: 50%; background: #75d7c5; box-shadow: 0 0 7px #75d7c544; }
+.notes-eyebrow-divider { margin: 0 3px; color: #454f49; }
+.notes-orb-button { display: grid; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.notes-orb-button:focus-visible { outline: 1px solid #78e5d4; border-radius: 50%; outline-offset: -20px; }
+.voice-orb { display: block; }
+.notes-hero h2 { margin: -4px 0 10px; color: #f3f5f2; font-size: clamp(18px, 1.6vw, 24px); font-weight: 500; letter-spacing: -.04em; }
+.notes-hero-description { margin: 0; color: #8e9a93; font-size: 12px; line-height: 1.8; }
+.notes-connect { display: flex; min-height: 36px; align-items: center; justify-content: center; gap: 8px; margin-top: 20px; padding: 8px 18px; border: 1px solid #35483f; border-radius: 999px; background: #c6f3e5; color: #15392c; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 150ms; }
+.notes-connect:hover { background: #e3fff4; }
+.notes-connect.is-on { background: #202e27; color: #b7e4d4; }
+.notes-connect svg { width: 14px; height: 14px; }
+.notes-download, .notes-loading { margin: 12px 0 0; color: #9aaba1; font-size: 11px; text-align: center; }
+.notes-latency { margin-top: 10px; color: #8da297; font-size: 10px; font-variant-numeric: tabular-nums; }
+.has-notes .notes-hero { min-height: 230px; padding: 18px 0 24px; }
+.has-notes .notes-hero h2 { margin-top: -8px; font-size: 17px; }
+.has-notes .notes-connect { margin-top: 6px; }
+.notes-page { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.notes-block { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 7px 10px; border-radius: 6px; font-size: 13px; line-height: 1.65; }
+.notes-block.is-luna { box-shadow: inset 1px 0 0 #6de4c52e; }
+.notes-block.is-fresh { animation: notes-fresh 1600ms ease-out; }
+.notes-block.is-bullet::before { flex: 0 0 auto; color: #819a8c; content: "•"; }
+.notes-block.is-heading { margin-top: 16px; color: #e5f2e9; font-size: 17px; font-weight: 500; letter-spacing: -.02em; }
+.notes-block.is-task input { width: 14px; height: 14px; flex: 0 0 auto; margin: 5px 0 0; accent-color: #78e5d4; cursor: pointer; }
+.notes-block.is-task:has(input:checked) .notes-block-copy { color: #809188; text-decoration: line-through; }
+.notes-tag { flex: 0 0 auto; margin-top: 3px; padding: 0 6px; border-radius: 4px; background: #bda9ff19; color: #c6b5f1; font-size: 9px; font-weight: 500; }
+.notes-block.is-decision .notes-tag { background: #75d7a51a; color: #9dd6b1; }
+.notes-block.is-question .notes-tag { background: #e5be6a1a; color: #e5ca91; }
+.notes-block-copy { min-width: 0; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes-block-text, .notes-add { min-width: 0; flex: 1; padding: 0; border: 0; outline: none; background: transparent; color: inherit; font: inherit; line-height: 1.65; resize: vertical; field-sizing: content; }
+.notes-block-text:focus { background: #ffffff06; }
+.notes-block-delete { display: grid; width: 22px; height: 22px; flex-shrink: 0; place-items: center; margin-left: auto; border: 0; border-radius: 4px; background: transparent; color: #87978e; cursor: pointer; }
+.notes-block-delete:hover { background: #ffffff0d; color: #fff; }
+.notes-block-delete svg { width: 12px; height: 12px; }
+.notes-add { display: block; width: 100%; margin-top: 12px; padding: 8px 10px; border: 1px dashed #3b4a41; border-radius: 6px; font-size: 13px; }
+.notes-add::placeholder, .notes-type input::placeholder { color: #728379; }
+.notes-voice { display: grid; flex: 0 0 auto; gap: 12px; padding: 14px 16px 12px; border-top: 1px solid #26312a; background: #111713; }
+.notes-captions { display: grid; overflow: auto; max-height: 155px; gap: 9px; font-size: 12px; line-height: 1.6; scrollbar-width: thin; }
+.notes-captions p { margin: 0; }
+.notes-captions p > span { display: block; margin-bottom: 1px; color: #799284; font-size: 9px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.notes-caption-you { color: #8e9e94; }
+.notes-caption-luna { color: #d8e7dd; }
+.notes-tools { display: flex; align-items: center; gap: 5px; }
+.notes-tools button { display: flex; min-height: 30px; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: #94aa9c; font: inherit; font-size: 10px; cursor: pointer; }
+.notes-tools button:last-child { margin-left: auto; }
+.notes-tools button:hover, .notes-tools button.is-on { border-color: #344b3d; background: #203328; color: #c8f5de; }
+.notes-tools svg { width: 13px; height: 13px; }
+.notes-type { display: flex; min-width: 0; align-items: center; gap: 6px; padding: 6px 6px 6px 13px; border: 1px solid #2e4035; border-radius: 999px; background: #19221c; }
+.notes-type:focus-within { border-color: #587d65; }
+.notes-type input { min-width: 0; flex: 1; border: 0; outline: none; background: transparent; color: #e0eee5; font: inherit; font-size: 12px; }
+.notes-type .chat-send { width: 28px; height: 28px; border-radius: 50%; background: #b9e5cc; color: #173924; }
+.notes-type .chat-send:disabled { background: #293a2e; color: #78917e; opacity: 1; }
+.notes-footnote { display: flex; justify-content: space-between; gap: 10px; color: #738e7c; font-size: 9px; }
+.notes-media { width: 100%; margin: 0; }
+.notes-media img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; object-fit: contain; }
+.notes-media figcaption { margin-top: 6px; color: #8dd6bd; font-size: 11px; }
+.notes-media a { color: inherit; text-decoration: underline; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.notes-media-error { color: #d6b995; font-size: 12px; }
+.notes-diagram { display: block; width: 100%; min-width: 0; color: #9fddc5; }
+.notes-diagram-edge path { fill: none; stroke: #72b79b; stroke-width: 1.5; }
+.notes-diagram-edge text { fill: #a4b9ae; font-size: 11px; text-anchor: middle; }
+.notes-diagram-node rect { fill: #1a2d23; stroke: #3b6f56; }
+.notes-diagram-label { display: flex; height: 100%; align-items: center; justify-content: center; color: #d0eedc; font: 12px/1.2 system-ui, sans-serif; text-align: center; overflow-wrap: anywhere; }
+.tutor-overlay { position: absolute; inset: 0; z-index: 4; width: 100%; height: 100%; pointer-events: none; }
+.tutor-overlay.is-drawing { pointer-events: auto; cursor: crosshair; touch-action: none; }
+@keyframes notes-fresh { from { background: #78e5d419; } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .notes-block.is-fresh { animation: none; } }
+@media (max-width: 600px) { .notes-hero { min-height: 280px; padding-top: 20px; } .notes-body { padding-inline: 12px; } }
 
 /* Quiz */
 .session-quiz-count { padding: 0 6px; color: var(--session-ink-muted); font-size: 13px; font-variant-numeric: tabular-nums; }

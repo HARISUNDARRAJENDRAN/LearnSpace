@@ -57,6 +57,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "study.tutor_threads": ["tutor_threads_owner_policy"],
   "study.tutor_messages": ["tutor_messages_owner_policy"],
   "study.mastery_checks": ["mastery_checks_owner_policy", "mastery_checks_owner_insert_policy", "mastery_checks_owner_update_policy"],
+  "study.session_notes": ["session_notes_owner_policy", "session_notes_owner_insert_policy", "session_notes_owner_update_policy"],
   "activity.activity_events": ["activity_events_owner_policy", "activity_events_worker_policy"],
   "retrieval.resource_chunks": ["resource_chunks_visible_policy", "resource_chunks_worker_policy", "resource_chunks_worker_insert_policy", "resource_chunks_worker_update_policy"],
   "retrieval.chunk_embeddings": ["chunk_embeddings_visible_policy", "chunk_embeddings_worker_policy", "chunk_embeddings_worker_insert_policy", "chunk_embeddings_worker_update_policy"],
@@ -227,7 +228,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 89, `expected 89 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 90, `expected 90 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count

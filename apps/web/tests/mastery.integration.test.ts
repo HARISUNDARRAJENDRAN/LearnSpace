@@ -14,7 +14,7 @@ const lines = [
   "Momentum keeps a running average of past gradients so the steps are smoother.",
   "To recap: the gradient gives the direction and the learning rate gives the size.",
 ];
-const usage = { inputTokens: 3_000, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: 1_500, reasoningTokens: 1_000 };
+const usage = { inputTokens: 3_000, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: 1_500, reasoningTokens: 1_000, fast: false };
 
 /** Writes sets whose questions are numbered by call, so a second set is told to avoid the first; grades by keyword. */
 function fakeModel(calls: TutorModelRequest[]): TutorModel {

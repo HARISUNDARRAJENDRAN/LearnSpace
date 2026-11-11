@@ -1,0 +1,16 @@
+# Apply/verify database migrations before starting this immutable web image.
+# docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+services:
+  web:
+    image: learnspace-web:production
+    mem_limit: ${WEB_MEMORY_LIMIT:-768m}
+    build:
+      target: web-production
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=384
+      MALLOC_ARENA_MAX: "2"
+    volumes: !reset []
+    command: ["node", "apps/web/server.js"]
+    healthcheck:
+      start_period: 30s

@@ -1,9 +1,9 @@
 import { type AutomaticSpeechRecognitionPipeline, ModelRegistry, pipeline } from "@huggingface/transformers";
+import { DICTATION_MODEL } from "./voice/models";
 
 // Moonshine Base (61M parameters) is the most accurate speech model of its size that transformers.js runs in the browser.
 // int8 weights keep the one-time download near 62 MB; transformers.js keeps them in the browser's Cache API after that, and audio never leaves the device.
-const MODEL = "onnx-community/moonshine-base-ONNX";
-const OPTIONS = { device: "wasm", dtype: "q8" } as const;
+const { model: MODEL, options: OPTIONS } = DICTATION_MODEL;
 
 export type SpeechRequest = { type: "load" } | { type: "transcribe"; audio: Float32Array };
 /** `download` reports progress only for a real first-time download; reading the cached model is silent. */

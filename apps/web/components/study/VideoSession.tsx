@@ -1,5 +1,6 @@
 "use client";
 
+import type { NotesSpatial, TutorMark, TutorVisual } from "@learnspace/shared/notes";
 import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import { Code, Crosshair, Expand, ListChecks, Maximize, Minus, NotebookPen, Plus, Shrink, Sparkles, Video, Workflow } from "lucide-react";
 import Link from "next/link";
@@ -11,6 +12,8 @@ import { PanelResizer } from "./PanelResizer";
 import { MasteryCheck } from "./MasteryCheck";
 import { SessionChat } from "./SessionChat";
 import { SessionCode } from "./SessionCode";
+import { TutorOverlay, type LessonPoint } from "./TutorOverlay";
+import { useLessonVision } from "./useLessonVision";
 import { SessionNotes } from "./SessionNotes";
 import { useStudyTime } from "./useStudyTime";
 import { useTranscriptCapture } from "./useTranscriptCapture";
@@ -124,7 +127,8 @@ function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onC
             playerRef.current = target;
             setPlayerState("ready");
             const resumeMs = resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0;
-            if (resumeMs > 0) target.seekTo(resumeMs / 1_000, true);
+            // A lesson watched to the end (its check still to pass) starts over; resuming there would end it the moment it plays.
+            if (resumeMs > 0 && resumeMs < target.getDuration() * 1_000 - 5_000) target.seekTo(resumeMs / 1_000, true);
           },
           onStateChange: ({ data }) => {
             setPlaying(data === 1);
@@ -185,7 +189,7 @@ function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onC
     else player.playVideo();
   }
 
-  return { containerRef, playerState, currentMs, seek, togglePlay };
+  return { containerRef, playerState, currentMs, seek, togglePlay, play: () => playerRef.current?.playVideo(), pause: () => playerRef.current?.pauseVideo() };
 }
 
 function clampZoom(zoom: number): number {
@@ -326,6 +330,25 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   }, [router]);
   const lesson = useYouTubeLesson(session.id, active, finished);
   useTranscriptCapture(active.resourceId, Boolean(active.video?.youtubeId));
+  const lessonCard = useRef<HTMLDivElement>(null);
+  const vision = useLessonVision(useCallback(() => lessonCard.current, []));
+  const [marks, setMarks] = useState<TutorMark[]>([]);
+  const [drawing, setDrawing] = useState(false);
+  const pointer = useRef<LessonPoint | null>(null);
+  const marksRef = useRef(marks); marksRef.current = marks;
+  const lessonActions = useRef(lesson); lessonActions.current = lesson;
+  const spatial = useCallback((): NotesSpatial => ({ pointer: pointer.current, marks: marksRef.current, selectedText: window.getSelection()?.toString().slice(0, 2000) ?? "", frame: vision.capture() }), [vision.capture]);
+  const applyVisual = useCallback((visual: TutorVisual) => {
+    setMarks((previous) => {
+      const next = new Map((visual.clear ? [] : previous).map((mark) => [mark.id, mark]));
+      for (const mark of visual.marks) next.set(mark.id, mark);
+      return [...next.values()].slice(-32);
+    });
+    if (visual.seekMs !== null) lessonActions.current.seek(visual.seekMs);
+    if (visual.playback === "play") lessonActions.current.play();
+    if (visual.playback === "pause") lessonActions.current.pause();
+  }, []);
+  useEffect(() => { if (panel !== "notes") { vision.stop(); setDrawing(false); } }, [panel, vision.stop]);
   const course = session.course;
   const layout = useMemo(() => (course ? layoutCourse(course) : null), [course]);
   // Every visit opens on the whole course; double-clicking the current lesson focuses it alone, and that is not remembered.
@@ -394,6 +417,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
 
   const player = <>
     <div className="study-player" ref={lesson.containerRef} />
+    <TutorOverlay marks={marks} drawing={drawing} onMark={(mark) => setMarks((previous) => [...previous, mark].slice(-32))} onPoint={(point) => { pointer.current = point; }} />
     {selected && !boardPreview ? null : <button className="session-card-select" type="button" aria-label={boardPreview ? `Play or pause lesson ${lessonNumber}: ${active.title}. Double-click to focus it` : `Select ${active.title}`} title={boardPreview ? "Click to play or pause, double-click to focus" : undefined} onClick={clickLesson} />}
     {lesson.playerState === "loading" ? <div className="study-player-state">Loading the lesson player…</div> : null}
     {lesson.playerState === "unavailable" ? <div className="study-player-state"><strong>This video can&apos;t be played inside LearnSpace.</strong><span>Your StudySession is still available. Open the source to continue on YouTube.</span>{active.canonicalUrl ? <a href={active.canonicalUrl} target="_blank" rel="noreferrer">Open on YouTube</a> : null}</div> : null}
@@ -425,8 +449,8 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
         </header>
         <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers}>
           <div className="session-canvas-layer" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
-            {course ? <CourseGraph course={course} focusRect={fillsPane ? focusRect : null} player={<div className={`session-card${selected ? " is-selected" : ""}`} style={{ inset: 0 }}>{player}</div>} /> : (
-              <div className={`session-card${selected ? " is-selected" : ""}`} style={{ width: card.width, height: card.height, left: card.x, top: card.y }}>{player}</div>
+            {course ? <CourseGraph course={course} focusRect={fillsPane ? focusRect : null} player={<div ref={lessonCard} className={`session-card${selected ? " is-selected" : ""}`} style={{ inset: 0 }}>{player}</div>} /> : (
+              <div ref={lessonCard} className={`session-card${selected ? " is-selected" : ""}`} style={{ width: card.width, height: card.height, left: card.x, top: card.y }}>{player}</div>
             )}
           </div>
           <div className="session-zoom" role="toolbar" aria-label="Zoom">
@@ -442,7 +466,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
       </div>
       <aside className="session-panel" aria-label="Side panel" data-view={panel ?? undefined} hidden={!panel} onPointerDown={collapseSidebar}>
         {panel === "ai" ? <PanelResizer label="Resize chat" /> : null}
-        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes sessionId={session.id} onCollapse={collapse} /></div> : null}
+        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} currentMs={lesson.currentMs} active={panel === "notes"} tutor={{ spatial, onVisual: applyVisual, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onStopShare: vision.stop, drawing, onToggleDraw: () => setDrawing((value) => !value), onClear: () => setMarks([]) }} onCollapse={collapse} /></div> : null}
         {checkPanel ? <div className="session-tool-slot" {...checkPanel}><MasteryCheck key={`${active.resourceId}-${watched}`} sessionId={session.id} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
         {codePanel ? <div className="session-tool-slot" {...codePanel}><SessionCode sessionId={session.id} onCollapse={collapse} /></div> : null}
         {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} currentMs={lesson.currentMs} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
