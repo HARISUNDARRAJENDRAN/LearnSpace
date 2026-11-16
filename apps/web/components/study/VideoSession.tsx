@@ -3,6 +3,7 @@
 import type { LessonControl } from "@learnspace/shared/notes";
 import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView, StudyTool, StudyWorkspace } from "@learnspace/shared";
 import { Code, Crosshair, Expand, ListChecks, NotebookPen, Shrink, Sparkles, Video, Workflow } from "lucide-react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -10,16 +11,20 @@ import { CollapseSidebarContext } from "../application/ApplicationShell";
 import { type CanvasView, EndSession, savedCanvas, useCanvas, ZoomBar } from "./canvas";
 import { type CanvasRect, CourseGraph, layoutCourse } from "./CourseGraph";
 import { PanelResizer } from "./PanelResizer";
-import { MasteryCheck } from "./MasteryCheck";
 import { SessionChat } from "./SessionChat";
-import { CodingWorkspace } from "../coding/CodingWorkspace";
-import { useCodingProfile } from "../coding/useCodingProfile";
+import { useCodingEligibility } from "../coding/useCodingEligibility";
+import { LoadingState } from "./LoadingState";
 import { useLessonVision } from "./useLessonVision";
-import { SessionNotes } from "./SessionNotes";
 import { panelForSlug, slugForPanel, TOOL_PARAM } from "./tools";
 import { useStudyTime } from "./useStudyTime";
 import { useTranscriptCapture } from "./useTranscriptCapture";
 import { useWorkspaceSave } from "./useWorkspaceSave";
+
+// Tools load when first opened, so the lesson (and links that prefetch it) don't carry the editor, checks and coding workspace up front. Chat stays eager: its opener focuses the input on the next frame.
+const toolLoading = () => <LoadingState label="Opening study tool" />;
+const CodingWorkspace = dynamic(() => import("../coding/CodingWorkspace").then((module) => module.CodingWorkspace), { loading: toolLoading });
+const MasteryCheck = dynamic(() => import("./MasteryCheck").then((module) => module.MasteryCheck), { loading: toolLoading });
+const SessionNotes = dynamic(() => import("./SessionNotes").then((module) => module.SessionNotes), { loading: toolLoading });
 
 type ProgressEvent = StudyProgressRequest["event"];
 
@@ -254,7 +259,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   const panelRef = useRef(panel);
   panelRef.current = panel;
   // The server's coding capability controls both the tool rail and the exercise overlay.
-  const codingProfile = useCodingProfile(session.id, active.resourceId);
+  const codingEligible = useCodingEligibility(session.id, active.resourceId);
   // Luny keeps talking while Notes is hidden; the Notes tool shows she is still on.
   const [lunyOn, setLunyOn] = useState(false);
   // Remounts the check when the video is watched, so it reloads unlocked.
@@ -375,8 +380,8 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   }, []);
 
   useEffect(() => {
-    if (panel === "code" && codingProfile && !codingProfile.eligible) collapse();
-  }, [panel, codingProfile]);
+    if (panel === "code" && codingEligible === false) collapse();
+  }, [panel, codingEligible]);
 
   // Practice covers the lesson, so the lesson waits for it.
   useEffect(() => { if (panel === "code" && lessonActions.current.isPlaying()) lessonActions.current.pause(); }, [panel]);
@@ -440,7 +445,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
           <div className="session-actions">
             <fieldset className="session-tools">
               <legend className="sr-only">Study tools</legend>
-              {tools.filter(({ view: tool }) => tool !== "code" || codingProfile?.eligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
+              {tools.filter(({ view: tool }) => tool !== "code" || codingEligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
             {course ? <span className="session-course-count" title="Lessons completed">{completedCount}/{lessons.length} done</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
@@ -462,7 +467,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
         </div>
       </div>
       {/* Practice covers the session in LeetCode's layout; the lesson stays mounted, paused, underneath. */}
-      {codePanel && codingProfile?.eligible ? <div className="coding-overlay" hidden={codePanel.hidden}><CodingWorkspace key={active.resourceId} sessionId={session.id} onSeek={lesson.seek} onClose={collapse} /></div> : null}
+      {codePanel && codingEligible ? <div className="coding-overlay" hidden={codePanel.hidden}><CodingWorkspace key={active.resourceId} sessionId={session.id} onSeek={lesson.seek} onClose={collapse} /></div> : null}
       <aside className="session-panel" aria-label="Side panel" data-view={panel ?? undefined} hidden={!panel || panel === "code"} onPointerDown={collapseSidebar}>
         {panel === "ai" || panel === "notes" ? <PanelResizer key={panel} label={panel === "ai" ? "Resize chat" : "Resize notes"} storageKey={`learnspace:${panel === "ai" ? "chat" : "notes"}-width`} /> : null}
         {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} title={active.title} active={panel === "notes"} tutor={{ lesson: lessonState, capture: vision.capture, onControl: applyControl, onTurn, onGo: go, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onVoice: setLunyOn }} onCollapse={collapse} /></div> : null}
