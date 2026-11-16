@@ -145,9 +145,17 @@ credit.
     optionally `SANDBOX_RUNTIME`, `SANDBOX_CPUS`, `RUNNER_CONCURRENCY` and
     `DOCKER_SOCKET`.
   - Without a runner, the Code tool reports that practice is unavailable.
+- **In production.** The runner has a VM of its own at
+  `https://runner.learn-space.app`, with sandboxes under gVisor. See
+  `infra/runner/README.md`.
 - **Tests.**
   - `pnpm --filter @learnspace/runner test`: the sandbox, grading, and
     verification against the database.
   - `apps/web` `tests/coding-policy.test.ts`: the policy.
   - `tests/coding.integration.test.ts`: the full loop with a real database,
     a real runner and fake models.
+  - CI builds the sandbox image and runs both, with a runner started for the
+    integration test. Without the image, the runner's tests skip. Locally,
+    with Docker Desktop, set `DOCKER_SOCKET=~/.docker/desktop/docker.sock`.
+  - `apps/web/tests/e2e/coding-profile.spec.ts`: classification through the
+    e2e model stand-in, and the Code tool appearing only on coding lessons.

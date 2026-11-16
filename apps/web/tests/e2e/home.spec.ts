@@ -106,8 +106,47 @@ test("first app entry goes to Discover once; empty Home works across later sessi
 test("populated Home shows recent study, the agent's next actions and the learner's level", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
   await expect(page.getByRole("region", { name: "Recent study" })).toContainText("Home E2E Python lesson");
-  await expect(page.getByRole("region", { name: "Next actions" }).getByRole("button", { name: /^Remove .* from your calendar$/ }).first()).toBeVisible();
+  const next = page.getByRole("region", { name: "Next actions" });
+  await expect(next.getByRole("button", { name: /^Remove .* from your calendar$/ }).first()).toBeVisible();
+  // Written by the planning agent (the fallback would say "Finish ..."), grounded in the learner's unfinished lessons.
+  await expect(next).toContainText("Keep going with Home E2E Python lesson");
   await expect(page.getByRole("region", { name: "Level & rank" })).toContainText(/Level \d+/);
+});
+
+test("the observer checks free-text to-dos against what was studied that day", async ({ page }) => {
+  const db = database;
+  if (!db) throw new Error("Home E2E database is not connected");
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const plan = async (title: string) => {
+    const created = await page.request.post("/api/v1/plan", { data: { title, description: null, startsAt: today.toISOString(), endsAt: null, allDay: true } });
+    expect(created.status()).toBe(201);
+    return ((await created.json()) as { item: { id: string; kind: string } }).item;
+  };
+  // No kind words in either title, so the model reads the intent ("again" is a review in the mock).
+  const python = await plan("Go through the Python material again");
+  const haskell = await plan("Haskell monads");
+  expect(python.kind).toBe("review");
+  expect(haskell.kind).toBe("practice");
+  // Four minutes on the Python lesson just now: study after the items were planned, so it counts for them.
+  const startedAt = new Date(Date.now() - 5 * 60_000);
+  await db`INSERT INTO study.focus_sessions (user_id, study_session_id, resource_id, mode, started_at, ended_at, duration_sec, completed)
+    VALUES (${fixture.userId}, ${fixture.sessions.hero}, ${fixture.resources.hero}, 'guided_learning', ${startedAt}, ${new Date(startedAt.getTime() + 240_000)}, 240, true)`;
+
+  const tick = async (id: string) => {
+    const response = await page.request.patch(`/api/v1/plan/${id}`, { data: { done: true } });
+    expect(response.status()).toBe(200);
+    return ((await response.json()) as { tick: { verified: boolean; note: string } }).tick;
+  };
+  // The observer model matched the Python to-do with the Python lesson, and found nothing for Haskell.
+  expect(await tick(python.id)).toEqual({ verified: true, note: "Covered by Home E2E Python lesson (4 min)." });
+  expect(await tick(haskell.id)).toEqual({ verified: false, note: "Not yet: Nothing about Haskell monads in that day's study." });
+  const rows = await db`SELECT id, status, progress_pct, observer_note FROM study.schedule_items WHERE id IN ${db([python.id, haskell.id])}`;
+  expect(rows.find((row) => row.id === python.id)).toMatchObject({ status: "done", progress_pct: 100 });
+  expect(rows.find((row) => row.id === haskell.id)).toMatchObject({ status: "planned", progress_pct: 0, observer_note: "Nothing about Haskell monads in that day's study." });
+  // The calendar test below starts from the fixture's own plan.
+  await db`DELETE FROM study.schedule_items WHERE id IN ${db([python.id, haskell.id])}`;
+  await db`DELETE FROM study.focus_sessions WHERE user_id = ${fixture.userId} AND started_at = ${startedAt}`;
 });
 
 test("the study plan calendar creates, switches views and deletes an item", async ({ page }) => {

@@ -1,0 +1,37 @@
+# The production code runner host: the runner, and Caddy terminating HTTPS for runner.learn-space.app in front of it.
+# Learner code never runs in these containers: the runner starts a fresh learnspace-sandbox:1 container per execution
+# on this host's Docker, under gVisor (SANDBOX_RUNTIME=runsc). See docs/ai-coding.md and infra/runner/README.md.
+services:
+  runner:
+    image: learnspace-runner:${RUNNER_IMAGE_TAG:?set RUNNER_IMAGE_TAG to the deployed commit}
+    restart: unless-stopped
+    # RUNNER_TOKEN, DATABASE_RUNNER_URL and the sizing below come from .env next to this file (mode 600, never committed).
+    env_file: .env
+    environment:
+      SANDBOX_IMAGE: learnspace-sandbox:1
+      SANDBOX_RUNTIME: runsc
+    volumes:
+      # Sandboxes are sibling containers on this host's Docker, which is why the runner has a host of its own.
+      - /var/run/docker.sock:/var/run/docker.sock
+    mem_limit: 256m
+    networks: [edge]
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [runner]
+    networks: [edge]
+
+networks:
+  edge: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

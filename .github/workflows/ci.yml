@@ -74,7 +74,24 @@ jobs:
         env:
           LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED: "false"
       - run: pnpm --filter @learnspace/shared test
-      - run: pnpm --filter @learnspace/web test
+      # The runner's sandboxes are real containers. Without their image its tests skip, so build it and insist on it.
+      - run: pnpm --filter @learnspace/runner run sandbox:build
+      - run: docker image inspect learnspace-sandbox:1 > /dev/null
+      - run: pnpm --filter @learnspace/runner test
+      - name: Web tests, with a real code runner for the coding integration test
+        env:
+          RUNNER_URL: http://127.0.0.1:4100
+          RUNNER_TOKEN: ci-runner-token-not-a-secret
+        run: |
+          HOST=127.0.0.1 node services/runner/dist/server.js > /tmp/learnspace-runner.log 2>&1 &
+          runner_pid=$!
+          trap 'kill "$runner_pid"; tail -n 50 /tmp/learnspace-runner.log' EXIT
+          for _attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4100/health > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:4100/health
+          pnpm --filter @learnspace/web test
       - run: pnpm run db:test
       - run: pnpm --filter @learnspace/web exec playwright install --with-deps chromium
       - run: pnpm --filter @learnspace/web run test:e2e:production

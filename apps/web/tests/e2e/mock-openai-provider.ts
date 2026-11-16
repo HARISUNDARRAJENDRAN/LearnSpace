@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, type ServerResponse } from "node:http";
 
 // A stand-in for the Responses API that answers like the tutor contract asks: from the numbered evidence it is given.
 const port = Number(process.env.PORT ?? 4011);
@@ -41,6 +41,63 @@ function mastery(instructions: string, user: string): unknown {
   return { questions: [choice(1), choice(2), choice(3), written(3), written(4)] };
 }
 
+// The structured chat completions (lib/ai/openai.ts structuredCompletion), told apart by their schema name.
+type Evidence = { title: string; minutes: number; finished: boolean };
+type PlanItem = { id: string; title: string; evidence: Evidence[] };
+type Candidate = { id: string; title: string; type: string; why: string };
+const words = (text: string) => new Set(text.toLowerCase().match(/[a-z]{4,}/g) ?? []);
+
+function structured(name: string, user: string): unknown {
+  // Goal planning: three to-dos over the coming days, so onboarding shows the model's plan rather than the goal itself.
+  if (name === "goal_todos") {
+    const { goal } = JSON.parse(user) as { goal: string };
+    return { todos: [
+      { title: "Solve one warm-up exercise", reason: `A first small win towards: ${goal}`, kind: "practice", day: 0 },
+      { title: `Watch a lesson on ${goal}`.slice(0, 160), reason: "See the idea worked through once.", kind: "watch", day: 1 },
+      { title: "Review what you got wrong", reason: "Mistakes are where the learning is.", kind: "review", day: 2 },
+    ] };
+  }
+  // A free-text plan with no kind words in it: "again" means a review, anything else is practice.
+  if (name === "plan_kind") return { kind: /\bagain\b/i.test(user) ? "review" : "practice" };
+  // The observer: an item is done when that day's study shares a topic word with it, and not otherwise.
+  if (name === "plan_verdicts") {
+    const { items } = JSON.parse(user) as { items: PlanItem[] };
+    return { items: items.map((item) => {
+      const topic = words(item.title);
+      const match = item.evidence.find((entry) => [...words(entry.title)].some((word) => topic.has(word)));
+      return match
+        ? { id: item.id, progressPct: 100, done: true, note: `Covered by ${match.title} (${match.minutes} min).` }
+        : { id: item.id, progressPct: 0, done: false, note: `Nothing about ${item.title} in that day's study.` };
+    }) };
+  }
+  // The planner: one action per candidate, worded unlike the fallback's "Finish ...".
+  if (name === "next_actions") {
+    const { candidates } = JSON.parse(user) as { candidates: Candidate[] };
+    const when = ["today", "tomorrow", "later"] as const;
+    return { actions: candidates.slice(0, 3).map((candidate, index) => ({
+      title: `Keep going with ${candidate.title}`.slice(0, 160), reason: `${candidate.why}; the planner picked it.`, kind: candidate.type === "video" ? "watch" : "read",
+      minutes: 25, when: when[index], resourceId: candidate.id, searchQuery: candidate.title,
+    })) };
+  }
+  // Coding classification: a transcript about recursion is a DSA lesson worth practising; anything else is not.
+  if (name === "coding_profile") {
+    const passage = /\[(\d+)\][^\n]*\n[^\n]*recursi/i.exec(user);
+    if (!passage) return { category: "conceptual_cs", practiceFit: 0.1, language: "none", difficulty: "easy", concepts: [], reason: "Explains an idea; no code to write." };
+    return { category: "dsa_lesson", practiceFit: 0.9, language: "python", difficulty: "easy", concepts: [{ concept: "recursion", focus: "Base case and recursive step", cite: [Number(passage[1])] }], reason: "Writes recursive functions step by step." };
+  }
+  return null;
+}
+
+function completion(body: string, response: ServerResponse) {
+  const request = JSON.parse(body) as { messages: Array<{ role: string; content: string }>; response_format?: { json_schema?: { name?: string } } };
+  const content = structured(request.response_format?.json_schema?.name ?? "", request.messages.find((message) => message.role === "user")?.content ?? "");
+  if (content === null) {
+    response.writeHead(404, { "Content-Type": "application/json" }).end('{"error":{"code":"not_found"}}');
+    return;
+  }
+  response.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ choices: [{ message: { role: "assistant", content: JSON.stringify(content) } }] }));
+}
+
 const server = createServer((request, response) => {
   if (request.url === "/health") {
     response.writeHead(200).end("ok");
@@ -49,6 +106,10 @@ const server = createServer((request, response) => {
   let body = "";
   request.on("data", (chunk) => { body += chunk; });
   request.on("end", () => {
+    if (request.url === "/v1/chat/completions") {
+      completion(body, response);
+      return;
+    }
     if (request.url !== "/v1/responses") {
       response.writeHead(404, { "Content-Type": "application/json" }).end('{"error":{"code":"not_found"}}');
       return;

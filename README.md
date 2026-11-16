@@ -190,7 +190,9 @@ production data is not used.
 ## Production
 
 Production is the web app on Vercel and the discovery worker on Supabase,
-both against one Supabase PostgreSQL project.
+both against one Supabase PostgreSQL project. The code runner has an Azure
+VM of its own (`infra/runner/README.md`). The web app reaches it with
+`RUNNER_URL=https://runner.learn-space.app` and `RUNNER_TOKEN`.
 
 Create the database roles and extensions once, as the database's admin user,
 with a strong password for each role:
@@ -220,7 +222,8 @@ instance shares them.
    `DB_POOL_MAX=3`, `APP_URL`, `GOOGLE_REDIRECT_URI`
    (`$APP_URL/api/auth/google/callback`), `AUTH_SECRET`,
    `AUTH_SECURE_COOKIES=true`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-   `RESEND_API_KEY`, `EMAIL_FROM`, `EXA_API_KEY`, and optionally
+   `RESEND_API_KEY`, `EMAIL_FROM`, `EXA_API_KEY`, `RUNNER_URL`,
+   `RUNNER_TOKEN`, and optionally
    `OPENAI_API_KEY` with `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
 2. Deploy: `pnpm dlx vercel@65.12.1 deploy --prod` from the repository root.
 
