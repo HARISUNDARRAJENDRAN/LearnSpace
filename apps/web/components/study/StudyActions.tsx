@@ -2,6 +2,7 @@
 
 import type { SourceDiscoveryMode, StudyOrigin } from "@learnspace/shared";
 import { useRouter } from "next/navigation";
+import { Bookmark, BookmarkCheck } from "lucide-react";
 import { useState } from "react";
 
 type StartResponse = { route?: unknown };
@@ -45,7 +46,7 @@ export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, re
   return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }
 
-export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {
+export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "", variant = "text" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string; variant?: "text" | "icon" }) {
   const router = useRouter();
   const [isSaved, setSaved] = useState(saved);
   const [loading, setLoading] = useState(false);
@@ -64,7 +65,9 @@ export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", cl
       setLoading(false);
     }
   }
-  return <button className={className} type="button" onClick={() => void toggle()} disabled={loading}>{loading ? "Saving…" : error ? "Try again" : isSaved ? savedLabel : "Save"}</button>;
+  const label = loading ? "Saving…" : error ? "Try again" : isSaved ? savedLabel : "Save";
+  if (variant === "icon") return <button className={className} type="button" onClick={() => void toggle()} disabled={loading} aria-pressed={isSaved} aria-label={error ? "Saving failed, try again" : isSaved ? "Remove from library" : "Save to library"} title={label} data-error={error || undefined}>{isSaved ? <BookmarkCheck aria-hidden="true" /> : <Bookmark aria-hidden="true" />}</button>;
+  return <button className={className} type="button" onClick={() => void toggle()} disabled={loading}>{label}</button>;
 }
 
 export function StartCollectionButton({ collectionId, label }: { collectionId: string; label: string }) {

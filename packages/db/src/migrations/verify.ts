@@ -68,6 +68,7 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "retrieval.retrieval_runs": ["retrieval_runs_owner_policy", "retrieval_runs_owner_insert_policy", "retrieval_runs_worker_policy", "retrieval_runs_worker_insert_policy", "retrieval_runs_worker_update_policy"],
   "retrieval.retrieved_chunks": ["retrieved_chunks_owner_policy", "retrieved_chunks_worker_policy"],
   "retrieval.citations": ["citations_owner_policy", "citations_worker_policy"],
+  "discovery.favorite_authors": ["favorite_authors_owner_policy", "favorite_authors_owner_insert_policy", "favorite_authors_owner_delete_policy"],
   "practice.video_coding_profiles": ["video_coding_profiles_app_select", "video_coding_profiles_app_insert", "video_coding_profiles_app_update"],
   "practice.coding_problems": ["coding_problems_app_select", "coding_problems_app_insert", "coding_problems_app_update", "coding_problems_runner_select", "coding_problems_runner_update"],
   "practice.coding_problem_secrets": ["coding_problem_secrets_app_insert", "coding_problem_secrets_runner_select", "coding_problem_secrets_runner_update"],
@@ -216,7 +217,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 88, `expected 88 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 89, `expected 89 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count

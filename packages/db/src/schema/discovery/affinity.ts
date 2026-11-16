@@ -4,6 +4,7 @@ import { discoverySchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { concepts } from "../knowledge/concepts.js";
 import { resources } from "../catalog/resources.js";
+import { authors } from "../catalog/papers.js";
 
 export const userConceptAffinity = discoverySchema.table(
   "user_concept_affinity",
@@ -23,6 +24,19 @@ export const userConceptAffinity = discoverySchema.table(
     check("user_concept_affinity_score_chk", sql`${table.score} BETWEEN -1 AND 1`),
     check("user_concept_affinity_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
     index("user_concept_affinity_user_score_idx").on(table.userId, table.score.desc()),
+  ],
+);
+
+export const favoriteAuthors = discoverySchema.table(
+  "favorite_authors",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id").notNull().references(() => authors.id, { onDelete: "cascade" }),
+    followedAt: timestamp("followed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.authorId] }),
+    index("favorite_authors_user_followed_idx").on(table.userId, table.followedAt.desc()),
   ],
 );
 

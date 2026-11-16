@@ -302,6 +302,13 @@
       "when": 1794756612805,
       "tag": "0042_coding_practice",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794818747117,
+      "tag": "0043_favorite_authors",
+      "breakpoints": true
     }
   ]
 }
