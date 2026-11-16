@@ -6,7 +6,10 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { formatClock } from "../../lib/tutor/scope";
 import { useStudyTime } from "./useStudyTime";
+import { BookOpenText } from "lucide-react";
+import { PaperFocus } from "../research/PaperFocus";
 import { PaperReader as PaperView } from "../research/PaperReader";
+import { usePaperContent } from "../research/usePaperContent";
 
 type StudyKind = "video" | "paper";
 
@@ -49,6 +52,8 @@ function PaperReader({ sessionId, resource, onProgress }: { sessionId: string; r
   const [progress, setProgress] = useState(resource.progress.progressPct);
   const [message, setMessage] = useState("");
   const [sourceLoaded, setSourceLoaded] = useState(false);
+  const [focus, setFocus] = useState(false);
+  const paper = usePaperContent(resource.resourceId);
   useStudyTime(sessionId, resource.resourceId, sourceLoaded && resource.readiness !== "unavailable", true);
   const sections = useMemo(() => [...new Set(resource.chunks.flatMap((chunk) => chunk.headingPath).filter(Boolean))], [resource.chunks]);
   async function save(nextProgress = progress, complete = false) {
@@ -64,7 +69,7 @@ function PaperReader({ sessionId, resource, onProgress }: { sessionId: string; r
       setMessage("Could not sync this reading position");
     }
   }
-  return <div className="paper-reader-stack"><div className="paper-reader-frame"><PaperView resourceId={resource.resourceId} title={resource.title} initialPage={initialAnchor?.page ?? 1} sections={[]} onPageChange={(next) => { setPage(next); setSourceLoaded(true); }} /></div><section className="paper-progress-control" aria-labelledby="reading-position-title"><div><p className="study-label">Your place</p><h2 id="reading-position-title">Reading position</h2><p>Save a page or parsed section when you move through the paper.</p></div><div className="paper-progress-fields"><label>Page<input type="number" min="1" value={page} onChange={(event) => setPage(Math.max(1, Number(event.target.value) || 1))} /></label>{sections.length > 0 ? <label>Section<select value={sectionId} onChange={(event) => setSectionId(event.target.value)}><option value="">Choose a section</option>{sections.map((section) => <option key={section} value={section}>{section}</option>)}</select></label> : null}</div><label className="paper-progress-range">Progress <input type="range" min="0" max="100" value={progress} onChange={(event) => setProgress(Number(event.target.value))} /><output>{Math.round(progress)}%</output></label><div className="paper-progress-actions"><button type="button" onClick={() => void save()}>Save position</button><button className="quiet-button" type="button" onClick={() => void save(100, true)}>Mark paper complete</button></div><span className="study-inline-message" aria-live="polite">{message}</span></section></div>;
+  return <div className="paper-reader-stack"><div className="paper-reader-frame"><PaperView resourceId={resource.resourceId} title={resource.title} initialPage={initialAnchor?.page ?? 1} sections={paper.sections} onPageChange={(next) => { setPage(next); setSourceLoaded(true); }} actions={<button type="button" className="paper-reader-focus" onClick={() => setFocus(true)}><BookOpenText aria-hidden="true" />Focus</button>} /></div>{focus ? <PaperFocus content={paper.content} failed={paper.failed} onClose={() => setFocus(false)} /> : null}<section className="paper-progress-control" aria-labelledby="reading-position-title"><div><p className="study-label">Your place</p><h2 id="reading-position-title">Reading position</h2><p>Save a page or parsed section when you move through the paper.</p></div><div className="paper-progress-fields"><label>Page<input type="number" min="1" value={page} onChange={(event) => setPage(Math.max(1, Number(event.target.value) || 1))} /></label>{sections.length > 0 ? <label>Section<select value={sectionId} onChange={(event) => setSectionId(event.target.value)}><option value="">Choose a section</option>{sections.map((section) => <option key={section} value={section}>{section}</option>)}</select></label> : null}</div><label className="paper-progress-range">Progress <input type="range" min="0" max="100" value={progress} onChange={(event) => setProgress(Number(event.target.value))} /><output>{Math.round(progress)}%</output></label><div className="paper-progress-actions"><button type="button" onClick={() => void save()}>Save position</button><button className="quiet-button" type="button" onClick={() => void save(100, true)}>Mark paper complete</button></div><span className="study-inline-message" aria-live="polite">{message}</span></section></div>;
 }
 
 export function SessionMaterials({ session }: { session: StudySessionView }) {

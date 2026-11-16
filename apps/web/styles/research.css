@@ -192,6 +192,7 @@
 .paper-reader-paging input { width: 44px; height: 28px; padding: 0 4px; border: 1px solid #e3e7e7; border-radius: 7px; color: #18282c; font: inherit; text-align: center; -moz-appearance: textfield; }
 .paper-reader-paging input::-webkit-inner-spin-button { -webkit-appearance: none; }
 .paper-reader-toolbar .paper-reader-zoom-value { width: auto; min-width: 46px; padding: 0 6px; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.paper-reader-toolbar .paper-reader-focus { display: inline-flex; gap: 6px; width: auto; padding: 0 10px; border: 1px solid #e3e7e7; color: #18282c; font: inherit; font-weight: 550; }
 .paper-reader-scroll { position: relative; min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; }
 .paper-reader-pages { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 18px 24px 40px; width: max-content; min-width: 100%; }
 .paper-page { position: relative; flex: none; overflow: hidden; border-radius: 2px; background: #fff; box-shadow: 0 1px 2px rgb(20 40 44 / .08), 0 6px 18px rgb(20 40 44 / .06); }
@@ -214,3 +215,70 @@
 .research-library-resume small { display: block; margin-top: 4px; color: var(--muted, #6b6b6b); font-size: 12px; }
 .research-library-progress { grid-column: 1 / -1; height: 4px; border-radius: 99px; background: var(--r-accent-soft); overflow: hidden; }
 .research-library-progress > span { display: block; height: 100%; background: var(--r-accent); }
+
+/* Focus mode: the paper re-typeset as a journal page */
+/* Resolved at the root: the application shell repoints --font-editorial at its sans face. */
+:root { --font-paper: var(--font-editorial); }
+.paper-focus { --f-bg: #e9ebec; --f-sheet: #fff; --f-ink: #17191a; --f-soft: #4b5052; --f-rule: #17191a; --f-link: #145568; --f-mark: #fff3b0;
+  position: fixed; inset: 0; z-index: 80; background: var(--f-bg); color: var(--f-ink); }
+.paper-focus[data-theme="sepia"] { --f-bg: #e7dfcf; --f-sheet: #f8f1e3; --f-ink: #2b2318; --f-soft: #5c4f3d; --f-rule: #2b2318; --f-link: #7a4a12; --f-mark: #f1dc9a; }
+.paper-focus[data-theme="night"] { --f-bg: #0d0f12; --f-sheet: #1a1d24; --f-ink: #e9e6df; --f-soft: #aeb2b8; --f-rule: #e9e6df; --f-link: #8ccfe0; --f-mark: #4a4220; color-scheme: dark; }
+.paper-focus-scroll { position: relative; height: 100%; overflow-y: auto; overscroll-behavior: contain; padding: 56px 16px 96px; }
+.paper-focus-sheet { max-width: 1040px; margin: 0 auto; padding: clamp(28px, 5vw, 64px) clamp(20px, 5vw, 72px) 64px; background: var(--f-sheet); border-radius: 18px; box-shadow: 0 30px 80px rgb(0 0 0 / .14);
+  font-family: var(--font-paper), "Times New Roman", serif; font-size: var(--focus-size, 17px); line-height: 1.55; font-kerning: normal; font-variant-ligatures: common-ligatures; hyphens: auto; }
+.paper-focus-sheet[data-columns="1"] { max-width: 760px; }
+.paper-focus-running { display: flex; justify-content: space-between; gap: 16px; padding-bottom: 6px; border-bottom: 3px double var(--f-rule); font-size: .62em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.paper-focus-masthead h1 { margin: 1.4em auto .5em; max-width: 30ch; font-family: inherit; font-size: 1.55em; font-weight: 700; line-height: 1.2; text-align: center; letter-spacing: -.005em; }
+.paper-focus-authors { margin: 0 0 1.2em; text-align: center; font-size: .9em; }
+.paper-focus-abstract { margin: 0 auto 1em; max-width: 92%; font-size: .86em; line-height: 1.5; text-align: justify; }
+.paper-focus-doi { margin: 0 0 2em; text-align: center; font-size: .72em; }
+.paper-focus-body { column-gap: 2.2em; text-align: justify; }
+.paper-focus-sheet[data-columns="2"] .paper-focus-body { column-count: 2; }
+@media (max-width: 820px) { .paper-focus-sheet[data-columns="2"] .paper-focus-body { column-count: 1; } }
+.paper-focus-paragraph { margin: 0; text-indent: 1.4em; }
+.paper-focus-heading + .paper-focus-paragraph, .paper-focus-equation + .paper-focus-paragraph { text-indent: 0; }
+.paper-focus-paragraph + .paper-focus-paragraph { margin-top: .15em; }
+h2.paper-focus-heading { margin: 1.3em 0 .6em; font-family: inherit; font-size: .78em; font-weight: 700; letter-spacing: .07em; text-align: center; text-transform: uppercase; break-after: avoid; }
+h3.paper-focus-heading { margin: 1em 0 .4em; font-family: inherit; font-size: .9em; font-style: italic; font-weight: 400; break-after: avoid; }
+.paper-focus-equation { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 12px; margin: .8em 0; break-inside: avoid; overflow-x: auto; }
+.paper-focus-equation > span:first-child { text-align: center; }
+.paper-focus-equation .katex-display { margin: 0; }
+.paper-focus-equation-label { font-size: .9em; }
+.paper-focus-figure { margin: 1em 0; break-inside: avoid; text-align: center; }
+.paper-focus-figure-art { max-width: 100%; height: auto; border-radius: 4px; background: #fff; }
+.paper-focus[data-theme="night"] .paper-focus-figure-art { filter: invert(.88) hue-rotate(180deg); }
+.paper-focus-figure figcaption { margin-top: .5em; font-size: .8em; line-height: 1.4; text-align: justify; }
+.paper-focus-table, .paper-focus-code { margin: .8em 0; padding: .8em; overflow-x: auto; border: 1px solid color-mix(in srgb, var(--f-ink) 18%, transparent); border-radius: 6px; font-size: .72em; line-height: 1.45; text-align: left; white-space: pre; break-inside: avoid; }
+.paper-focus-cite button { padding: 0; border: 0; background: none; color: var(--f-link); font: inherit; cursor: pointer; }
+.paper-focus-cite button:hover, .paper-focus-cite button:focus-visible { text-decoration: underline; outline: none; }
+.paper-focus-references { margin-top: 2.4em; padding-top: 1em; border-top: 1px solid color-mix(in srgb, var(--f-ink) 25%, transparent); }
+.paper-focus-references ol { margin: 0; padding-left: 2.2em; column-count: 2; column-gap: 2.2em; font-size: .74em; line-height: 1.45; }
+.paper-focus-references li { break-inside: avoid; margin-bottom: .35em; }
+@media (max-width: 820px) { .paper-focus-references ol { column-count: 1; } }
+.paper-focus [data-chunk].is-flash { background: var(--f-mark); transition: background .3s; }
+.paper-focus-pending { display: grid; justify-items: center; gap: 8px; padding: 48px 16px; font-family: var(--font-app), sans-serif; font-size: 14px; text-align: center; color: var(--f-soft); }
+.paper-focus-pending svg { width: 28px; height: 28px; }
+.paper-focus-pending strong { color: var(--f-ink); font-size: 16px; }
+.paper-focus-pending button { margin-top: 8px; padding: 8px 14px; border: 1px solid currentColor; border-radius: 999px; background: none; color: var(--f-ink); font: inherit; cursor: pointer; }
+.paper-focus-state { padding: 64px 0; text-align: center; color: var(--f-soft); font-family: var(--font-app), sans-serif; }
+.paper-focus-controls { position: fixed; inset: 14px 18px auto; z-index: 2; display: flex; justify-content: space-between; pointer-events: none; }
+.paper-focus-controls > * { pointer-events: auto; }
+.paper-focus-control { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--f-sheet) 88%, transparent); color: var(--f-ink); cursor: pointer; box-shadow: 0 4px 18px rgb(0 0 0 / .12); backdrop-filter: blur(8px); }
+.paper-focus-control svg { width: 18px; height: 18px; }
+.paper-focus-control:focus-visible, .paper-focus-settings button:focus-visible, .paper-focus-reference button:focus-visible, .paper-focus-reference a:focus-visible { outline: 2px solid var(--f-link); outline-offset: 2px; }
+.paper-focus-settings-wrap { position: relative; }
+.paper-focus-settings { position: absolute; right: 0; top: 46px; width: 248px; padding: 12px; border-radius: 14px; background: var(--f-sheet); color: var(--f-ink); box-shadow: 0 18px 48px rgb(0 0 0 / .22); font-family: var(--font-app), sans-serif; font-size: 13px; }
+.paper-focus-settings p { margin: 8px 2px 6px; color: var(--f-soft); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.paper-focus-settings p:first-child { margin-top: 0; }
+.paper-focus-segment { display: flex; align-items: center; gap: 4px; padding: 3px; border-radius: 10px; background: color-mix(in srgb, var(--f-ink) 7%, transparent); }
+.paper-focus-segment button { flex: 1; display: grid; place-items: center; min-height: 30px; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.paper-focus-segment button svg { width: 14px; height: 14px; }
+.paper-focus-segment button[aria-pressed="true"] { background: var(--f-sheet); box-shadow: 0 1px 4px rgb(0 0 0 / .12); font-weight: 600; }
+.paper-focus-segment output { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.paper-focus-reference { position: absolute; z-index: 6; width: min(340px, calc(100vw - 32px)); padding: 14px; border-radius: 14px; background: var(--f-sheet); color: var(--f-ink); box-shadow: 0 18px 48px rgb(0 0 0 / .24); font-family: var(--font-app), sans-serif; font-size: 13px; line-height: 1.45; }
+.paper-focus-reference small { color: var(--f-soft); }
+.paper-focus-reference strong { display: block; margin: 4px 0; }
+.paper-focus-reference p { margin: 0; color: var(--f-soft); font-size: 12px; }
+.paper-focus-reference-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.paper-focus-reference-actions > * { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid color-mix(in srgb, var(--f-ink) 18%, transparent); border-radius: 999px; background: none; color: inherit; font: inherit; font-size: 12px; text-decoration: none; cursor: pointer; }
+.paper-focus-reference-actions svg { width: 12px; height: 12px; }

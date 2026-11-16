@@ -16,6 +16,8 @@ type Props = {
   sections: PaperSection[];
   onPageChange?: (page: number, pageCount: number) => void;
   onAsk?: (selection: PaperSelection) => void;
+  /** Extra toolbar controls, e.g. the Focus mode toggle. */
+  actions?: React.ReactNode;
 };
 
 const MIN_SCALE = 0.6;
@@ -25,7 +27,7 @@ const RENDER_MARGIN = 1200;
 
 type PdfModule = typeof import("pdfjs-dist");
 let pdfjs: Promise<PdfModule> | null = null;
-function loadPdfjs(): Promise<PdfModule> {
+export function loadPdfjs(): Promise<PdfModule> {
   pdfjs ??= import("pdfjs-dist").then((module) => {
     module.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
     return module;
@@ -65,7 +67,7 @@ function PdfPage({ doc, number, scale, width, height, visible, lib }: { doc: PDF
   </div>;
 }
 
-export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperReader({ resourceId, title, initialPage = 1, sections, onPageChange, onAsk }, ref) {
+export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperReader({ resourceId, title, initialPage = 1, sections, onPageChange, onAsk, actions }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lib, setLib] = useState<PdfModule | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -181,6 +183,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
         <button type="button" aria-label="Zoom in" onClick={() => setScale((value) => Math.min(MAX_SCALE, value * 1.15))}><Plus aria-hidden="true" /></button>
         <button type="button" aria-label="Fit to width" title="Fit to width" onClick={fitWidth}><ScanLine aria-hidden="true" /></button>
       </div>
+      {actions}
     </div>
     <div ref={scrollRef} className="paper-reader-scroll" data-lenis-prevent onScroll={measure} onPointerUp={onPointerUp} onWheel={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
       {state === "loading" ? <div className="paper-reader-state" role="status">Opening the paper…</div> : null}
