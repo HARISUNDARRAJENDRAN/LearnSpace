@@ -1,0 +1,23 @@
+{
+  "name": "@learnspace/pdf-parser",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build:native": "cargo build --release --target x86_64-unknown-linux-gnu --manifest-path native/Cargo.toml && cp native/target/x86_64-unknown-linux-gnu/release/liblearnspace_pdf_parser.so native/learnspace_pdf_parser.linux-x64-gnu.node",
+    "build": "pnpm build:native && tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test dist/index.test.js"
+  }
+}

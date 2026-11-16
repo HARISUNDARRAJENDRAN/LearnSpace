@@ -1,0 +1,3 @@
+native/*.node
+native/target
+node_modules
