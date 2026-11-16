@@ -30,3 +30,6 @@ export const researchPaperSchema = z.object({
 export type ResearchPaper = z.infer<typeof researchPaperSchema>;
 
 export const researchAuthorFollowRequestSchema = z.object({ follow: z.boolean() }).strict();
+/** The full set of topics a reader wants their Research feed to follow. */
+export const researchTopicsRequestSchema = z.object({ conceptIds: z.array(z.string().uuid()).max(20) }).strict()
+  .refine((value) => new Set(value.conceptIds).size === value.conceptIds.length, "Each topic is listed once.");

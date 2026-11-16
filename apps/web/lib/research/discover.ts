@@ -3,6 +3,7 @@ import { concepts, paperDetails, resources, userResourceProgress, userSettings }
 import type { CurriculumItem, CurriculumTrack } from "@learnspace/shared";
 import { onboardingDraftSchema } from "@learnspace/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { researchTopicIds } from "./service";
 import { computeResearchTrackState, curriculumItemTitle, getResearchTrack, listResearchTracks, type CurriculumItemStatus, type LearnerProfile, type PaperProgress } from "./curriculum";
 
 export type DiscoverItem = { item: CurriculumItem; status: CurriculumItemStatus; progressPct: number; resourceId: string | null; recommended: boolean; waitingOn: string[] };
@@ -29,8 +30,9 @@ const curriculumArxivIds = () => [...new Set(listResearchTracks().flatMap((track
 async function learnerState(userId: string) {
   return withUserTransaction(userId, async (tx) => {
     const ids = curriculumArxivIds();
-    const [settings, rows] = await Promise.all([
+    const [settings, topicIds, rows] = await Promise.all([
       tx.select({ learningPreferences: userSettings.learningPreferences }).from(userSettings).where(eq(userSettings.userId, userId)).limit(1),
+      researchTopicIds(tx, userId),
       ids.length ? tx.select({ arxivId: paperDetails.arxivId, resourceId: resources.id, status: userResourceProgress.status, progressPct: userResourceProgress.progressPct, lastOpenedAt: userResourceProgress.lastOpenedAt })
         .from(paperDetails)
         .innerJoin(resources, eq(resources.id, paperDetails.resourceId))
@@ -38,8 +40,7 @@ async function learnerState(userId: string) {
         .where(and(inArray(paperDetails.arxivId, ids), isNull(resources.deletedAt), or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])))) : Promise.resolve([]),
     ]);
     const draft = onboardingDraftSchema.safeParse(settings[0]?.learningPreferences ?? {});
-    const conceptIds = draft.success ? draft.data.conceptIds ?? [] : [];
-    const interestRows = conceptIds.length ? await tx.select({ name: concepts.name }).from(concepts).where(inArray(concepts.id, conceptIds)) : [];
+    const interestRows = topicIds.length ? await tx.select({ name: concepts.name }).from(concepts).where(inArray(concepts.id, topicIds)) : [];
     const level = draft.success ? draft.data.selfReportedLevel : undefined;
     const profile: LearnerProfile = { selfReportedLevel: level === "beginner" || level === "advanced" ? level : "intermediate", interests: interestRows.map(({ name }) => name) };
     const progress = new Map<string, PaperProgress>();

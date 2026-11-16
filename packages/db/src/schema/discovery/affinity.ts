@@ -40,6 +40,17 @@ export const favoriteAuthors = discoverySchema.table(
   ],
 );
 
+/** The topics a reader picked for their Research feed, kept apart from the interests that steer Learn. */
+export const researchTopics = discoverySchema.table(
+  "research_topics",
+  {
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "cascade" }),
+    addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.conceptId] })],
+);
+
 export const resourceQualitySnapshots = discoverySchema.table(
   "resource_quality_snapshots",
   {

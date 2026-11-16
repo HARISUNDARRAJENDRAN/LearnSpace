@@ -131,7 +131,7 @@
 .research-rail-papers { display: grid; gap: 14px; }
 .research-rail-papers .research-mini-paper { grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .research-rail-papers .research-mini-title { display: -webkit-box; font-size: 12.5px; font-weight: 600; line-height: 1.35; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-.research-rail-more { color: var(--r-muted); font-size: 12px; text-decoration: none; }
+.research-rail-more { padding: 0; border: 0; background: none; color: var(--r-muted); cursor: pointer; font: inherit; font-size: 12px; text-decoration: none; }
 .research-rail-more:hover { color: var(--r-accent); }
 .research-author-list { display: grid; gap: 10px; }
 .research-author-person { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 8px; }
@@ -372,3 +372,50 @@ h3.paper-focus-heading { margin: 1em 0 .4em; font-family: inherit; font-size: .9
 }
 .discover-assumes a { color: var(--r-accent); font-weight: 600; text-decoration: none; }
 .discover-assumes a:hover { text-decoration: underline; }
+
+/* Refine recommendations: the reader's topics and the authors they follow. */
+.research-add { display: inline-grid; width: 26px; height: 26px; flex: none; place-items: center; padding: 0; border: 1px solid var(--r-line); border-radius: 999px; background: #fff; color: var(--r-sub); cursor: pointer; }
+.research-add:hover { border-color: var(--r-accent); color: var(--r-accent); }
+.research-add svg { width: 14px; height: 14px; }
+.research-refine-pill { min-height: 36px; flex: 0 1 260px; padding: 0 20px; border: 0; border-radius: 12px; background: var(--r-soft); color: var(--r-ink); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.research-refine-pill:hover { background: #eaeeee; }
+.research-refine { width: min(520px, calc(100vw - 32px)); max-height: min(86vh, 640px); padding: 0; border: 0; border-radius: 18px; background: #fff; box-shadow: 0 24px 64px rgb(0 0 0 / 24%); color: var(--r-ink); font-size: 13px; line-height: 1.5; }
+.research-refine[open] { display: flex; flex-direction: column; }
+.research-refine::backdrop { background: rgb(0 0 0 / 40%); }
+.research-refine :where(h2, h3, p, ul) { margin: 0; }
+.research-refine ul { padding: 0; list-style: none; }
+.research-refine-head { display: flex; align-items: center; justify-content: space-between; padding: 20px 22px 8px; }
+.research-refine-head h2 { font-size: 17px; font-weight: 650; letter-spacing: -.015em; }
+.research-refine-close { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 999px; background: none; color: var(--r-muted); cursor: pointer; }
+.research-refine-close:hover { background: var(--r-soft); color: var(--r-ink); }
+.research-refine-close svg { width: 16px; height: 16px; }
+.research-refine-tabs { display: flex; gap: 18px; padding: 0 22px; border-bottom: 1px solid var(--r-line); }
+.research-refine-tabs button { padding: 10px 0; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--r-muted); cursor: pointer; font: inherit; font-weight: 500; }
+.research-refine-tabs button[aria-selected="true"] { border-bottom-color: var(--r-ink); color: var(--r-ink); }
+.research-refine-body { display: flex; min-height: 240px; flex: 1; flex-direction: column; gap: 12px; padding: 16px 22px 20px; overflow-y: auto; }
+.research-refine-body h3 { margin-top: 4px; color: var(--r-muted); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.research-refine-note { color: var(--r-muted); }
+.research-refine-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.research-refine-chips li { display: inline-flex; min-height: 30px; align-items: center; gap: 4px; padding: 0 6px 0 12px; border-radius: 999px; background: var(--r-accent-soft); color: var(--r-accent); font-weight: 500; }
+.research-refine-chips button { display: grid; width: 20px; height: 20px; place-items: center; padding: 0; border: 0; border-radius: 999px; background: none; color: inherit; cursor: pointer; }
+.research-refine-chips button:hover { background: rgb(20 85 104 / 12%); }
+.research-refine-chips svg { width: 12px; height: 12px; }
+.research-refine-search { display: flex; min-height: 38px; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--r-line); border-radius: 10px; color: var(--r-muted); }
+.research-refine-search:focus-within { border-color: var(--r-accent); }
+.research-refine-search svg { width: 15px; height: 15px; flex: none; }
+.research-refine-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: none; color: var(--r-ink); font: inherit; }
+.research-refine-results { display: flex; flex-wrap: wrap; gap: 6px; }
+.research-refine-results button { display: inline-flex; min-height: 28px; align-items: center; gap: 4px; padding: 0 12px 0 8px; border: 1px solid var(--r-line); border-radius: 999px; background: #fff; color: var(--r-sub); cursor: pointer; font: inherit; font-size: 12px; }
+.research-refine-results button:hover { border-color: var(--r-accent); color: var(--r-accent); }
+.research-refine-results svg { width: 12px; height: 12px; }
+.research-refine-authors { display: flex; flex-direction: column; gap: 10px; }
+.research-refine-author { display: flex; align-items: center; gap: 10px; }
+.research-refine-author > span:not(.research-avatar) { display: flex; min-width: 0; flex: 1; flex-direction: column; }
+.research-refine-author strong { overflow: hidden; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.research-refine-author small { color: var(--r-muted); font-size: 11.5px; }
+.research-refine-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 22px; border-top: 1px solid var(--r-line); }
+.research-refine-foot p { margin-right: auto; color: #b42318; font-size: 12px; }
+.research-refine-foot button { min-height: 34px; padding: 0 16px; border: 0; border-radius: 999px; cursor: pointer; font: inherit; font-weight: 600; }
+.research-refine-secondary { background: var(--r-soft); color: var(--r-ink); }
+.research-refine-primary { background: var(--r-ink); color: #fff; }
+.research-refine-primary:disabled { opacity: .4; cursor: default; }

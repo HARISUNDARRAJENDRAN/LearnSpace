@@ -7,6 +7,7 @@ import {
   libraryItems,
   paperAuthors,
   paperDetails,
+  researchTopics,
   resourceConcepts,
   resources,
   concepts,
@@ -108,13 +109,12 @@ export async function getResearchPage(userId: string, query = "", options: { tab
   return withUserTransaction(userId, async (tx) => {
     const normalizedQuery = query.trim().slice(0, 160);
     const tab = options.tab === "following" || options.tab === "foundational" ? options.tab : "for-you";
-    const [settings, follows] = await Promise.all([
-      tx.select({ learningPreferences: userSettings.learningPreferences }).from(userSettings).where(eq(userSettings.userId, userId)).limit(1),
+    const [topicIds, follows] = await Promise.all([
+      researchTopicIds(tx, userId),
       tx.select({ authorId: favoriteAuthors.authorId, followedAt: favoriteAuthors.followedAt }).from(favoriteAuthors).where(eq(favoriteAuthors.userId, userId)).orderBy(desc(favoriteAuthors.followedAt)),
     ]);
-    const draft = onboardingDraftSchema.safeParse(settings[0]?.learningPreferences ?? {});
-    const topicIds = draft.success ? draft.data.conceptIds ?? [] : [];
-    const selectedTopics = topicIds.length ? await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(inArray(concepts.id, topicIds)).orderBy(asc(concepts.name)) : [];
+    const topicRows = topicIds.length ? await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(inArray(concepts.id, topicIds)) : [];
+    const selectedTopics = topicIds.flatMap((id) => topicRows.filter((topic) => topic.id === id));
     const topicId = selectedTopics.some((topic) => topic.id === options.topicId) ? options.topicId! : null;
     const queryFilter = normalizedQuery.length > 0
       ? or(ilike(resources.title, `%${normalizedQuery}%`), ilike(resources.description, `%${normalizedQuery}%`), ilike(paperDetails.abstract, `%${normalizedQuery}%`))
@@ -195,6 +195,28 @@ export async function getResearchPage(userId: string, query = "", options: { tab
       favoriteAuthors: favoriteAuthorsList,
       suggestedAuthors,
     };
+  });
+}
+
+/** The reader's Research topics; until they refine them, the interests they chose at onboarding. */
+export async function researchTopicIds(tx: Transaction, userId: string): Promise<string[]> {
+  const chosen = await tx.select({ conceptId: researchTopics.conceptId }).from(researchTopics).where(eq(researchTopics.userId, userId)).orderBy(asc(researchTopics.addedAt));
+  if (chosen.length) return chosen.map(({ conceptId }) => conceptId);
+  const [settings] = await tx.select({ learningPreferences: userSettings.learningPreferences }).from(userSettings).where(eq(userSettings.userId, userId)).limit(1);
+  const draft = onboardingDraftSchema.safeParse(settings?.learningPreferences ?? {});
+  return draft.success ? draft.data.conceptIds ?? [] : [];
+}
+
+/** Replaces the reader's Research topics with `conceptIds`, all of which must be active catalogue concepts. */
+export async function setResearchTopics(userId: string, conceptIds: string[]) {
+  return withUserTransaction(userId, async (tx) => {
+    const found = conceptIds.length ? await tx.select({ id: concepts.id, name: concepts.name }).from(concepts).where(and(inArray(concepts.id, conceptIds), eq(concepts.status, "active"))) : [];
+    if (found.length !== conceptIds.length) throw new AuthError("RESEARCH_TOPIC_NOT_FOUND", "One of those topics is not in the catalogue.", 400);
+    await tx.delete(researchTopics).where(eq(researchTopics.userId, userId));
+    // Insertion order is the order the reader sees their topics in.
+    const start = Date.now();
+    if (conceptIds.length) await tx.insert(researchTopics).values(conceptIds.map((conceptId, at) => ({ userId, conceptId, addedAt: new Date(start + at) })));
+    return { topics: conceptIds.map((id) => found.find((topic) => topic.id === id)!) };
   });
 }
 

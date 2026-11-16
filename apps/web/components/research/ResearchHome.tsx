@@ -1,9 +1,11 @@
+import { Plus } from "lucide-react";
 import Link from "next/link";
 import type { ResearchAuthorSummary } from "@learnspace/shared";
 import type { ResearchPageData } from "../../lib/research/service";
 import { AuthorAvatar, ResearchAuthorList } from "./ResearchAuthor";
 import { ResearchCarousel } from "./ResearchCarousel";
 import { ResearchPaperMini, ResearchPaperRow } from "./ResearchPaperRow";
+import { type RefineData, RefineRecommendations } from "./RefineRecommendations";
 
 function feedHref(tab: string, topicId: string | null) {
   const params = new URLSearchParams();
@@ -27,6 +29,7 @@ function Tab({ href, active, children }: { href: string; active: boolean; childr
 
 export function ResearchHome({ data }: { data: ResearchPageData }) {
   const favorites = data.favoriteAuthors;
+  const refine: RefineData = { topics: data.topics, followed: favorites.filter(({ source }) => source === "followed"), suggested: data.suggestedAuthors };
   const following = data.tab === "following" && !data.topicId;
   const emptyFeed = following
     ? { title: "Nobody followed yet", body: "Follow authors from the suggestions and their papers collect here." }
@@ -41,7 +44,7 @@ export function ResearchHome({ data }: { data: ResearchPageData }) {
           : <p className="research-recent-saved is-empty">Bookmark a paper and it shows up here.</p>}
       </section>
       <section className="research-top-card research-favorites-card" aria-labelledby="research-favorites-heading">
-        <div className="research-top-heading"><h2 id="research-favorites-heading">Favorite authors</h2></div>
+        <div className="research-top-heading"><h2 id="research-favorites-heading">Favorite authors</h2><RefineRecommendations data={refine} view="authors" className="research-add" label="Follow authors"><Plus aria-hidden="true" /></RefineRecommendations></div>
         {favorites.length
           ? <ResearchCarousel label="favorite authors" className="research-author-carousel">{favorites.map((author) => <FavoriteAuthor author={author} key={author.authorId} />)}</ResearchCarousel>
           : <p className="research-empty-inline">Follow authors, or read and save a few papers. The people you keep coming back to appear here.</p>}
@@ -55,6 +58,8 @@ export function ResearchHome({ data }: { data: ResearchPageData }) {
         <Tab href={feedHref("foundational", null)} active={data.tab === "foundational" && !data.topicId}>Foundational</Tab>
         {data.topics.map((topic) => <Tab key={topic.id} href={feedHref("for-you", topic.id)} active={data.topicId === topic.id}>{topic.name}</Tab>)}
       </ResearchCarousel>
+      <RefineRecommendations data={refine} view="topics" className="research-add" label="Add topics"><Plus aria-hidden="true" /></RefineRecommendations>
+      <RefineRecommendations data={refine} view="topics" className="research-refine-pill" label="Refine recommendations">Refine recommendations</RefineRecommendations>
     </nav>
 
     <div className="research-content-grid">
@@ -73,6 +78,7 @@ export function ResearchHome({ data }: { data: ResearchPageData }) {
         <section className="research-rail-section" aria-labelledby="research-follow-heading">
           <h2 id="research-follow-heading">Authors to follow</h2>
           <ResearchAuthorList authors={data.suggestedAuthors.slice(0, 3)} empty="Suggestions appear once papers in your topics are catalogued." />
+          {data.suggestedAuthors.length > 3 ? <RefineRecommendations data={refine} view="authors" className="research-rail-more" label="See more suggestions">See more suggestions</RefineRecommendations> : null}
         </section>
       </aside>
     </div>
