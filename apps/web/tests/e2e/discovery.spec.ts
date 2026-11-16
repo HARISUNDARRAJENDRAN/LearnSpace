@@ -228,11 +228,17 @@ test("the last onboarding step plans a first session onto the calendar", async (
   await page.goto("/app");
   const calendar = page.getByRole("region", { name: "Study plan" });
   await expect(calendar.getByRole("button", { name: /Watch / }).first()).toHaveClass(/kind-watch/);
-  // The goal's to-dos are all-day items the learner ticks off on the calendar.
+  // The goal's to-dos are all-day items the learner ticks off on the calendar. A tick is checked against recorded
+  // study, so before any study it does not stick, and the learner is told why.
   const todo = calendar.getByRole("button", { name: /^Done: / }).first();
   await expect(todo).toHaveAttribute("aria-pressed", "false");
-  await todo.click();
-  await expect(todo).toHaveAttribute("aria-pressed", "true");
+  const [tick] = await Promise.all([
+    page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.startsWith("/api/v1/plan/")),
+    todo.click(),
+  ]);
+  expect(((await tick.json()) as { tick: { verified: boolean } }).tick.verified).toBe(false);
+  await expect(calendar.getByRole("status")).toContainText("isn't done yet");
+  await expect(todo).toHaveAttribute("aria-pressed", "false");
 });
 
 test("completed learner reaches Home and can use the app navigation", async ({ page }) => {
