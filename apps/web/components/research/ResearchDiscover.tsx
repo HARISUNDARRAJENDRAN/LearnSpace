@@ -2,7 +2,7 @@ import type { CurriculumItem } from "@learnspace/shared";
 import { ArrowRight, ArrowUpRight, Check, Clock, FileText, Lightbulb, Lock, Sparkles } from "lucide-react";
 import Link from "next/link";
 import type { DiscoverItem, DiscoverTrackSummary, ResearchDiscoverData, ResearchTrackPageData } from "../../lib/research/discover";
-import { StartStudyButton } from "../study/StudyActions";
+import { StartCollectionButton, StartStudyButton } from "../study/StudyActions";
 
 const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 const trackHref = (id: string) => `/app/research/discover/${id}`;
@@ -99,7 +99,8 @@ export function ResearchTrack({ data }: { data: ResearchTrackPageData }) {
         <TrackMeta summary={summary} />
         <Progress value={summary.progressPct} label={`${track.title} progress`} />
         <small className="discover-progress-label">{summary.progressPct}% of required papers read</small>
-        {next?.resourceId ? <StartStudyButton className="discover-cta" resourceId={next.resourceId} origin="research" label={`${summary.started ? "Continue" : "Start"} with ${next.item.title}`} /> : null}
+        {data.course ? <StartCollectionButton className="discover-cta" endpoint={`/api/v1/research/tracks/${encodeURIComponent(track.id)}/start`} label={`${summary.started ? "Continue" : "Start"} this path`} />
+          : next?.resourceId ? <StartStudyButton className="discover-cta" resourceId={next.resourceId} origin="research" label={`${summary.started ? "Continue" : "Start"} with ${next.item.title}`} /> : null}
       </div>
       <div className="discover-track-goals">
         <p className="discover-label">You will be able to</p>

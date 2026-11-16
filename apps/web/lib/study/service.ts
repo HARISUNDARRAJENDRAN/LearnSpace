@@ -101,7 +101,7 @@ type JoinedBinding = {
   resource: ResourceRecord;
 };
 
-type CourseLesson = { itemId: string; sectionId: string; sectionTitle: string; resourceId: string; title: string; youtubeId: string | null; channelTitle: string | null };
+type CourseLesson = { itemId: string; sectionId: string; sectionTitle: string; resourceId: string; title: string; type: "video" | "paper"; youtubeId: string | null; channelTitle: string | null; abstract: string | null };
 
 /** An imported course keeps its collection on the session, so the canvas and the lesson lock can find it. */
 function courseOf(session: SessionRow): { collectionId: string; slug: string | null } | null {
@@ -146,15 +146,20 @@ function parsedWorkspace(value: Record<string, unknown>): StudyWorkspace {
 /** A course's playable lessons in study order; a video listed in two sections is studied once, and optional units are left out. */
 async function loadCourseLessons(tx: Transaction, collectionId: string): Promise<CourseLesson[]> {
   const rows = await tx
-    .select({ itemId: collectionItems.id, sectionId: collectionSections.id, sectionTitle: collectionSections.title, resourceId: resources.id, title: resources.title, youtubeId: videoDetails.youtubeId, channelTitle: videoDetails.channelTitle })
+    .select({ itemId: collectionItems.id, sectionId: collectionSections.id, sectionTitle: collectionSections.title, resourceId: resources.id, title: resources.title, type: resources.type, youtubeId: videoDetails.youtubeId, channelTitle: videoDetails.channelTitle, abstract: paperDetails.abstract })
     .from(collectionItems)
     .innerJoin(collectionSections, eq(collectionSections.id, collectionItems.sectionId))
     .innerJoin(resources, eq(resources.id, collectionItems.resourceId))
     .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
-    .where(and(eq(collectionSections.collectionId, collectionId), eq(collectionItems.required, true), eq(resources.type, "video"), eq(resources.status, "ready"), isNull(resources.deletedAt)))
+    .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+    // A video plays once it is ingested; a paper reads from its PDF while its text is still being parsed.
+    .where(and(eq(collectionSections.collectionId, collectionId), eq(collectionItems.required, true), isNull(resources.deletedAt), or(
+      and(eq(resources.type, "video"), eq(resources.status, "ready")),
+      and(eq(resources.type, "paper"), inArray(resources.status, ["pending", "processing", "ready"])),
+    )))
     .orderBy(asc(collectionSections.position), asc(collectionItems.position));
   const seen = new Set<string>();
-  return rows.filter((row) => !seen.has(row.resourceId) && Boolean(seen.add(row.resourceId)));
+  return rows.flatMap((row) => !seen.has(row.resourceId) && seen.add(row.resourceId) && (row.type === "video" || row.type === "paper") ? [{ ...row, type: row.type }] : []);
 }
 
 async function completedResourceIds(tx: Transaction, userId: string, resourceIds: string[]): Promise<Set<string>> {
@@ -848,6 +853,13 @@ async function courseView(tx: Transaction, userId: string, session: SessionRow):
     ? await tx.select().from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), inArray(userResourceProgress.resourceId, lessons.map((lesson) => lesson.resourceId))))
     : [];
   const progressByResource = new Map(progressRows.map((row) => [row.resourceId, row]));
+  const paperIds = lessons.flatMap((lesson) => (lesson.type === "paper" ? [lesson.resourceId] : []));
+  const authorRows = paperIds.length ? await tx.select({ resourceId: paperAuthors.paperResourceId, name: authors.preferredName }).from(paperAuthors).innerJoin(authors, eq(authors.id, paperAuthors.authorId)).where(inArray(paperAuthors.paperResourceId, paperIds)).orderBy(asc(paperAuthors.ordinal)) : [];
+  const byline = (lesson: CourseLesson) => {
+    if (lesson.type === "video") return lesson.channelTitle;
+    const names = authorRows.filter((row) => row.resourceId === lesson.resourceId).map(({ name }) => name);
+    return names.length ? `${names.slice(0, 3).join(", ")}${names.length > 3 ? " et al." : ""}` : null;
+  };
   const sections: StudySessionCourse["sections"] = [];
   for (const lesson of lessons) {
     const progress = progressByResource.get(lesson.resourceId);
@@ -857,7 +869,7 @@ async function courseView(tx: Transaction, userId: string, session: SessionRow):
       section = { id: lesson.sectionId, title: lesson.sectionTitle, lessons: [] };
       sections.push(section);
     }
-    section.lessons.push({ resourceId: lesson.resourceId, title: lesson.title, youtubeId: lesson.youtubeId, channelTitle: lesson.channelTitle, state, progressPct: Number(progress?.progressPct ?? 0) });
+    section.lessons.push({ resourceId: lesson.resourceId, title: lesson.title, type: lesson.type, youtubeId: lesson.youtubeId, byline: byline(lesson), summary: lesson.abstract, state, progressPct: Number(progress?.progressPct ?? 0) });
   }
   return { collectionId: course.collectionId, slug: course.slug, title: session.title ?? "Course", sections };
 }
@@ -1206,6 +1218,15 @@ export async function startCollection(userId: string, collectionId: string, idem
   return response;
 }
 
+/** Starts the public learning path identified by its curriculum track ID. */
+export async function startResearchTrack(userId: string, trackId: string, idempotencyKey: string): Promise<StartStudySessionResponse> {
+  const slug = `research-track-${trackId}`;
+  const [collection] = await withUserTransaction(userId, (tx) => tx.select({ id: collections.id }).from(collections)
+    .where(and(eq(collections.slug, slug), eq(collections.kind, "learning_path"), isNull(collections.ownerUserId), eq(collections.visibility, "public"))).limit(1));
+  if (!collection) throw new AuthError("TRACK_NOT_AVAILABLE", "This research track is not available yet.", 404);
+  return startCollection(userId, collection.id, idempotencyKey);
+}
+
 async function startCollectionInTransaction(tx: Transaction, userId: string, normalizedCollectionId: string, idempotencyKey: string): Promise<StartStudySessionResponse> {
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.collection.start:${userId}:${normalizedCollectionId}`}, 0))`);
   const collectionRows = await tx
@@ -1219,7 +1240,9 @@ async function startCollectionInTransaction(tx: Transaction, userId: string, nor
   const reopened = await reopenedSession(tx, userId, await findCourseSession(tx, userId, normalizedCollectionId));
   if (reopened) return reopened;
   const lessons = await loadCourseLessons(tx, normalizedCollectionId);
-  if (lessons.length > 0) return createCourseSession(tx, userId, collection, lessons);
+  if (lessons.length > 0 && (collection.kind === "curated" || collection.kind === "learning_path" || lessons.some((lesson) => lesson.type === "video"))) {
+    return createCourseSession(tx, userId, collection, lessons);
+  }
   // A collection with no videos (papers only) keeps the single-material session.
   const items = await tx
     .select({ item: collectionItems, sectionPosition: collectionSections.position, resource: resources })

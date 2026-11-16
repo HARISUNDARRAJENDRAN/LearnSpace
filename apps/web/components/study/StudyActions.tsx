@@ -70,17 +70,18 @@ export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", cl
   return <button className={className} type="button" onClick={() => void toggle()} disabled={loading}>{label}</button>;
 }
 
-export function StartCollectionButton({ collectionId, label }: { collectionId: string; label: string }) {
+/** Starts or reopens a collection as one course session; `endpoint` is the start route (a library collection or a research track). */
+export function StartCollectionButton({ endpoint, label, className }: { endpoint: string; label: string; className?: string }) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   async function start() {
     setState("loading");
     try {
-      const response = await fetch(`/api/v1/library/collections/${collectionId}/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) });
+      const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) });
       router.push(await startedRoute(response));
     } catch {
       setState("error");
     }
   }
-  return <button type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
+  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }

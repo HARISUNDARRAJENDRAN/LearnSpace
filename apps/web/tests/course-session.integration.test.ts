@@ -22,6 +22,11 @@ test("A Discover course imports as a session of its own whose lessons unlock in 
   const queuedSlug = `course-${randomUUID()}`;
   const queuedCollectionId = randomUUID();
   const queuedSectionId = randomUUID();
+  const trackCollectionId = randomUUID();
+  const trackSectionId = randomUUID();
+  const trackResourceIds = [randomUUID(), randomUUID()];
+  const trackAuthorId = randomUUID();
+  const trackId = `track-${randomUUID()}`;
   const sectionIds = [randomUUID(), randomUUID()];
   const videoIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const youtubeIds = videoIds.map(() => `c${randomUUID().replaceAll("-", "").slice(0, 10)}`);
@@ -123,9 +128,77 @@ test("A Discover course imports as a session of its own whose lessons unlock in 
     const detail = await library.getCollectionDetail(learner.id, collectionId);
     assert.equal(detail.status, "completed");
     assert.deepEqual(detail.sections.flatMap((section) => section.items.map((item) => [item.completed, item.youtubeId])), youtubeIds.slice(0, 3).map((id) => [true, id]));
+
+    const paperIds = [`paper-${randomUUID()}`, `paper-${randomUUID()}`];
+    await migrator`
+      INSERT INTO catalog.resources (id, owner_user_id, type, provider, external_id, canonical_url, title, description, visibility, status)
+      VALUES
+        (${trackResourceIds[0] ?? ""}, NULL, 'paper', 'arxiv', ${paperIds[0] ?? ""}, ${`https://arxiv.org/abs/${paperIds[0]}`}, 'Track paper one', 'First abstract.', 'public', 'ready'),
+        (${trackResourceIds[1] ?? ""}, NULL, 'paper', 'arxiv', ${paperIds[1] ?? ""}, ${`https://arxiv.org/abs/${paperIds[1]}`}, 'Track paper two', 'Second abstract.', 'public', 'ready')
+    `;
+    await migrator`
+      INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, pdf_source_url)
+      VALUES (${trackResourceIds[0] ?? ""}, ${paperIds[0] ?? ""}, 'First abstract.', 'arXiv', ${`https://arxiv.org/pdf/${paperIds[0]}`}),
+        (${trackResourceIds[1] ?? ""}, ${paperIds[1] ?? ""}, 'Second abstract.', 'arXiv', ${`https://arxiv.org/pdf/${paperIds[1]}`})
+    `;
+    await migrator`INSERT INTO catalog.authors (id, normalized_name, preferred_name) VALUES (${trackAuthorId}, 'tracktestauthor', 'Track Test Author')`;
+    await migrator`INSERT INTO catalog.paper_authors (paper_resource_id, author_id, ordinal) VALUES (${trackResourceIds[0] ?? ""}, ${trackAuthorId}, 0), (${trackResourceIds[1] ?? ""}, ${trackAuthorId}, 0)`;
+    await migrator`INSERT INTO catalog.collections (id, kind, slug, visibility, title) VALUES (${trackCollectionId}, 'learning_path', ${`research-track-${trackId}`}, 'public', 'Paper track')`;
+    await migrator`INSERT INTO catalog.collection_sections (id, collection_id, title, position, metadata) VALUES (${trackSectionId}, ${trackCollectionId}, 'Paper module', 0, '{"concepts":[]}'::jsonb)`;
+    await migrator`INSERT INTO catalog.collection_items (section_id, resource_id, position, required) VALUES (${trackSectionId}, ${trackResourceIds[0] ?? ""}, 0, true), (${trackSectionId}, ${trackResourceIds[1] ?? ""}, 1, true)`;
+    const trackSession = await study.startResearchTrack(learner.id, trackId, randomUUID());
+    assert.equal(trackSession.resourceType, "paper");
+    assert.equal(trackSession.route, `/app/study/paper/${trackSession.sessionId}`);
+    assert.equal((await study.startResearchTrack(learner.id, trackId, randomUUID())).sessionId, trackSession.sessionId);
+    assert.equal((await openSessions()).find((session) => session.id === trackSession.sessionId)?.isCourse, true);
+    const paperCourse = await study.getStudySession(learner.id, trackSession.sessionId);
+    assert.deepEqual(paperCourse.course?.sections[0]?.lessons.map((lesson) => [lesson.type, lesson.byline, lesson.summary, lesson.state]), [
+      ["paper", "Track Test Author", "First abstract.", "current"],
+      ["paper", "Track Test Author", "Second abstract.", "locked"],
+    ]);
+    await study.updateStudyProgress(learner.id, trackSession.sessionId, {
+      resourceId: trackResourceIds[0] ?? "", progressPct: 100, anchor: { kind: "paper", page: 1 }, event: "complete", idempotencyKey: randomUUID(),
+    });
+    assert.equal((await study.getStudySession(learner.id, trackSession.sessionId)).activeResourceId, trackResourceIds[1]);
   } finally {
-    await migrator`DELETE FROM identity.users WHERE id = ${learner.id}`.catch(() => undefined);
-    await migrator.end();
-    await closeDb();
+    try {
+      await migrator`DELETE FROM knowledge.artifact_details WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM knowledge.mastery_signals WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM knowledge.unresolved_questions WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM agent.agent_runs WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM practice.coding_attempts WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM retrieval.retrieval_runs WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.focus_sessions WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.mastery_checks WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.schedule_items WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.session_transcript WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.tutor_threads WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM projection.session_summary WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM activity.activity_events WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
+      await migrator`DELETE FROM study.study_sessions WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM catalog.collection_enrollments WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM catalog.library_items WHERE user_id = ${learner.id}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${learner.id}`;
+
+      await migrator`DELETE FROM catalog.collection_items WHERE section_id IN (${sectionIds[0] ?? ""}, ${sectionIds[1] ?? ""}, ${queuedSectionId}, ${trackSectionId})`;
+      await migrator`DELETE FROM catalog.collection_sections WHERE id IN (${sectionIds[0] ?? ""}, ${sectionIds[1] ?? ""}, ${queuedSectionId}, ${trackSectionId})`;
+      await migrator`DELETE FROM catalog.collections WHERE id IN (${collectionId}, ${queuedCollectionId}, ${trackCollectionId})`;
+      await migrator`DELETE FROM catalog.paper_authors WHERE paper_resource_id IN (${trackResourceIds[0] ?? ""}, ${trackResourceIds[1] ?? ""})`;
+      await migrator`DELETE FROM catalog.paper_details WHERE resource_id IN (${trackResourceIds[0] ?? ""}, ${trackResourceIds[1] ?? ""})`;
+      await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (${videoIds[0] ?? ""}, ${videoIds[1] ?? ""}, ${videoIds[2] ?? ""}, ${videoIds[3] ?? ""})`;
+      await migrator`DELETE FROM catalog.resources WHERE id IN (${trackResourceIds[0] ?? ""}, ${trackResourceIds[1] ?? ""}, ${videoIds[0] ?? ""}, ${videoIds[1] ?? ""}, ${videoIds[2] ?? ""}, ${videoIds[3] ?? ""})`;
+      await migrator`DELETE FROM catalog.authors WHERE id = ${trackAuthorId}`;
+    } finally {
+      await migrator.end();
+      await closeDb();
+    }
   }
 });

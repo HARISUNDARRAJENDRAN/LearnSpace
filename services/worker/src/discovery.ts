@@ -12,6 +12,7 @@ import { recommendationMaintenance, recommendationUpkeep } from "./recommendatio
 import { embeddingProvider } from "./embeddings.js";
 import { transcriptUpkeep } from "./transcripts.js";
 import { purgeExpiredYoutubeStatistics, refreshYoutubeMetrics } from "./youtube-metrics.js";
+import { fetchCatalogPapers, upsertCatalogPaper } from "./paper-catalog.js";
 import {
   DISCOVERY_LEARNING_FORMATS,
   canonicalYoutubeUrl,
@@ -599,6 +600,9 @@ async function validConceptIds(tx: TransactionSql, ids: string[]): Promise<strin
 async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch): Promise<{ videos: number; papers: number; resourceIds: string[] }> {
   const userId = stringValue(job.payload.audit_user_id);
   const sourcePickerRunId = stringValue(job.payload.source_picker_run_id);
+  const requestedConceptId = stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0];
+  const proposals = batch.arxiv.filter((candidate) => !requestedConceptId || candidate.matched_concept_ids.includes(requestedConceptId));
+  const verifiedPapers = await fetchCatalogPapers(proposals.map((candidate) => candidate.arxiv_id));
   return sql.begin(async (tx) => {
     const targetConceptId = (await validConceptIds(tx, [
       stringValue(job.payload.concept_id) ?? stringArray(job.payload.concept_ids)[0] ?? "",
@@ -677,14 +681,12 @@ async function persistBatch(sql: SqlClient, job: JobRow, batch: CandidateBatch):
     }
     for (const candidate of batch.arxiv) {
       if (targetConceptId && !candidate.matched_concept_ids.includes(targetConceptId)) continue;
-      const resourceId = await resourceIdFor("arxiv", candidate.arxiv_id, "paper", candidate.canonical_url, candidate.title, candidate.abstract, null, { source: sourcePickerRunId ? "source-picker" : "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: candidate.categories });
+      const paper = verifiedPapers.get(candidate.arxiv_id);
+      if (!paper) continue;
+      const resourceId = await resourceIdFor("arxiv", candidate.arxiv_id, "paper", `https://arxiv.org/abs/${paper.arxivId}`, paper.title, paper.abstract, null, { source: sourcePickerRunId ? "source-picker" : "discovery-agent", featureVersion: "discovery-v1", paperClass: candidate.paper_class, sourceConfidence: candidate.confidence, categories: paper.primaryCategory ? [paper.primaryCategory] : [] });
       if (!resourceId) continue;
       resourceIds.add(resourceId);
-      await tx`
-        INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, submitted_at, primary_category, metadata)
-        VALUES (${resourceId}, ${candidate.arxiv_id}, ${candidate.abstract}, 'arXiv', ${candidate.published_at?.slice(0, 10) ?? null}, ${candidate.published_at}, ${candidate.categories[0] ?? null}, ${tx.json({ authors: candidate.authors, source: sourcePickerRunId ? "source-picker" : "discovery-agent" })})
-        ON CONFLICT (resource_id) DO UPDATE SET abstract = EXCLUDED.abstract, publication_date = EXCLUDED.publication_date, submitted_at = EXCLUDED.submitted_at, primary_category = EXCLUDED.primary_category, metadata = EXCLUDED.metadata
-      `;
+      await upsertCatalogPaper(tx, resourceId, paper);
       if (targetConceptId) await tx`
         INSERT INTO catalog.resource_concepts (resource_id, concept_id, source, relevance, is_primary, extractor_version)
         VALUES (${resourceId}, ${targetConceptId}, 'discovery-agent-v1', ${candidate.confidence}, false, 'discovery-agent-v1')

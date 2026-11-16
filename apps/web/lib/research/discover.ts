@@ -1,5 +1,5 @@
 import { withUserTransaction } from "@learnspace/db";
-import { concepts, paperDetails, resources, userResourceProgress, userSettings } from "@learnspace/db/schema";
+import { collections, concepts, paperDetails, resources, userResourceProgress, userSettings } from "@learnspace/db/schema";
 import type { CurriculumItem, CurriculumTrack } from "@learnspace/shared";
 import { onboardingDraftSchema } from "@learnspace/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
@@ -22,6 +22,8 @@ export type ResearchTrackPageData = {
   edges: Array<{ from: string; to: string }>;
   nextTracks: CurriculumTrack[];
   buildsOn: CurriculumTrack[];
+  /** Whether the path is in the catalogue as a course, so it can be studied as one session. */
+  course: boolean;
 };
 
 const curriculumArxivIds = () => [...new Set(listResearchTracks().flatMap((track) => getResearchTrack(track.id)?.items ?? []).flatMap((item) => item.type === "paper" ? [item.arxivId] : []))];
@@ -93,7 +95,10 @@ export async function getResearchTrackPage(userId: string, trackId: string): Pro
   const recommended = new Set(state.recommendedNext.map(({ id }) => id));
   const byId = new Map(state.items.map((entry) => [entry.item.id, entry]));
   const all = listResearchTracks();
+  const [course] = await withUserTransaction(userId, (tx) => tx.select({ id: collections.id }).from(collections)
+    .where(and(eq(collections.slug, `research-track-${trackId}`), eq(collections.kind, "learning_path"), isNull(collections.ownerUserId), eq(collections.visibility, "public"))).limit(1));
   return {
+    course: Boolean(course),
     summary: summarise(dag.track, state),
     modules: dag.track.modules.map((module) => ({
       id: module.id,
