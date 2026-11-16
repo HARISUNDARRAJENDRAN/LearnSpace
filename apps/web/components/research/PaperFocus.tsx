@@ -7,6 +7,7 @@ import type { PDFDocumentProxy } from "pdfjs-dist";
 import { forwardRef, Fragment, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import type { PaperBlock, PaperContent, PaperReference } from "../../lib/research/paper-content";
 import { MathText } from "../study/MathText";
+import { StartStudyButton } from "../study/StudyActions";
 import { loadPdfjs, type PaperSelection } from "./PaperReader";
 
 export type PaperFocusHandle = { goTo: (target: { page?: number | null; sectionId?: string | null; chunkId?: string | null; reference?: number | null }) => void };
@@ -74,11 +75,10 @@ type Props = {
   onClose: () => void;
   onAsk?: ((selection: PaperSelection) => void) | undefined;
   onAskReference?: ((reference: PaperReference) => void) | undefined;
-  onOpenResource?: ((resourceId: string) => void) | undefined;
 };
 
 /** The paper re-typeset natively from its parsed passages: journal layout, real equations, live citations, readable in any theme. */
-export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocus({ content, failed, onClose, onAsk, onAskReference, onOpenResource }, ref) {
+export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocus({ content, failed, onClose, onAsk, onAskReference }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -244,7 +244,7 @@ export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocu
         {reference.ref.title ? <p>{reference.ref.raw}</p> : null}
         <div className="paper-focus-reference-actions">
           {onAskReference ? <button type="button" onClick={() => { onAskReference(reference.ref); setReference(null); }}><Sparkles aria-hidden="true" />Ask Luny</button> : null}
-          {reference.ref.citedResourceId && onOpenResource ? <button type="button" onClick={() => onOpenResource(reference.ref.citedResourceId!)}>Study it</button> : null}
+          {reference.ref.citedResourceId ? <StartStudyButton resourceId={reference.ref.citedResourceId} origin="research" label="Study it" /> : null}
           {reference.ref.url ? <a href={reference.ref.url} target="_blank" rel="noreferrer">Source<ArrowUpRight aria-hidden="true" /></a> : null}
         </div>
       </div> : null}

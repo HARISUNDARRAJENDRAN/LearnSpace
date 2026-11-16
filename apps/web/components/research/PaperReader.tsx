@@ -29,6 +29,7 @@ const MAX_SCALE = 2.6;
 const RENDER_MARGIN = 1200;
 // Fit-to-width stops at a comfortable reading measure on wide screens.
 const READING_WIDTH = 940;
+const fitScale = (boxWidth: number, pageWidth: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(boxWidth - 48, READING_WIDTH) / pageWidth));
 
 type PdfModule = typeof import("pdfjs-dist");
 let pdfjs: Promise<PdfModule> | null = null;
@@ -142,6 +143,8 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
   const pageRef = useRef(page);
   pageRef.current = page;
   const restored = useRef(false);
+  // A page asked for while the PDF is still opening; it wins over the saved place once the pages exist.
+  const pending = useRef<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +156,8 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
       // Page boxes at scale 1, so every page has its final size before it is drawn (scroll position stays stable).
       const boxes = await Promise.all(Array.from({ length: loaded.numPages }, (_, index) => loaded.getPage(index + 1).then((p) => { const v = p.getViewport({ scale: 1 }); return { width: v.width, height: v.height }; })));
       if (cancelled) return;
+      // Fitted before the pages appear, so the restored place is measured at the scale the reader keeps.
+      if (scrollRef.current && boxes[0]) setScale(fitScale(scrollRef.current.clientWidth, boxes[0].width));
       setLib(module);
       setDoc(loaded);
       setSizes(boxes);
@@ -164,13 +169,13 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
   const fitWidth = useCallback(() => {
     const box = scrollRef.current;
     const first = sizes[0];
-    if (box && first) setScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(box.clientWidth - 48, READING_WIDTH) / first.width)));
+    if (box && first) setScale(fitScale(box.clientWidth, first.width));
   }, [sizes]);
-  useEffect(() => { if (state === "ready") fitWidth(); }, [state, fitWidth]);
 
   const scrollToPage = useCallback((target: number, behavior: ScrollBehavior = "smooth") => {
     const element = scrollRef.current?.querySelector<HTMLElement>(`[data-page="${target}"]`);
     if (element && scrollRef.current) scrollRef.current.scrollTo({ top: element.offsetTop - 12, behavior });
+    else pending.current = target;
   }, []);
 
   // Which pages are near the viewport (drawn), and which one the reader is on (most visible).
@@ -199,7 +204,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
     if (state !== "ready") return;
     if (!restored.current) {
       restored.current = true;
-      requestAnimationFrame(() => { scrollToPage(initialPage, "auto"); measure(); });
+      requestAnimationFrame(() => { scrollToPage(pending.current ?? initialPage, "auto"); measure(); });
     } else requestAnimationFrame(measure);
   }, [state, scale, initialPage, scrollToPage, measure]);
 

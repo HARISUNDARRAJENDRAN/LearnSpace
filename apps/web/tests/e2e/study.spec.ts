@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
+import { studyTool } from "./study-tools";
 
 test.describe.configure({ mode: "serial" });
 
@@ -177,12 +178,25 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   const learnInput = page.getByLabel("What do you want to learn?");
   await learnInput.fill(`https://www.youtube.com/watch?v=${youtubeId}`);
   await learnInput.press("Enter");
+  const videoEligibility = page.waitForResponse((response) => response.url().includes("/coding/eligibility"));
   await page.getByRole("button", { name: "Start learning" }).click();
   await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
   videoSessionId = page.url().split("/").at(-1) ?? null;
   if (!videoSessionId) throw new Error("video Study session ID was not captured");
+  expect(await (await videoEligibility).json()).toMatchObject({ eligible: false });
+  await expect(studyTool(page, "Code")).toHaveCount(0);
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator(".application-sidebar")).toHaveClass(/is-collapsed/);
+
+  await page.getByRole("button", { name: "Expand sidebar" }).click();
+  const nestedSession = page.locator(".application-session").filter({ hasText: "A deterministic Study video" });
+  await expect(nestedSession.getByRole("link", { name: "AI Chat" })).toBeVisible();
+  await expect(nestedSession.getByRole("link", { name: "Code Exercises" })).toHaveCount(0);
+  await nestedSession.getByRole("link", { name: "AI Chat" }).click();
+  await expect(page).toHaveURL(/\?tool=chat$/);
+  await nestedSession.getByRole("link", { name: "AI Notes" }).click();
+  await expect(page).toHaveURL(/\?tool=notes$/);
+  await expect(page.locator(".notes-page")).toBeVisible();
 
   const progressResponse = await page.request.post(`/api/v1/study-sessions/${videoSessionId}/progress`, {
     data: { resourceId: videoResourceId, progressPct: 25, anchor: { kind: "video", positionMs: 150000 }, event: "checkpoint", idempotencyKey: `e2e-progress-${randomUUID()}` },

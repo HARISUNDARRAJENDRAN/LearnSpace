@@ -247,6 +247,8 @@ export async function getCodingState(userId: string, sessionId: string, options:
 
 async function prefetch(userId: string, sessionId: string, concept: CodingConcept, options: Options) {
   const slot = await withUserTransaction(userId, async (tx) => {
+    // A paper's exercises come from its planner, not from writing ahead.
+    if ((await studyContext(tx, userId, sessionId)).resourceType === "paper") return null;
     const video = await videoContext(tx, userId, sessionId);
     const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
     requireEligibleVideo(profile);

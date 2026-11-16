@@ -73,16 +73,18 @@ test("search stays in its mode at the API, UI, and during rapid mode changes", a
   expect(research.results.some((result) => result.id === videoId || result.resourceType === "video")).toBe(false);
   expect(research.results.some((result) => result.kind === "session" && result.resourceType === "video")).toBe(false);
 
-  await page.goto("/app");
+  await page.goto("/app/discover");
   const input = page.getByRole("combobox", { name: "Search LearnSpace" });
   await input.fill(searchTerm);
-  await expect(page.getByRole("option", { name: new RegExp(`${searchTerm} video`) })).toBeVisible();
-  await expect(page.getByRole("option", { name: new RegExp(`${searchTerm} paper`) })).toHaveCount(0);
+  const resources = page.getByRole("group", { name: "Resources" });
+  await expect(resources.getByRole("option", { name: new RegExp(`${searchTerm} video`) })).toBeVisible();
+  await expect(resources.getByRole("option", { name: new RegExp(`${searchTerm} paper`) })).toHaveCount(0);
   await page.getByRole("button", { name: "Switch mode (currently learn)" }).click();
   await page.getByRole("menuitemradio", { name: "Research" }).click();
   await input.focus();
   await expect(input).toHaveAttribute("placeholder", "Search papers and sessions");
-  await expect(page.getByRole("option").filter({ has: page.getByText(`${searchTerm} paper`, { exact: true }) })).toBeVisible();
+  const papers = page.getByRole("group", { name: "Papers" });
+  await expect(papers.getByRole("option").filter({ has: page.getByText(`${searchTerm} paper`, { exact: true }) })).toBeVisible();
   await expect(page.getByRole("option", { name: new RegExp(`${searchTerm} video`) })).toHaveCount(0);
   await expect(page.getByRole("option", { name: "Search the web for papers" })).toBeVisible();
   await page.getByRole("option", { name: "Search the web for papers" }).click();
