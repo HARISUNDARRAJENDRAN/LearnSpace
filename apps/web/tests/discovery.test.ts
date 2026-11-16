@@ -10,6 +10,7 @@ import { loadCurriculumFromCsv } from "../lib/discovery/curriculum-source";
 import { canonicalYoutubeId, datasetRows, normalizeYoutubeRow, profileYoutubeDataset, parseDurationMs } from "@learnspace/shared/youtube-dataset";
 import { scoreYoutubeQuality } from "@learnspace/shared/youtube-quality";
 import { rankDiscoveryResources, rankSourceResources, sourceQuerySignals, type DiscoveryResource, type LearnerProfile } from "../lib/discovery/ranker";
+import { paperMatchesResearchInterests } from "../lib/discovery/service";
 
 const conceptId = "00000000-0000-0000-0000-000000000001";
 const behavioralConceptId = "00000000-0000-0000-0000-000000000002";
@@ -53,6 +54,14 @@ function resource(id: string, type: "video" | "paper", concepts: string[]): Disc
     quality: type === "video" ? { finalQualityScore: 0.8, freshnessPrior: 1, sourceAuthority: 0.6 } : null,
   };
 }
+
+test("Research Home excludes papers without learner topic overlap", () => {
+  const interests = new Set([conceptId]);
+  assert.equal(paperMatchesResearchInterests(resource("interest", "paper", [conceptId]), interests), true);
+  assert.equal(paperMatchesResearchInterests(resource("unrelated", "paper", ["physics"]), interests), false);
+  assert.equal(paperMatchesResearchInterests(resource("untagged", "paper", []), interests), false);
+  assert.equal(paperMatchesResearchInterests(resource("open", "paper", ["physics"]), new Set()), true);
+});
 
 test("selected interests and stronger affinity affect deterministic ranking", () => {
   const ranked = rankDiscoveryResources(

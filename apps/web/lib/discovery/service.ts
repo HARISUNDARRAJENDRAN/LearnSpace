@@ -428,9 +428,16 @@ export async function rankPaperResourcesForUser(tx: Transaction, userId: string,
   if (resourceIds.length === 0) return [];
   const profileLoad = await loadDiscoveryProfile(tx, userId);
   const dismissed = new Set(profileLoad.dismissedResourceIds);
-  return rankDiscoveryResources(await loadDiscoveryResources(tx, resourceIds, userId), profileLoad.profile, new Date()).papers
+  const interests = new Set(profileLoad.profile.coreConceptIds ?? profileLoad.profile.conceptIds);
+  const resources = await loadDiscoveryResources(tx, resourceIds, userId);
+  return rankDiscoveryResources(resources.filter((resource) => paperMatchesResearchInterests(resource, interests)), profileLoad.profile, new Date()).papers
     .filter((candidate) => candidate.finalRank !== null && !dismissed.has(candidate.resource.id))
     .map((candidate) => candidate.resource.id);
+}
+
+/** Research feeds with selected topics only rank papers tagged to those topics. */
+export function paperMatchesResearchInterests(resource: DiscoveryResource, interests: ReadonlySet<string>): boolean {
+  return interests.size === 0 || resource.concepts.some((concept) => interests.has(concept.id));
 }
 
 export function reasonText(candidate: RankedResource, profile: LearnerProfile): string {
