@@ -12,6 +12,7 @@ import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
 import { instantDiscovery } from "@learnspace/shared/exa-discovery";
 import { getRedisValue, setRedisValue } from "../discovery/cache";
 import { gatherVideos, type PickedVideo, pickVideos, provisionalPicks, type VideoIntent } from "./video-agent";
+import { retrieveResearchPapers, type ResearchPaper } from "../research/retrieval/service";
 
 const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
 const sourceCoverageMinimum = SOURCE_DISCOVERY_MIN_RESULTS;
@@ -182,6 +183,16 @@ async function findReusableRun(tx: Transaction, userId: string, mode: SourceDisc
 }
 
 async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect, userId: string): Promise<SourceDiscoverySearchResponse> {
+  if (run.contextSnapshot.researchRetrieval === true) return {
+    status: run.status === "failed" ? "failed" : run.status === "running" || run.status === "queued" ? "searching" : "completed",
+    runId: run.id,
+    mode: "research",
+    query: run.queryText ?? "",
+    candidates: ephemeralCandidates(run),
+    retrieval: "live_web",
+    cacheState: "miss",
+    ...(run.contextSnapshot.timings && typeof run.contextSnapshot.timings === "object" ? { timings: run.contextSnapshot.timings as SourceDiscoverySearchResponse["timings"] } : {}),
+  };
   if (run.contextSnapshot.agent === VIDEO_AGENT) return videoAgentResponse(run);
   const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(sourceResultLimit);
   const refreshedResourceIds = arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string");
@@ -889,6 +900,79 @@ async function searchVideosWithAgent(userId: string, input: SourceDiscoverySearc
 
 const interactiveSearches = new Map<string, Promise<SourceDiscoverySearchResponse>>();
 
+function paperSearchCandidate(paper: ResearchPaper, rank: number, runId: string): SourceDiscoveryCandidate & Record<string, unknown> {
+  return {
+    type: "paper",
+    provider: "arxiv",
+    externalId: paper.arxivId,
+    title: paper.title,
+    description: paper.abstract,
+    canonicalUrl: paper.canonicalUrl,
+    thumbnailUrl: null,
+    author: paper.authors[0]?.name ?? "arXiv",
+    durationMs: null,
+    publishedAt: paper.publishedAt,
+    reason: "Exa-ranked research paper",
+    reasonCodes: ["exa_match"],
+    score: paper.score,
+    candidateRank: rank,
+    finalRank: rank,
+    recommendationRunId: runId,
+    sourceOrigin: "external_refresh",
+    queryRelevance: Math.max(0, 1 - (rank - 1) / 30),
+    venue: "arXiv",
+  };
+}
+
+async function searchResearchSources(userId: string, input: SourceDiscoverySearchRequest): Promise<SourceDiscoverySearchResponse> {
+  const query = normalizeQuery(input.query);
+  const retrieval = await retrieveResearchPapers(query, {
+    ...(process.env.EXA_API_KEY?.trim() ? { exaApiKey: process.env.EXA_API_KEY.trim() } : {}),
+    timeoutMs: 4_000,
+    rankingIntent: input.rankingIntent === "foundational" || input.rankingIntent === "recent" ? input.rankingIntent : "best_match",
+  });
+  const retrievalTimings = { ...(retrieval.papers.length ? { firstResultsMs: retrieval.durationMs } : {}), providerMs: retrieval.durationMs, totalMs: retrieval.durationMs };
+  return withUserTransaction(userId, async (tx) => {
+      const runStatus = retrieval.papers.length === 0 && retrieval.partialFailures.length > 0 ? "failed" : "completed";
+      const [run] = await tx.insert(recommendationRuns).values({
+        userId,
+        surface: "source_picker",
+        queryText: query,
+        strategyVersion: DISCOVERY_STRATEGY_VERSION,
+        featureVersion: DISCOVERY_FEATURE_VERSION,
+        contextSnapshot: {
+          mode: "research",
+          rankingIntent: input.rankingIntent,
+          researchRetrieval: true,
+          intent: retrieval.intent,
+          sourceCalls: retrieval.sourceCalls,
+          partialFailures: retrieval.partialFailures,
+          timings: retrievalTimings,
+        },
+        status: runStatus,
+        completedAt: new Date(),
+      }).returning();
+      if (!run) throw new Error("Research discovery run could not be created");
+      const candidates = retrieval.papers.map((paper, index) => paperSearchCandidate(paper, index + 1, run.id));
+      await tx.update(recommendationRuns).set({ contextSnapshot: {
+        ...run.contextSnapshot,
+        ephemeralCandidates: candidates,
+        candidateDiagnostics: candidates.map((candidate) => ({ resourceId: `external:${candidate.provider}:${candidate.externalId}`, sourceOrigin: "external_refresh", queryRelevance: candidate.queryRelevance })),
+      } }).where(eq(recommendationRuns.id, run.id));
+      const result: SourceDiscoverySearchResponse = {
+        status: runStatus,
+        runId: run.id,
+        mode: "research",
+        query,
+        candidates: candidates as SourceDiscoveryCandidate[],
+        retrieval: "live_web",
+        cacheState: "miss",
+        timings: retrievalTimings,
+      };
+      return result;
+    });
+}
+
 export async function searchSources(userId: string, input: SourceDiscoverySearchRequest, scheduleDeferred: SourceDiscoveryDeferredWork = (work) => { void work(); }): Promise<SourceDiscoverySearchResponse> {
   const query = normalizeQuery(input.query);
   const key = createHash("sha256").update(`${userId}\n${input.mode}\n${input.rankingIntent}\n${query}`).digest("hex");
@@ -897,7 +981,9 @@ export async function searchSources(userId: string, input: SourceDiscoverySearch
   // Videos go to the search agent whenever it has a provider to search; papers (and a server with no video search keys, such
   // as CI and offline development) keep the catalog-and-Exa search above.
   const agent = input.mode === "learn" && Boolean(process.env.YOUTUBE_API_KEY?.trim() || process.env.EXA_API_KEY?.trim());
-  const search = (agent ? searchVideosWithAgent(userId, { ...input, query }, scheduleDeferred) : searchSourcesFast(userId, { ...input, query }, scheduleDeferred))
+  const search = (input.mode === "research"
+    ? searchResearchSources(userId, { ...input, query })
+    : (agent ? searchVideosWithAgent(userId, { ...input, query }, scheduleDeferred) : searchSourcesFast(userId, { ...input, query }, scheduleDeferred)))
     .finally(() => interactiveSearches.delete(key));
   interactiveSearches.set(key, search);
   return search;
@@ -1064,7 +1150,7 @@ async function persistResolvedResource(tx: Transaction, userId: string, parsed: 
     await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, existing.resource.id);
     return existing.resource.id;
   }
-  const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
+   const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
   const resourceId = resource?.id ?? (await findExistingResource(tx, userId, parsed))?.resource.id;
   if (!resourceId) throw new Error("Resolved resource could not be created");
   await ensureIngestionRequest(tx, userId, resourceId, parsed, correlationId);
