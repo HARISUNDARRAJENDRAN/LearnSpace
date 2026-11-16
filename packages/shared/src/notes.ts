@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Bumped whenever the companion's prompt or output contract changes. */
-export const NOTES_CONTRACT_VERSION = "notes-v9";
+export const NOTES_CONTRACT_VERSION = "notes-v11";
 export const NOTES_MAX_BLOCKS = 3_000;
 // Room for a styled diagram's JSON; prose blocks are far shorter.
 export const NOTES_MAX_TEXT = 6_000;
@@ -19,7 +19,7 @@ export const noteBlockTypeSchema = z.enum([
 export type NoteBlockType = z.infer<typeof noteBlockTypeSchema>;
 export type NoteActor = "you" | "luna";
 /** `rev` is the notes revision that last changed the block and `by` who changed it, so a stale edit never overwrites a newer one. */
-export type NoteBlock = { id: string; type: NoteBlockType; text: string; done: boolean; by: NoteActor; rev: number };
+export type NoteBlock = { id: string; type: NoteBlockType; text: string; done: boolean; by: NoteActor; rev: number; anchors?: import("./contracts.js").PaperCitationAnchor[] };
 
 /**
  * One edit, from the learner or the companion. Every field is present (null when unused) so the same shape is the model's
@@ -33,13 +33,21 @@ export const noteOpSchema = z.object({
   text: z.string().max(NOTES_MAX_TEXT).nullable(),
   done: z.boolean().nullable(),
 }).strict();
-export type NoteOp = z.infer<typeof noteOpSchema>;
+export type NoteOp = z.infer<typeof noteOpSchema> & { anchors?: import("./contracts.js").PaperCitationAnchor[] };
 
 /** Luny moving the lesson: a seek, play or pause, written inline in her speech. */
 export const lessonControlSchema = z.object({
-  seekMs: z.number().int().min(0).max(86_400_000).nullable(),
-  playback: z.enum(["play", "pause"]).nullable(),
-}).strict();
+  seekMs: z.number().int().min(0).max(86_400_000).nullable().optional(),
+  playback: z.enum(["play", "pause"]).nullable().optional(),
+  page: z.number().int().positive().optional(),
+  sectionId: z.string().min(1).max(200).optional(),
+  chunkId: z.string().uuid().optional(),
+  highlight: z.boolean().optional(),
+  /** A bibliography entry to open, by its number in the paper's reference list. */
+  reference: z.number().int().min(1).max(2_000).optional(),
+}).strict()
+  .refine((control) => control.seekMs !== undefined || control.playback !== undefined || control.page !== undefined || control.sectionId !== undefined || control.chunkId !== undefined || control.highlight !== undefined || control.reference !== undefined, "A lesson control needs an action.")
+  .refine((control) => !((control.seekMs !== undefined || control.playback !== undefined) && (control.page !== undefined || control.sectionId !== undefined || control.chunkId !== undefined || control.highlight !== undefined || control.reference !== undefined)), "A lesson control cannot mix video and paper actions.");
 export type LessonControl = z.infer<typeof lessonControlSchema>;
 export const DIAGRAM_COLORS = ["mint", "blue", "violet", "rose", "amber", "slate"] as const;
 export const DIAGRAM_SHAPES = ["box", "pill", "circle"] as const;
@@ -65,7 +73,7 @@ export type NoteDiagram = z.infer<typeof diagramSchema>;
 /** The study guide written from the video before the learner arrives: the page's first blocks, in order. */
 export const NOTES_GUIDE_MAX_BLOCKS = 150;
 export const notesGuideOutputSchema = z.object({
-  blocks: z.array(z.object({ type: noteBlockTypeSchema, text: z.string().max(NOTES_MAX_TEXT) }).strict()).min(1).max(NOTES_GUIDE_MAX_BLOCKS),
+  blocks: z.array(z.object({ type: noteBlockTypeSchema, text: z.string().max(NOTES_MAX_TEXT), cite: z.array(z.number().int().positive()).max(4).nullable() }).strict()).min(1).max(NOTES_GUIDE_MAX_BLOCKS),
 }).strict();
 export type NotesGuideOutput = z.infer<typeof notesGuideOutputSchema>;
 /**
@@ -75,7 +83,8 @@ export type NotesGuideOutput = z.infer<typeof notesGuideOutputSchema>;
 export type NotesGuideStatus = "pending" | "writing" | "ready" | "waiting" | "unavailable" | "failed";
 
 /** What the scribe returns: the edits that bring the notebook up to date with the conversation; often none. */
-export const notesScribeOutputSchema = z.object({ ops: z.array(noteOpSchema).max(24) }).strict();
+export const scribeNoteOpSchema = noteOpSchema.extend({ cite: z.array(z.number().int().positive()).max(4).nullable() }).strict();
+export const notesScribeOutputSchema = z.object({ ops: z.array(scribeNoteOpSchema).max(24) }).strict();
 export type NotesScribeOutput = z.infer<typeof notesScribeOutputSchema>;
 
 /** One spoken line of the session's conversation, kept for good. */
@@ -86,7 +95,14 @@ export type NotesView = { revision: number; blocks: NoteBlock[]; canUndo: boolea
  * One spoken turn with Luny. `utterance` is what the learner said since Luny last answered, or null when Luny opens the
  * conversation; `frame` is a JPEG of the lesson as it is on their screen.
  */
-export const voiceTurnRequestSchema = z.object({
+const voiceCueSchema = z.enum(["waiting", "idle"]).nullable().optional();
+const paperVoiceAnchorSchema = z.object({
+  kind: z.literal("paper"),
+  page: z.number().int().positive().optional(),
+  sectionId: z.string().min(1).max(200).optional(),
+  chunkId: z.string().uuid().optional(),
+}).strict().refine((anchor) => anchor.page !== undefined || anchor.sectionId !== undefined, "A paper anchor needs a page or section.");
+export const voiceTurnRequestSchema = z.union([z.object({
   utterance: z.string().trim().min(1).max(4_000).nullable(),
   positionMs: z.number().int().min(0).max(86_400_000).nullable(),
   playing: z.boolean(),
@@ -98,8 +114,13 @@ export const voiceTurnRequestSchema = z.object({
    * since gone quiet, so she now answers them. `idle`: nobody has spoken for a while with the video paused, and she may
    * pick the talk back up once.
    */
-  cue: z.enum(["waiting", "idle"]).nullable().optional(),
-}).strict();
+  cue: voiceCueSchema,
+}).strict(), z.object({
+  utterance: z.string().trim().min(1).max(4_000).nullable(),
+  anchor: paperVoiceAnchorSchema,
+  selection: z.string().trim().max(4_000).nullable().optional(),
+  cue: voiceCueSchema,
+}).strict()]);
 export type VoiceTurnRequest = z.infer<typeof voiceTurnRequestSchema>;
 /**
  * The turn as it streams back: what Luny says, a sentence fragment at a time, and any seek, play or pause, then the end.
@@ -131,7 +152,7 @@ export function applyNoteOps(blocks: NoteBlock[], ops: NoteOp[], actor: NoteActo
       const text = op.text?.trim();
       if (index >= 0 || !text || next.length >= NOTES_MAX_BLOCKS) continue;
       const after = op.after === null ? -1 : next.findIndex((block) => block.id === op.after);
-      const block: NoteBlock = { id: op.id, type: op.type ?? "paragraph", text, done: op.done ?? false, by: actor, rev: revision };
+      const block: NoteBlock = { id: op.id, type: op.type ?? "paragraph", text, done: op.done ?? false, by: actor, rev: revision, ...(op.anchors ? { anchors: op.anchors } : {}) };
       next.splice(after >= 0 ? after + 1 : next.length, 0, block);
       applied += 1;
       continue;
@@ -145,7 +166,7 @@ export function applyNoteOps(blocks: NoteBlock[], ops: NoteOp[], actor: NoteActo
       const after = op.after === null ? -1 : next.findIndex((block) => block.id === op.after);
       next.splice(after >= 0 ? after + 1 : next.length, 0, { ...target, by: actor, rev: revision });
     } else if (op.action === "delete") next.splice(index, 1);
-    else next[index] = { ...target, type: op.type ?? target.type, text: op.text?.trim() || target.text, done: op.done ?? target.done, by: actor, rev: revision };
+    else next[index] = { ...target, ...(op.anchors ? { anchors: op.anchors } : {}), type: op.type ?? target.type, text: op.text?.trim() || target.text, done: op.done ?? target.done, by: actor, rev: revision };
     applied += 1;
   }
   return { blocks: next, applied };

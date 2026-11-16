@@ -34,8 +34,16 @@ export const studyAnchorSchema = z.discriminatedUnion("kind", [
     kind: z.literal("paper"),
     page: z.number().int().positive().optional(),
     sectionId: z.string().min(1).max(200).optional(),
+    chunkId: z.string().uuid().optional(),
   }).strict().refine((value) => value.page !== undefined || value.sectionId !== undefined, "A paper anchor needs a page or section."),
 ]);
+export const paperCitationAnchorSchema = z.object({
+  kind: z.literal("paper"),
+  page: z.number().int().positive(),
+  sectionId: z.string().min(1).max(200),
+  chunkId: z.string().uuid(),
+}).strict();
+export type PaperCitationAnchor = z.infer<typeof paperCitationAnchorSchema>;
 export const studyResourceProvenanceSchema = z.object({
   resourceId: z.string().uuid(),
   title: z.string().min(1),
@@ -76,7 +84,8 @@ export const studySessionActionRequestSchema = z.object({
 }).strict();
 
 /** The study tools that open beside a lesson. */
-export const STUDY_TOOLS = ["notes", "check", "code", "ai"] as const;
+/** The tools beside what is studied; "guide" (a project and intuition guide) exists for papers only. */
+export const STUDY_TOOLS = ["notes", "check", "code", "ai", "guide"] as const;
 export const studyToolSchema = z.enum(STUDY_TOOLS);
 export const CODE_LANGUAGES = ["python", "javascript", "typescript", "java", "cpp", "go", "rust", "sql"] as const;
 export const MAX_SESSION_CODE_LENGTH = 100_000;
@@ -219,7 +228,8 @@ export type StudySessionCourse = {
   sections: Array<{
     id: string;
     title: string;
-    lessons: Array<{ resourceId: string; title: string; youtubeId: string | null; channelTitle: string | null; state: StudyCourseLessonState; progressPct: number }>;
+    /** `byline` is a video's channel or a paper's authors; `summary` is a paper's abstract. */
+    lessons: Array<{ resourceId: string; title: string; type: "video" | "paper"; youtubeId: string | null; byline: string | null; summary: string | null; state: StudyCourseLessonState; progressPct: number }>;
   }>;
 };
 

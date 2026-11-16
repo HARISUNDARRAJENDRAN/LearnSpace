@@ -1,5 +1,6 @@
 "use client";
 
+import type { StudyAnchor } from "@learnspace/shared";
 import { applyNoteOps, type LessonControl, type NoteBlock, type NoteOp, type NotesGuideStatus, type NotesView, type ScribeEvent } from "@learnspace/shared/notes";
 import { Copy, Moon, Sun, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -71,7 +72,7 @@ export type NotesTutor = {
   capture: () => string | null;
   onControl: (control: LessonControl) => void;
   onTurn: () => void;
-  onSeek: (ms: number) => void;
+  onGo: (place: StudyAnchor) => void;
   sharing: boolean;
   shareError: string | null;
   onShare: () => void;
@@ -217,7 +218,7 @@ export function SessionNotes({ sessionId, title, active = true, tutor, onCollaps
       {notes === null && !failed ? <p className="notes-loading" role="status">Opening your page…</p> : <article className="notes-document" aria-busy={guide === "writing"}>
         <h2 className="notes-title">{title}</h2>
         {guide && guideNotice[guide] ? <p className={`notes-guide is-${guide}`} role="status">{guideNotice[guide]}{guide === "failed" ? <> <button type="button" onClick={writeGuide}>Try again</button></> : null}</p> : null}
-        <NotesEditor blocks={blocks} revision={shown?.revision ?? 0} onOps={(ops) => edit({ ops })} onSeek={tutor.onSeek} />
+        <NotesEditor blocks={blocks} revision={shown?.revision ?? 0} onOps={(ops) => edit({ ops })} onGo={tutor.onGo} />
       </article>}
       {failed ? <p className="session-tool-message is-error" role="alert">{failed}</p> : null}
     </div>

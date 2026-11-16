@@ -1,7 +1,8 @@
 import { z } from "zod";
+import type { PaperCitationAnchor } from "./contracts.js";
 
 /** Bumped whenever the question or grading prompts change. */
-export const MASTERY_CONTRACT_VERSION = "mastery-v4";
+export const MASTERY_CONTRACT_VERSION = "mastery-v5";
 /** A set passes at this share of full credit; below it, the learner reviews and takes a fresh set. */
 export const MASTERY_PASS_SCORE = 0.65;
 
@@ -56,7 +57,7 @@ export type MasteryResult = {
   /** A full-credit answer, for written questions. */
   modelAnswer: string | null;
 };
-export type MasteryQuestionView = { id: string; type: "choice" | "written"; concept: string | null; question: string; options: string[] | null; positionMs: number | null; result: MasteryResult | null };
+export type MasteryQuestionView = { id: string; type: "choice" | "written"; concept: string | null; question: string; options: string[] | null; positionMs: number | null; anchor: PaperCitationAnchor | null; result: MasteryResult | null };
 /** `writing`: more questions are still being written into the set; the learner answers the ones already there. */
 export type MasteryCheckView = {
   id: string; status: "open" | "passed" | "failed"; score: number | null; writing: boolean; questions: MasteryQuestionView[];

@@ -7,7 +7,10 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 
 export type PaperSection = { id: string; title: string; depth: number; page: number };
 export type PaperSelection = { text: string; page: number };
-export type PaperReaderHandle = { goTo: (target: { page?: number | null; sectionId?: string | null }) => void; page: () => number };
+/** A passage box in PDF user space (points, bottom-left origin), as ingestion stores it. */
+export type PdfBox = [number, number, number, number];
+export type PaperReaderHandle = { goTo: (target: { page?: number | null; sectionId?: string | null; bbox?: PdfBox | null }) => void; page: () => number };
+type Mark = { page: number; bbox: PdfBox; key: number };
 
 type Props = {
   resourceId: string;
@@ -24,6 +27,8 @@ const MIN_SCALE = 0.6;
 const MAX_SCALE = 2.6;
 // Pages this far outside the viewport (in px) are drawn ahead of time, so scrolling never shows a blank page.
 const RENDER_MARGIN = 1200;
+// Fit-to-width stops at a comfortable reading measure on wide screens.
+const READING_WIDTH = 940;
 
 type PdfModule = typeof import("pdfjs-dist");
 let pdfjs: Promise<PdfModule> | null = null;
@@ -35,10 +40,47 @@ export function loadPdfjs(): Promise<PdfModule> {
   return pdfjs;
 }
 
-/** One page: a sized placeholder until it nears the viewport, then canvas + selectable text layer. */
-function PdfPage({ doc, number, scale, width, height, visible, lib }: { doc: PDFDocumentProxy; number: number; scale: number; width: number; height: number; visible: boolean; lib: PdfModule }) {
+type PageLink = { box: [number, number, number, number]; url: URL | null; page: number | null };
+
+/** The page's link annotations: web links (http and https only) and links within the paper, resolved to their page. */
+async function pageLinks(doc: PDFDocumentProxy, page: PDFPageProxy, viewport: ReturnType<PDFPageProxy["getViewport"]>): Promise<PageLink[]> {
+  const annotations: Array<{ subtype?: string; rect: number[]; url?: string; dest?: unknown }> = await page.getAnnotations({ intent: "display" });
+  const links = await Promise.all(annotations.filter((item) => item.subtype === "Link").map(async (item): Promise<PageLink | null> => {
+    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(item.rect);
+    const box: PageLink["box"] = [Math.min(x1!, x2!), Math.min(y1!, y2!), Math.abs(x2! - x1!), Math.abs(y2! - y1!)];
+    if (item.url) {
+      const url = URL.canParse(item.url) ? new URL(item.url) : null;
+      return url && (url.protocol === "https:" || url.protocol === "http:") ? { box, url, page: null } : null;
+    }
+    if (!item.dest) return null;
+    const dest = typeof item.dest === "string" ? await doc.getDestination(item.dest) : item.dest;
+    const ref = Array.isArray(dest) ? dest[0] : null;
+    if (!ref) return null;
+    const index = typeof ref === "number" ? ref : await doc.getPageIndex(ref).catch(() => null);
+    return index === null ? null : { box, url: null, page: index + 1 };
+  }).map((link) => link.catch(() => null)));
+  return links.filter((link): link is PageLink => link !== null);
+}
+
+/** One page: a sized placeholder until it nears the viewport, then canvas, selectable text and its links. */
+function PdfPage({ doc, number, scale, width, height, visible, lib, onGoPage, mark, onMarkPlaced }: { doc: PDFDocumentProxy; number: number; scale: number; width: number; height: number; visible: boolean; lib: PdfModule; onGoPage: (page: number) => void; mark: Mark | null; onMarkPlaced: (page: number, top: number) => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+  const [links, setLinks] = useState<PageLink[]>([]);
+  const [markBox, setMarkBox] = useState<{ key: number; left: number; top: number; width: number; height: number } | null>(null);
+  // The cited passage's box, mapped through this page's viewport (handles crop box and rotation), then brought into view.
+  useEffect(() => {
+    if (!mark) { setMarkBox(null); return; }
+    let cancelled = false;
+    void doc.getPage(number).then((page) => {
+      if (cancelled) return;
+      const [x1, y1, x2, y2] = page.getViewport({ scale }).convertToViewportRectangle(mark.bbox);
+      const box = { key: mark.key, left: Math.min(x1!, x2!) - 3, top: Math.min(y1!, y2!) - 3, width: Math.abs(x2! - x1!) + 6, height: Math.abs(y2! - y1!) + 6 };
+      setMarkBox(box);
+      onMarkPlaced(number, box.top);
+    });
+    return () => { cancelled = true; };
+  }, [doc, number, scale, mark, onMarkPlaced]);
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
@@ -57,12 +99,21 @@ function PdfPage({ doc, number, scale, width, height, visible, lib }: { doc: PDF
       textRef.current.replaceChildren();
       textLayer = new lib.TextLayer({ textContentSource: page.streamTextContent(), container: textRef.current, viewport });
       await textLayer.render().catch(() => undefined);
+      const found = await pageLinks(doc, page, viewport).catch(() => []);
+      if (!cancelled) setLinks(found);
     });
     return () => { cancelled = true; task?.cancel(); textLayer?.cancel(); };
   }, [doc, number, scale, visible, lib]);
   return <div className="paper-page" data-page={number} style={{ width, height, "--total-scale-factor": scale, "--scale-factor": scale } as React.CSSProperties}>
     <canvas ref={canvasRef} style={{ width, height }} aria-hidden="true" />
     <div ref={textRef} className="textLayer" />
+    {visible ? links.map((link, index) => {
+      const style = { left: link.box[0], top: link.box[1], width: link.box[2], height: link.box[3] };
+      return link.url
+        ? <a key={index} className="paper-page-link" style={style} href={link.url.href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${link.url.hostname}`} title={link.url.href} />
+        : <button key={index} type="button" className="paper-page-link" style={style} aria-label={`Go to page ${link.page}`} title={`Go to page ${link.page}`} onClick={() => onGoPage(link.page!)} />;
+    }) : null}
+    {markBox ? <div key={markBox.key} className="paper-page-mark" style={{ left: markBox.left, top: markBox.top, width: markBox.width, height: markBox.height }} aria-hidden="true" /> : null}
     {visible ? null : <span className="paper-page-number" aria-hidden="true">{number}</span>}
   </div>;
 }
@@ -77,6 +128,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
   const [page, setPage] = useState(initialPage);
   const [visible, setVisible] = useState<Set<number>>(new Set());
   const [selection, setSelection] = useState<(PaperSelection & { x: number; y: number }) | null>(null);
+  const [mark, setMark] = useState<Mark | null>(null);
   const pageRef = useRef(page);
   pageRef.current = page;
   const restored = useRef(false);
@@ -102,7 +154,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
   const fitWidth = useCallback(() => {
     const box = scrollRef.current;
     const first = sizes[0];
-    if (box && first) setScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, (box.clientWidth - 48) / first.width)));
+    if (box && first) setScale(Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.min(box.clientWidth - 48, READING_WIDTH) / first.width)));
   }, [sizes]);
   useEffect(() => { if (state === "ready") fitWidth(); }, [state, fitWidth]);
 
@@ -142,11 +194,22 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
 
   useEffect(() => { if (state === "ready") onPageChange?.(page, sizes.length); }, [page, state, sizes.length, onPageChange]);
 
+  // A marked passage is scrolled to a third of the way down, so the lines before it stay in view.
+  const onMarkPlaced = useCallback((target: number, top: number) => {
+    const box = scrollRef.current;
+    const element = box?.querySelector<HTMLElement>(`[data-page="${target}"]`);
+    if (box && element) box.scrollTo({ top: element.offsetTop + top - box.clientHeight / 3, behavior: "smooth" });
+  }, []);
+
   useImperativeHandle(ref, () => ({
-    goTo: ({ page: target, sectionId }) => {
+    goTo: ({ page: target, sectionId, bbox }) => {
       const section = sectionId ? sections.find((item) => item.id === sectionId) : undefined;
-      const destination = section?.page ?? target;
-      if (destination) scrollToPage(Math.min(Math.max(1, destination), sizes.length || destination));
+      // A citation names its exact page; a section alone goes to where the section starts.
+      const destination = target ?? section?.page;
+      if (!destination) return;
+      const clamped = Math.min(Math.max(1, destination), sizes.length || destination);
+      setMark(bbox ? { page: clamped, bbox, key: Date.now() } : null);
+      if (!bbox) scrollToPage(clamped);
     },
     page: () => pageRef.current,
   }), [sections, scrollToPage, sizes.length]);
@@ -185,10 +248,10 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
       </div>
       {actions}
     </div>
-    <div ref={scrollRef} className="paper-reader-scroll" data-lenis-prevent onScroll={measure} onPointerUp={onPointerUp} onWheel={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+    <div ref={scrollRef} className="paper-reader-scroll" data-lenis-prevent onScroll={measure} onPointerUp={onPointerUp} data-own-wheel onPointerDown={(event) => event.stopPropagation()}>
       {state === "loading" ? <div className="paper-reader-state" role="status">Opening the paper…</div> : null}
       {state === "error" ? <div className="paper-reader-state" role="alert"><strong>This PDF couldn&apos;t be opened here.</strong><span>The source may be unavailable. The parsed text is still in Focus mode, Notes and Luny.</span></div> : null}
-      {doc && lib ? <div className="paper-reader-pages">{sizes.map((size, index) => <PdfPage key={index + 1} doc={doc} lib={lib} number={index + 1} scale={scale} width={size.width * scale} height={size.height * scale} visible={visible.has(index + 1)} />)}</div> : null}
+      {doc && lib ? <div className="paper-reader-pages">{sizes.map((size, index) => <PdfPage key={index + 1} doc={doc} lib={lib} number={index + 1} scale={scale} width={size.width * scale} height={size.height * scale} visible={visible.has(index + 1)} onGoPage={scrollToPage} mark={mark?.page === index + 1 ? mark : null} onMarkPlaced={onMarkPlaced} />)}</div> : null}
       {selection && onAsk ? <button type="button" className="paper-reader-ask" style={{ left: selection.x, top: selection.y }} onPointerUp={(event) => event.stopPropagation()} onClick={() => { onAsk({ text: selection.text, page: selection.page }); setSelection(null); window.getSelection()?.removeAllRanges(); }}><Sparkles aria-hidden="true" /> Ask Luny</button> : null}
     </div>
   </div>;

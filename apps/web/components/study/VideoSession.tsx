@@ -2,12 +2,12 @@
 
 import type { LessonControl } from "@learnspace/shared/notes";
 import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView, StudyTool, StudyWorkspace } from "@learnspace/shared";
-import { CircleStop, Code, Crosshair, Expand, ListChecks, Maximize, Minus, NotebookPen, Plus, Shrink, Sparkles, Video, Workflow } from "lucide-react";
+import { Code, Crosshair, Expand, ListChecks, NotebookPen, Shrink, Sparkles, Video, Workflow } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CollapseSidebarContext } from "../application/ApplicationShell";
-import { useSessions } from "../application/sessions";
+import { type CanvasView, EndSession, savedCanvas, useCanvas, ZoomBar } from "./canvas";
 import { type CanvasRect, CourseGraph, layoutCourse } from "./CourseGraph";
 import { PanelResizer } from "./PanelResizer";
 import { MasteryCheck } from "./MasteryCheck";
@@ -51,12 +51,8 @@ declare global {
   }
 }
 
-type CanvasView = { x: number; y: number; zoom: number };
-
 const CARD_WIDTH = 960;
 const CARD_HEIGHT = 540;
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 4;
 
 async function youtubeApi(): Promise<YouTubeApi> {
   // iframe_api defines window.YT at once as a loading stub; Player arrives with a second script, then the ready callback.
@@ -208,128 +204,6 @@ function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onC
   return { containerRef, playerState, currentMs, seek, togglePlay, now, isPlaying, play: () => playerRef.current?.playVideo(), pause: () => playerRef.current?.pauseVideo() };
 }
 
-function clampZoom(zoom: number): number {
-  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
-}
-
-/**
- * The whiteboard: wheel pans, ctrl/cmd + wheel zooms around the cursor, and dragging the background pans.
- * `home` is what the canvas frames on load and on resize; `bounds` is everything on it, for zoom to fit. A `restored` view
- * (where the learner left this session) is shown instead of home until they move the canvas themselves; `onMoved` hears
- * every view they make.
- */
-function useCanvas(onBackgroundClick: () => void, onBackgroundDoubleClick: () => void, home: CanvasRect, bounds: CanvasRect, homeMargin: number, restored: CanvasView | null, onMoved: () => void) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ x: number; y: number; moved: boolean } | null>(null);
-  const [view, setView] = useState<CanvasView>(restored ?? { x: 0, y: 0, zoom: 1 });
-  const restoredRef = useRef(restored);
-  // Once the learner places the canvas (or comes back to a place they chose), resizing the pane keeps their view.
-  const placedRef = useRef(restored !== null);
-  const onMovedRef = useRef(onMoved);
-  onMovedRef.current = onMoved;
-  // The learner's own move: the restored view is done with, and the view is theirs to save.
-  const release = useCallback(() => {
-    restoredRef.current = null;
-    placedRef.current = true;
-    onMovedRef.current();
-  }, []);
-  const placed = useCallback(() => placedRef.current, []);
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const homeRef = useRef(home);
-  const boundsRef = useRef(bounds);
-  homeRef.current = home;
-  boundsRef.current = bounds;
-
-  // Frames a world rectangle in the viewport; the world origin sits at the viewport centre.
-  const frame = useCallback((rect: CanvasRect, margin = 160) => {
-    const box = viewportRef.current?.getBoundingClientRect();
-    if (!box) return;
-    const zoom = clampZoom(Math.min(1, (box.width - margin) / rect.width, (box.height - margin) / rect.height));
-    setView({ zoom, x: -(rect.x + rect.width / 2) * zoom, y: -(rect.y + rect.height / 2) * zoom });
-  }, []);
-  const homeMarginRef = useRef(homeMargin);
-  homeMarginRef.current = homeMargin;
-  const frameHome = useCallback(() => {
-    if (restoredRef.current) setView(restoredRef.current);
-    else frame(homeRef.current, homeMarginRef.current);
-  }, [frame]);
-  const fit = useCallback(() => { release(); frame(boundsRef.current); }, [frame, release]);
-
-  const zoomBy = useCallback((factor: number, clientX?: number, clientY?: number) => {
-    const box = viewportRef.current?.getBoundingClientRect();
-    if (!box) return;
-    release();
-    // The world origin sits at the viewport centre, so the zoom anchor is measured from there.
-    const px = clientX === undefined ? 0 : clientX - box.left - box.width / 2;
-    const py = clientY === undefined ? 0 : clientY - box.top - box.height / 2;
-    setView((current) => {
-      const zoom = clampZoom(current.zoom * factor);
-      const scale = zoom / current.zoom;
-      return { zoom, x: px - (px - current.x) * scale, y: py - (py - current.y) * scale };
-    });
-  }, [release]);
-
-  // Reframe whenever the pane changes size (side panel or sidebar toggles) so nothing spills out, until the learner has
-  // placed the canvas themselves; their view is centred on the pane, so it stays put as the pane resizes.
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const observer = new ResizeObserver(() => {
-      const box = viewport.getBoundingClientRect();
-      setSize({ width: box.width, height: box.height });
-      if (!placedRef.current || restoredRef.current) frameHome();
-    });
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, [frameHome]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      if (event.ctrlKey || event.metaKey) zoomBy(Math.exp(-event.deltaY * 0.01), event.clientX, event.clientY);
-      else {
-        release();
-        setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
-      }
-    };
-    viewport.addEventListener("wheel", onWheel, { passive: false });
-    return () => viewport.removeEventListener("wheel", onWheel);
-  }, [zoomBy, release]);
-
-  const handlers = {
-    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget) return;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      dragRef.current = { x: event.clientX, y: event.clientY, moved: false };
-    },
-    onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
-      const drag = dragRef.current;
-      if (!drag) return;
-      const dx = event.clientX - drag.x;
-      const dy = event.clientY - drag.y;
-      if (Math.abs(dx) + Math.abs(dy) > 2 && !drag.moved) {
-        drag.moved = true;
-        release();
-      }
-      drag.x = event.clientX;
-      drag.y = event.clientY;
-      setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
-    },
-    onPointerUp: () => {
-      if (dragRef.current && !dragRef.current.moved) onBackgroundClick();
-      dragRef.current = null;
-    },
-    onDoubleClick: (event: React.MouseEvent<HTMLDivElement>) => {
-      if (event.target === event.currentTarget) onBackgroundDoubleClick();
-    },
-  };
-
-  const resetZoom = useCallback(() => { release(); setView((current) => ({ ...current, zoom: 1 })); }, [release]);
-  return { viewportRef, view, size, fit, frameHome, zoomBy, resetZoom, release, placed, handlers };
-}
-
 type PanelView = StudyTool;
 /** Watched this far, a video's mastery check is unlocked (the server's rule in lib/mastery/service.ts). */
 const WATCHED_PCT = 95;
@@ -340,51 +214,6 @@ const tools = [
   { view: "code", label: "Code", Icon: Code },
   { view: "ai", label: "AI", Icon: Sparkles },
 ] as const;
-
-/**
- * Ends the session: it leaves Sessions and the sidebar, and the learner goes back to the session they were in before it (or
- * the next-video picker). Progress, notes and conversations stay with the video, so studying it again picks them up.
- */
-function EndSession({ sessionId }: { sessionId: string }) {
-  const router = useRouter();
-  const { remove } = useSessions();
-  const [open, setOpen] = useState(false);
-  const [state, setState] = useState<"idle" | "ending" | "error">("idle");
-  const rootRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
-    document.addEventListener("pointerdown", close);
-    document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", onKey); };
-  }, [open]);
-  async function end() {
-    setState("ending");
-    try {
-      await remove(sessionId);
-      if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-      router.push("/app/sessions");
-    } catch {
-      setState("error");
-    }
-  }
-  return (
-    <div className="session-end" ref={rootRef}>
-      <button className="session-icon-button" type="button" aria-label="End session" title="End session" aria-expanded={open} aria-haspopup="dialog" onClick={() => { setOpen(!open); setState("idle"); }}><CircleStop aria-hidden="true" /></button>
-      {open ? (
-        <div className="session-end-popover" role="dialog" aria-label="End this session">
-          <p><strong>End this session?</strong> It leaves your sessions. If you&apos;ve finished it, it moves to your Library; your progress and notes stay with the video.</p>
-          {state === "error" ? <p className="session-end-error" role="alert">The session couldn&apos;t be ended. Try again.</p> : null}
-          <div className="session-end-actions">
-            <button type="button" onClick={() => setOpen(false)}>Cancel</button>
-            <button className="is-danger" type="button" disabled={state === "ending"} onClick={() => void end()}>{state === "ending" ? "Ending…" : "End session"}</button>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 /** The session's empty frame, shown while the route loads so the shell header never flashes in. */
 export function VideoSessionLoading() {
@@ -403,12 +232,6 @@ function fullView(pane: { width: number; height: number }): CanvasRect {
   return { x: -width / 2, y: -height / 2, width, height };
 }
 
-/** Where the learner left a session's canvas, clamped to what the server accepts. */
-function savedCanvas(view: CanvasView, focused: boolean): NonNullable<StudyWorkspace["canvas"]> {
-  const bound = (value: number) => Math.round(Math.min(1e6, Math.max(-1e6, value)));
-  return { x: bound(view.x), y: bound(view.y), zoom: clampZoom(view.zoom), focused };
-}
-
 export function VideoSession({ session, active }: { session: StudySessionView; active: StudySessionResource }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -421,7 +244,8 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   // The tool opens from the link the learner followed (the sidebar's parts), else the pending check, else where they left it.
   const [initialPanel] = useState<PanelView | null>(() => {
     const linked = panelForSlug(urlTool);
-    if (linked !== undefined) return linked;
+    // A video has no project guide; a link to one opens the canvas.
+    if (linked !== undefined) return linked === "guide" ? null : linked;
     return checkPending ? "check" : session.workspace.panel ?? null;
   });
   const [panel, setPanel] = useState<PanelView | null>(initialPanel);
@@ -429,7 +253,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   const [opened, setOpened] = useState<PanelView[]>(initialPanel ? [initialPanel] : []);
   const panelRef = useRef(panel);
   panelRef.current = panel;
-  // The Code tool shows itself on lessons the transcript says call for coding practice; the sidebar's Code Exercises opens it anywhere.
+  // The server's coding capability controls both the tool rail and the exercise overlay.
   const codingProfile = useCodingProfile(session.id, active.resourceId);
   // Luny keeps talking while Notes is hidden; the Notes tool shows she is still on.
   const [lunyOn, setLunyOn] = useState(false);
@@ -455,10 +279,11 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   // The learner talking over the lesson wants to discuss it; Luny never talks over the video.
   const onTurn = useCallback(() => { if (lessonActions.current.isPlaying()) lessonActions.current.pause(); }, []);
   const applyControl = useCallback((control: LessonControl) => {
-    if (control.seekMs !== null) lessonActions.current.seek(control.seekMs);
+    if (control.seekMs !== null && control.seekMs !== undefined) lessonActions.current.seek(control.seekMs);
     if (control.playback === "play") lessonActions.current.play();
     if (control.playback === "pause") lessonActions.current.pause();
   }, []);
+  const go = useCallback((place: StudyAnchor) => { if (place.kind === "video") lessonActions.current.seek(place.positionMs); }, []);
   useEffect(() => { if (panel !== "notes") vision.stop(); }, [panel, vision.stop]);
   const course = session.course;
   const layout = useMemo(() => (course ? layoutCourse(course) : null), [course]);
@@ -549,6 +374,10 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
     if (view) setOpened((current) => (current.includes(view) ? current : [...current, view]));
   }, []);
 
+  useEffect(() => {
+    if (panel === "code" && codingProfile && !codingProfile.eligible) collapse();
+  }, [panel, codingProfile]);
+
   // Practice covers the lesson, so the lesson waits for it.
   useEffect(() => { if (panel === "code" && lessonActions.current.isPlaying()) lessonActions.current.pause(); }, [panel]);
 
@@ -611,7 +440,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
           <div className="session-actions">
             <fieldset className="session-tools">
               <legend className="sr-only">Study tools</legend>
-              {tools.filter(({ view: tool }) => tool !== "code" || codingProfile?.recommended || panel === "code").map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
+              {tools.filter(({ view: tool }) => tool !== "code" || codingProfile?.eligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
             {course ? <span className="session-course-count" title="Lessons completed">{completedCount}/{lessons.length} done</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
@@ -625,24 +454,20 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
               <div ref={lessonCard} className={`session-card${selected ? " is-selected" : ""}`} style={{ width: card.width, height: card.height, left: card.x, top: card.y }}>{player}</div>
             )}
           </div>
-          <div className="session-zoom" role="toolbar" aria-label="Zoom">
+          <ZoomBar canvas={canvas}>
             {course && !fullscreen ? focused
               ? <button type="button" aria-label="Show the whole course" title="Whole course" onClick={() => setFocused(false)}><Workflow aria-hidden="true" /></button>
               : <button type="button" aria-label="Focus the current lesson" title="Current lesson" onClick={() => setFocused(true)}><Crosshair aria-hidden="true" /></button> : null}
-            <button type="button" aria-label="Zoom to fit" title="Zoom to fit" onClick={canvas.fit}><Maximize aria-hidden="true" /></button>
-            <button className="session-zoom-value" type="button" aria-label="Reset zoom to 100%" title="Reset zoom" onClick={canvas.resetZoom}>{Math.round(view.zoom * 100)}%</button>
-            <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => canvas.zoomBy(1.2)}><Plus aria-hidden="true" /></button>
-            <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => canvas.zoomBy(1 / 1.2)}><Minus aria-hidden="true" /></button>
-          </div>
+          </ZoomBar>
         </div>
       </div>
       {/* Practice covers the session in LeetCode's layout; the lesson stays mounted, paused, underneath. */}
-      {codePanel ? <div className="coding-overlay" hidden={codePanel.hidden}><CodingWorkspace key={active.resourceId} sessionId={session.id} onSeek={lesson.seek} onClose={collapse} /></div> : null}
+      {codePanel && codingProfile?.eligible ? <div className="coding-overlay" hidden={codePanel.hidden}><CodingWorkspace key={active.resourceId} sessionId={session.id} onSeek={lesson.seek} onClose={collapse} /></div> : null}
       <aside className="session-panel" aria-label="Side panel" data-view={panel ?? undefined} hidden={!panel || panel === "code"} onPointerDown={collapseSidebar}>
         {panel === "ai" || panel === "notes" ? <PanelResizer key={panel} label={panel === "ai" ? "Resize chat" : "Resize notes"} storageKey={`learnspace:${panel === "ai" ? "chat" : "notes"}-width`} /> : null}
-        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} title={active.title} active={panel === "notes"} tutor={{ lesson: lessonState, capture: vision.capture, onControl: applyControl, onTurn, onSeek: lesson.seek, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onVoice: setLunyOn }} onCollapse={collapse} /></div> : null}
-        {checkPanel ? <div className="session-tool-slot" {...checkPanel}><MasteryCheck key={`${active.resourceId}-${watched}`} sessionId={session.id} resourceId={active.resourceId} next={masteryNext} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
-        {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} currentMs={lesson.currentMs} code={null} onSeek={lesson.seek} onCollapse={collapse} /></div> : null}
+        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} title={active.title} active={panel === "notes"} tutor={{ lesson: lessonState, capture: vision.capture, onControl: applyControl, onTurn, onGo: go, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onVoice: setLunyOn }} onCollapse={collapse} /></div> : null}
+        {checkPanel ? <div className="session-tool-slot" {...checkPanel}><MasteryCheck key={`${active.resourceId}-${watched}`} sessionId={session.id} resourceId={active.resourceId} next={masteryNext} place={{ kind: "video", positionMs: 0 }} onGo={go} onCollapse={collapse} /></div> : null}
+        {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} place={{ kind: "video", positionMs: lesson.currentMs }} code={null} onGo={go} onCollapse={collapse} /></div> : null}
       </aside>
     </main>
   );

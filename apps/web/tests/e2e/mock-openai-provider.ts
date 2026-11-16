@@ -12,15 +12,15 @@ function evidenceNumber(user: string, text: string): number {
 function reply(user: string): unknown {
   const question = user.split("<question>")[1] ?? "";
   if (/for dinner/i.test(question)) return { outcome: "off_topic", blocks: [], followUps: [], learner };
-  if (/value of e\b/i.test(question)) return { outcome: "general", blocks: [{ type: "text", text: "**e** is about 2.71828, the base of the natural logarithm: $e = \\lim_{n \\to \\infty} (1 + 1/n)^n$.", cite: [] }], followUps: ["Where does e show up in growth?"], learner };
+  if (/value of e\b/i.test(question)) return { outcome: "general", blocks: [{ type: "text", basis: "source", text: "**e** is about 2.71828, the base of the natural logarithm: $e = \\lim_{n \\to \\infty} (1 + 1/n)^n$.", cite: [] }], followUps: ["Where does e show up in growth?"], learner };
   const rate = evidenceNumber(user, "learning rate decides");
-  if (/\nDoubt: /.test(question)) return { outcome: "answer", blocks: [{ type: "text", text: "Each step moves **against** the gradient because that is the way downhill.", cite: [rate] }], followUps: [], learner };
+  if (/\nDoubt: /.test(question)) return { outcome: "answer", blocks: [{ type: "text", basis: "source", text: "Each step moves **against** the gradient because that is the way downhill.", cite: [rate] }], followUps: [], learner };
   const overshoot = evidenceNumber(user, "overshoot");
   return {
     outcome: "answer",
     blocks: [
-      { type: "concept", term: "Learning rate", definition: "How big each step against the gradient is.", cite: [rate] },
-      { type: "check", question: "What happens if the learning rate is too large?", options: ["The steps overshoot and the loss can blow up", "Training stops immediately", "The gradient becomes zero"], answer: 0, explanation: "Large steps overshoot the minimum.", hint: "Think about what a big step does near the bottom.", concept: "Learning rate", cite: [overshoot] },
+      { type: "concept", basis: "source", term: "Learning rate", definition: "How big each step against the gradient is.", cite: [rate] },
+      { type: "check", basis: "source", question: "What happens if the learning rate is too large?", options: ["The steps overshoot and the loss can blow up", "Training stops immediately", "The gradient becomes zero"], answer: 0, explanation: "Large steps overshoot the minimum.", hint: "Think about what a big step does near the bottom.", concept: "Learning rate", cite: [overshoot] },
     ],
     followUps: ["What if the learning rate is too small?"],
     learner,
@@ -62,7 +62,7 @@ const server = createServer((request, response) => {
     // The notes scribe: writes the first exchange up as a paragraph and a diagram, and rewrites it when asked to.
     const scribe = () => {
       const conversation = user.split("<conversation>")[1] ?? "";
-      const fields = { after: null, done: null };
+      const fields = { after: null, done: null, cite: null };
       if (/Actually change/.test(conversation)) return { ops: [{ ...fields, action: "update", id: "p1", type: "paragraph", text: "Smaller steps can help avoid overshooting." }] };
       if (user.includes("p1 |")) return { ops: [] };
       return { ops: [
@@ -83,7 +83,7 @@ const server = createServer((request, response) => {
       { type: "code", text: "python\nfor step in range(100):\n    w -= lr * grad(w)" },
       { type: "takeaway", text: "The gradient gives the direction; the learning rate gives the size." },
       { type: "aside", text: "Momentum and Adam are common refinements the video does not cover." },
-    ] });
+    ].map((block) => ({ ...block, cite: null })) });
     // Luny out loud: plain text, with a drawing when asked for one; she listens to anything else.
     const talker = () => {
       const said = /\nLearner: (.*)$/.exec(user)?.[1] ?? null;

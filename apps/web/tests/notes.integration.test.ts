@@ -10,6 +10,7 @@ const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.D
 const usage = { inputTokens: 2_000, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: 200, reasoningTokens: 0, fast: false };
 const turn = (utterance: string | null, playing = false): VoiceTurnRequest => ({ utterance, positionMs: 70_000, playing, frame: null, watchedFromMs: null });
 const op = (value: Partial<NoteOp> & Pick<NoteOp, "action" | "id">): NoteOp => ({ after: null, type: null, text: null, done: null, ...value });
+const scribeOp = (value: NoteOp): NotesScribeOutput["ops"][number] => ({ ...value, cite: null });
 
 /** Replies with the next scripted output, streamed a few characters at a time as the provider does. */
 function scriptedModel(outputs: Array<NotesScribeOutput | string | (() => Promise<NotesScribeOutput>)>, calls: TutorModelRequest[]): TutorModel {
@@ -99,13 +100,13 @@ test("Luny answers out loud with her lesson commands taken out, each exchange is
 
     const calls: TutorModelRequest[] = [];
     const model = scriptedModel([
-      { ops: [op({ action: "insert", id: "h1", type: "heading", text: "Learning rate" }), op({ action: "insert", id: "i1", type: "idea", text: "Big steps overshoot [1:00]" })] },
+      { ops: [scribeOp(op({ action: "insert", id: "h1", type: "heading", text: "Learning rate" })), scribeOp(op({ action: "insert", id: "i1", type: "idea", text: "Big steps overshoot [1:00]" }))] },
       // The learner edits Luny's block while the scribe is still writing.
       async () => {
         const edited = await notes.editNotes(owner.id, sessionId, { ops: [op({ action: "update", id: "i1", text: "Big steps can overshoot the minimum" })] });
         assert.equal(edited.revision, 2);
         assert.equal(edited.canUndo, false, "undo never reverts the learner's own edits");
-        return { ops: [op({ action: "update", id: "i1", type: "decision", text: "Luny's rewrite" }), op({ action: "insert", id: "q1", after: "h1", type: "question", text: "What about momentum?" })] };
+        return { ops: [scribeOp(op({ action: "update", id: "i1", type: "decision", text: "Luny's rewrite" })), scribeOp(op({ action: "insert", id: "q1", after: "h1", type: "question", text: "What about momentum?" }))] };
       },
       "{\"ops\": [",
     ], calls);
@@ -205,12 +206,12 @@ test("Luny answers out loud with her lesson commands taken out, each exchange is
     await failed.write?.();
     assert.equal((await notes.getNotes(owner.id, sessionId)).guide, "failed");
     const guideModel = scriptedModel([JSON.stringify({ blocks: [
-      { type: "heading", text: "Gradient descent [0:00]" },
-      { type: "paragraph", text: "Each step moves against the gradient: $$\\theta \\leftarrow \\theta - \\eta \\nabla L$$" },
-      { type: "eli5", text: "Walk downhill in the fog, one careful step at a time." },
-      { type: "step", text: "1. Compute the gradient." },
-      { type: "diagram", text: "not a diagram" },
-      { type: "table", text: "| Rate | Effect |\n|---|---|\n| Small | Slow |\n| Large | Overshoots |" },
+      { type: "heading", text: "Gradient descent [0:00]", cite: null },
+      { type: "paragraph", text: "Each step moves against the gradient: $$\\theta \\leftarrow \\theta - \\eta \\nabla L$$", cite: null },
+      { type: "eli5", text: "Walk downhill in the fog, one careful step at a time.", cite: null },
+      { type: "step", text: "1. Compute the gradient.", cite: null },
+      { type: "diagram", text: "not a diagram", cite: null },
+      { type: "table", text: "| Rate | Effect |\n|---|---|\n| Small | Slow |\n| Large | Overshoots |", cite: null },
     ] })], guideCalls);
     const started = await notes.startGuide(owner.id, sessionId, { model: guideModel });
     assert.equal(started.notes.guide, "writing");
@@ -270,7 +271,7 @@ test("a long lecture's guide is written in parts over waves, and an earlier one-
   const model: TutorModel = async (request) => {
     calls.push(request);
     const part = /part (\d+) of (\d+): the stretch from ([\d:]+)/.exec(request.user);
-    const text = JSON.stringify({ blocks: [{ type: "heading", text: `Part ${part?.[1] ?? "1"} [${part?.[3] ?? "0:00"}]` }, { type: "paragraph", text: `What part ${part?.[1] ?? "1"} teaches.` }] });
+    const text = JSON.stringify({ blocks: [{ type: "heading", text: `Part ${part?.[1] ?? "1"} [${part?.[3] ?? "0:00"}]`, cite: null }, { type: "paragraph", text: `What part ${part?.[1] ?? "1"} teaches.`, cite: null }] });
     return { text, refusal: null, usage, firstOutputMs: 50, latencyMs: 300 };
   };
   try {

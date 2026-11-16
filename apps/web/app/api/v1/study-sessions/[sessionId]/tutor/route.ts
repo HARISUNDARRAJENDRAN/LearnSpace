@@ -43,7 +43,7 @@ export async function POST(request: Request, context: Context) {
     }
     const input = tutorTurnRequestSchema.parse(json);
     // The question is embedded while the turn is admitted; a reply or a doubt is embedded with its context, so it waits.
-    embedding = input.replyTo || input.doubt ? null : embedText(input.question, request.signal);
+    embedding = "positionMs" in input && !input.replyTo && !input.doubt ? embedText(input.question, request.signal) : null;
     turn = await admitTutorTurn(session.user.id, sessionId, input);
   } catch (error) {
     return authErrorResponse(error);

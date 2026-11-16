@@ -1,5 +1,6 @@
 "use client";
 
+import type { PaperCitationAnchor, StudyAnchor } from "@learnspace/shared";
 import type { NoteBlock, NoteBlockType, NoteOp } from "@learnspace/shared/notes";
 import { Extension, InputRule, type JSONContent, Node } from "@tiptap/core";
 import { type EditorState, Plugin, PluginKey, TextSelection, type Transaction } from "@tiptap/pm/state";
@@ -9,14 +10,15 @@ import { EditorContent, NodeViewContent, type NodeViewProps, NodeViewWrapper, Re
 import StarterKit from "@tiptap/starter-kit";
 import "katex/dist/katex.min.css";
 import katex from "katex";
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useRef } from "react";
 import { MATH } from "../../lib/math";
 import { type MediaKind, NoteMedia } from "./NoteMedia";
+import { PlaceIcon, placeLabel } from "./place";
 import { diffBlocks, type PageBlock, replaceChanged } from "./notes-diff";
 
 const MEDIA = new Set<NoteBlockType>(["diagram", "image", "link", "code", "table"]);
 /** The label over each kind of callout in the study guide. */
-export const CALLOUT: Partial<Record<NoteBlockType, string>> = { eli5: "In plain words", example: "Example", takeaway: "Key takeaway", aside: "Beyond the video" };
+export const CALLOUT: Partial<Record<NoteBlockType, string>> = { eli5: "In plain words", example: "Example", takeaway: "Key takeaway", aside: "Beyond the lesson" };
 // **bold** and `code` in a note; math is found first, so neither is read inside a formula.
 const MARKS = /(\*\*[^*\n]+?\*\*|`[^`\n]+?`)/;
 const SAVE_AFTER_MS = 700;
@@ -25,7 +27,7 @@ const newId = () => crypto.randomUUID().slice(0, 8);
 
 function toDoc(blocks: NoteBlock[], revision: number): JSONContent {
   const content = blocks.map((block): JSONContent => {
-    const attrs = { id: block.id, kind: block.type, done: block.done, by: block.by, fresh: block.by === "luna" && block.rev === revision };
+    const attrs = { id: block.id, kind: block.type, done: block.done, by: block.by, fresh: block.by === "luna" && block.rev === revision, anchors: block.anchors ?? null };
     return MEDIA.has(block.type) ? { type: "noteMedia", attrs: { ...attrs, text: block.text } } : { type: "noteBlock", attrs, content: block.text ? [{ type: "text", text: block.text }] : [] };
   });
   return { type: "doc", content: content.length ? content : [{ type: "noteBlock", attrs: { id: newId(), kind: "paragraph" } }] };
@@ -38,9 +40,18 @@ const fromDoc = (doc: PMNode): PageBlock[] => {
 };
 
 const attribute = (value: unknown) => ({ default: value, rendered: false });
+// Node views render inside the editor, so the page hands them the reader's "go to this page" through context.
+const GoContext = createContext<(place: StudyAnchor) => void>(() => undefined);
+
+/** The paper passages a note was written from, as page chips that open them. */
+function NoteAnchors({ anchors }: { anchors: PaperCitationAnchor[] | null }) {
+  const go = useContext(GoContext);
+  const pages = [...new Map((anchors ?? []).map((anchor) => [anchor.page, anchor])).values()];
+  return pages.length ? <span className="notes-anchors" contentEditable={false}>{pages.map((anchor) => <button key={anchor.chunkId} className="tutor-cite" type="button" title={`Go to ${placeLabel(anchor)} of the paper`} onClick={() => go(anchor)}><PlaceIcon place={anchor} />{placeLabel(anchor)}</button>)}</span> : null;
+}
 
 function BlockView({ node, updateAttributes }: NodeViewProps) {
-  const { kind, fresh, done } = node.attrs as { kind: NoteBlockType; fresh: boolean; done: boolean };
+  const { kind, fresh, done, anchors } = node.attrs as { kind: NoteBlockType; fresh: boolean; done: boolean; anchors: PaperCitationAnchor[] | null };
   const callout = CALLOUT[kind];
   return <NodeViewWrapper className={`notes-block is-${kind}${callout ? " is-callout" : ""}${fresh ? " is-fresh" : ""}`}>
     {kind === "task" ? <input type="checkbox" contentEditable={false} checked={done} aria-label="Done" onChange={(event) => updateAttributes({ done: event.target.checked })} /> : null}
@@ -48,6 +59,7 @@ function BlockView({ node, updateAttributes }: NodeViewProps) {
     {kind === "heading" ? <NodeViewContent<"h3"> as="h3" className="notes-block-text" />
       : kind === "subheading" ? <NodeViewContent<"h4"> as="h4" className="notes-block-text" />
       : <NodeViewContent<"p"> as="p" className="notes-block-text" />}
+    {kind === "heading" || kind === "subheading" ? null : <NoteAnchors anchors={anchors} />}
   </NodeViewWrapper>;
 }
 
@@ -65,7 +77,7 @@ const NoteBlockNode = Node.create({
   group: "block",
   content: "text*",
   defining: true,
-  addAttributes: () => ({ id: attribute(null), kind: attribute("paragraph"), done: attribute(false), by: attribute("you"), fresh: attribute(false) }),
+  addAttributes: () => ({ id: attribute(null), kind: attribute("paragraph"), done: attribute(false), by: attribute("you"), fresh: attribute(false), anchors: attribute(null) }),
   parseHTML: () => [{ tag: "p" }, { tag: "h1" }, { tag: "h2" }, { tag: "h3" }, { tag: "li" }, { tag: "div[data-note]" }],
   renderHTML: () => ["div", { "data-note": "" }, 0],
   addNodeView: () => ReactNodeViewRenderer(BlockView),
@@ -156,11 +168,11 @@ function inlineDecorations(state: EditorState): Decoration[] {
 }
 
 /** Every note keeps a unique id (a split or a paste copies one), and lesson timestamps like [12:34] seek the video. */
-const NotesBehaviour = Extension.create<{ onSeek: (ms: number) => void }>({
+const NotesBehaviour = Extension.create<{ onGo: (place: StudyAnchor) => void }>({
   name: "notesBehaviour",
-  addOptions: () => ({ onSeek: () => undefined }),
+  addOptions: () => ({ onGo: () => undefined }),
   addProseMirrorPlugins() {
-    const { onSeek } = this.options;
+    const { onGo } = this.options;
     const focus = (value: boolean) => (view: EditorView) => { view.dispatch(view.state.tr.setMeta(focusKey, value)); return false; };
     return [
       new Plugin({
@@ -180,7 +192,7 @@ const NotesBehaviour = Extension.create<{ onSeek: (ms: number) => void }>({
             const kind = node.attrs.kind === "bullet" || node.attrs.kind === "task" || node.textContent ? node.attrs.kind : "paragraph";
             const fresh = newId();
             seen.add(fresh);
-            tr = (tr ?? state.tr).setNodeMarkup(offset, undefined, { ...node.attrs, id: fresh, kind, done: false, by: "you", fresh: false });
+            tr = (tr ?? state.tr).setNodeMarkup(offset, undefined, { ...node.attrs, id: fresh, kind, done: false, by: "you", fresh: false, anchors: null });
           });
           return tr;
         },
@@ -201,7 +213,7 @@ const NotesBehaviour = Extension.create<{ onSeek: (ms: number) => void }>({
           handleClick: (_view, _pos, event) => {
             const time = (event.target as HTMLElement | null)?.closest<HTMLElement>(".notes-time");
             if (!time) return false;
-            onSeek(Number(time.dataset.ms));
+            onGo({ kind: "video", positionMs: Number(time.dataset.ms) });
             return true;
           },
         },
@@ -214,7 +226,7 @@ const NotesBehaviour = Extension.create<{ onSeek: (ms: number) => void }>({
  * The notebook as one editor. The learner writes anywhere; a moment after they stop, their changes are saved as edits.
  * Luny's edits arrive as new saved notes and replace the page, unless the learner has unsaved changes, which go first.
  */
-export function NotesEditor({ blocks, revision, onOps, onSeek }: { blocks: NoteBlock[]; revision: number; onOps: (ops: NoteOp[]) => void; onSeek: (ms: number) => void }) {
+export function NotesEditor({ blocks, revision, onOps, onGo }: { blocks: NoteBlock[]; revision: number; onOps: (ops: NoteOp[]) => void; onGo: (place: StudyAnchor) => void }) {
   // What the page showed before the learner's unsaved changes: their edits are the difference from it, never from a newer
   // version with Luny's latest edits, which would undo them.
   const base = useRef<PageBlock[]>(blocks);
@@ -222,13 +234,13 @@ export function NotesEditor({ blocks, revision, onOps, onSeek }: { blocks: NoteB
   view.current = { blocks, revision };
   const dirty = useRef(false);
   const timer = useRef<number | undefined>(undefined);
-  const latest = useRef({ onOps, onSeek });
-  latest.current = { onOps, onSeek };
+  const latest = useRef({ onOps, onGo });
+  latest.current = { onOps, onGo };
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
       StarterKit.configure({ document: false, paragraph: false, heading: false, blockquote: false, codeBlock: false, bulletList: false, orderedList: false, listItem: false, listKeymap: false, horizontalRule: false, hardBreak: false, bold: false, italic: false, strike: false, code: false, underline: false, link: false, trailingNode: false }),
-      Doc, NoteBlockNode, NoteMediaNode, NotesBehaviour.configure({ onSeek: (ms) => latest.current.onSeek(ms) }),
+      Doc, NoteBlockNode, NoteMediaNode, NotesBehaviour.configure({ onGo: (place) => latest.current.onGo(place) }),
     ],
     content: toDoc(blocks, revision),
     editorProps: { attributes: { class: "notes-page", "aria-label": "Notes", spellcheck: "true" } },
@@ -267,5 +279,5 @@ export function NotesEditor({ blocks, revision, onOps, onSeek }: { blocks: NoteB
   // Node views render as the page changes, which React cannot do inside an effect, so the load waits a microtask.
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new saved version is the trigger; load reads it from the ref.
   useEffect(() => { if (editor) queueMicrotask(() => load(editor)); }, [editor, blocks, revision]);
-  return <EditorContent editor={editor} className="notes-editor" />;
+  return <GoContext.Provider value={onGo}><EditorContent editor={editor} className="notes-editor" /></GoContext.Provider>;
 }

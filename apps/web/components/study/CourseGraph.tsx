@@ -6,11 +6,12 @@ export type CanvasRect = { x: number; y: number; width: number; height: number }
 
 type Lesson = StudySessionCourse["sections"][number]["lessons"][number];
 type PlacedLesson = { lesson: Lesson; number: number; x: number; y: number; row: number };
+/** A lesson node's size: the media (a video's player, a paper's page) and the caption under it. */
+export type CourseCard = { width: number; mediaHeight: number };
 type Frame = { id: string; title: string; hue: number; x: number; y: number; width: number; height: number };
 
-export const LESSON_WIDTH = 800;
-export const LESSON_MEDIA_HEIGHT = 450;
-const LESSON_HEIGHT = LESSON_MEDIA_HEIGHT + 96;
+export const VIDEO_CARD: CourseCard = { width: 800, mediaHeight: 450 };
+const CAPTION_HEIGHT = 96;
 const COLUMNS = 3;
 const GAP_X = 140;
 const GAP_Y = 150;
@@ -23,7 +24,9 @@ const SECTION_HUES = [8, 212, 145, 280, 38];
  * Lays the course out as a board: each section is a tinted frame, and its lessons run in a snake,
  * left to right then right to left, so every lesson sits right beside the one it leads to.
  */
-export function layoutCourse(course: StudySessionCourse) {
+export function layoutCourse(course: StudySessionCourse, card: CourseCard = VIDEO_CARD) {
+  const LESSON_WIDTH = card.width;
+  const LESSON_HEIGHT = card.mediaHeight + CAPTION_HEIGHT;
   const lessons: PlacedLesson[] = [];
   const frames: Frame[] = [];
   let top = 0;
@@ -53,11 +56,14 @@ export function layoutCourse(course: StudySessionCourse) {
   for (const lesson of lessons) lesson.y += shiftY;
   for (const frame of frames) frame.y += shiftY;
   const bounds: CanvasRect = { x: -widest / 2, y: shiftY, width: widest, height: bottom };
-  return { lessons, frames, bounds };
+  return { lessons, frames, bounds, card };
 }
 
 /** An arrow from one lesson to the next: straight along a row, a curve where the path turns or changes section. */
-function edgePath(from: PlacedLesson, to: PlacedLesson): string {
+function edgePath(from: PlacedLesson, to: PlacedLesson, card: CourseCard): string {
+  const LESSON_WIDTH = card.width;
+  const LESSON_MEDIA_HEIGHT = card.mediaHeight;
+  const LESSON_HEIGHT = card.mediaHeight + CAPTION_HEIGHT;
   if (from.row === to.row) {
     const forward = to.x > from.x;
     const y = from.y + LESSON_MEDIA_HEIGHT / 2;
@@ -80,12 +86,21 @@ function edgeState(from: Lesson, to: Lesson): StudyCourseLessonState {
 
 const stateLabel: Record<StudyCourseLessonState, string> = { completed: "Completed", current: "Now studying", locked: "Locked" };
 
+/** A paper not being read shows as its first page would read: title, authors and abstract. */
+function PaperPreview({ lesson }: { lesson: Lesson }) {
+  return <div className="course-node-paper">
+    <h4>{lesson.title}</h4>
+    {lesson.byline ? <p className="course-node-byline">{lesson.byline}</p> : null}
+    {lesson.summary ? <p className="course-node-abstract"><strong>Abstract.</strong> {lesson.summary}</p> : null}
+  </div>;
+}
+
 /**
  * The course board drawn into the canvas layer; the current lesson's node holds the live player.
  * Focused, only that node renders. The empty slots keep the player's node in place, so the video keeps playing.
  */
-export function CourseGraph({ course, player, focusRect }: { course: StudySessionCourse; player: ReactNode; focusRect: CanvasRect | null }) {
-  const { lessons, frames, bounds } = layoutCourse(course);
+export function CourseGraph({ course, card = VIDEO_CARD, player, focusRect }: { course: StudySessionCourse; card?: CourseCard; player: ReactNode; focusRect: CanvasRect | null }) {
+  const { lessons, frames, bounds } = layoutCourse(course, card);
   const focused = focusRect !== null;
   const shown = focused ? lessons.filter(({ lesson }) => lesson.state === "current") : lessons;
   return (
@@ -103,22 +118,23 @@ export function CourseGraph({ course, player, focusRect }: { course: StudySessio
           const from = lessons[index];
           if (!from) return null;
           const state = edgeState(from.lesson, to.lesson);
-          return <path key={to.lesson.resourceId} className={`course-edge is-${state}`} d={edgePath(from, to)} markerEnd={`url(#course-arrow-${state})`} />;
+          return <path key={to.lesson.resourceId} className={`course-edge is-${state}`} d={edgePath(from, to, card)} markerEnd={`url(#course-arrow-${state})`} />;
         })}
       </svg>}
       <ol className="course-lessons" aria-label={`${course.title} lessons`}>
         {shown.map(({ lesson, number, x, y }) => (
-          <li key={lesson.resourceId} className={`course-node is-${lesson.state}${focusRect ? " is-full-view" : ""}`} style={focusRect ? { left: focusRect.x, top: focusRect.y, width: focusRect.width } : { left: x, top: y, width: LESSON_WIDTH }} aria-current={lesson.state === "current" ? "step" : undefined}>
-            <div className="course-node-media" style={{ height: focusRect ? focusRect.height : LESSON_MEDIA_HEIGHT }}>
+          <li key={lesson.resourceId} className={`course-node is-${lesson.state}${focusRect ? " is-full-view" : ""}`} style={focusRect ? { left: focusRect.x, top: focusRect.y, width: focusRect.width } : { left: x, top: y, width: card.width }} aria-current={lesson.state === "current" ? "step" : undefined}>
+            <div className={`course-node-media is-${lesson.type}`} style={{ height: focusRect ? focusRect.height : card.mediaHeight }}>
               {lesson.state === "current" ? player : (
                 <>
+                  {lesson.type === "paper" ? <PaperPreview lesson={lesson} /> : null}
                   {lesson.youtubeId ? <img src={`https://i.ytimg.com/vi/${lesson.youtubeId}/hqdefault.jpg`} alt="" loading="lazy" draggable={false} /> : null}
                   <span className="course-node-badge">{lesson.state === "completed" ? <Check aria-hidden="true" /> : <Lock aria-hidden="true" />}</span>
                 </>
               )}
             </div>
             <div className="course-node-copy">
-              <span className="course-node-meta">Lesson {number} · {stateLabel[lesson.state]}{lesson.state === "current" && lesson.progressPct > 0 ? ` · ${Math.round(lesson.progressPct)}%` : ""}</span>
+              <span className="course-node-meta">{lesson.type === "paper" ? "Paper" : "Lesson"} {number} · {stateLabel[lesson.state]}{lesson.state === "current" && lesson.progressPct > 0 ? ` · ${Math.round(lesson.progressPct)}%` : ""}</span>
               <h3 title={lesson.title}>{lesson.title}</h3>
             </div>
           </li>

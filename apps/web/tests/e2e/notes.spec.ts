@@ -193,11 +193,11 @@ test("Luny talks and moves the lesson, the scribe keeps the notebook, the learne
   await expect(panel.getByRole("cell", { name: "Overshoots [2:00]" })).toBeVisible();
   await expect(panel.locator(".notes-code .hljs-keyword", { hasText: "for" })).toBeVisible();
   await expect(panel.getByText("In plain words")).toBeVisible();
-  await expect(panel.getByText("Beyond the video")).toBeVisible();
+  await expect(panel.getByText("Beyond the lesson")).toBeVisible();
   // The formula's source is hidden while the page is only being read.
   await expect(panel.getByText(/\$\$/)).toBeHidden();
   await page.screenshot({ path: "/tmp/learnspace-notes-guide.png" });
-  await panel.getByText("Beyond the video").scrollIntoViewIfNeeded();
+  await panel.getByText("Beyond the lesson").scrollIntoViewIfNeeded();
   await page.screenshot({ path: "/tmp/learnspace-notes-guide-more.png" });
 
   // Luny moves the lesson without drawing on it, her words are spoken without the command, and the scribe writes the

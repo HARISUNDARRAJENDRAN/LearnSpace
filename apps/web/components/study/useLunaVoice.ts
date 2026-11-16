@@ -8,7 +8,8 @@ import type { SpeakReply, SpeakRequest } from "./voice/speak.worker";
 import type { VadReply, VadRequest } from "./voice/vad.worker";
 
 export type VoiceState = "off" | "loading" | "listening" | "thinking" | "speaking";
-export type LessonState = { positionMs: number | null; playing: boolean };
+/** The lesson on screen: a video's moment and whether it plays, or for a paper the page being read and any passage picked out. */
+export type LessonState = { positionMs: number | null; playing: boolean; paper?: { anchor: { kind: "paper"; page: number; sectionId?: string }; selection: string | null } };
 type Options = {
   sessionId: string;
   lesson: () => LessonState;
@@ -266,7 +267,8 @@ export function useLunaVoice(options: Options) {
     setError(null);
     if (!utterance) timing.current = null;
     const lesson = latest.current.lesson();
-    const body: VoiceTurnRequest = { utterance, positionMs: lesson.positionMs, playing: lesson.playing, frame: frame.current ?? latest.current.capture(), watchedFromMs, cue };
+    const body: VoiceTurnRequest = lesson.paper ? { utterance, anchor: lesson.paper.anchor, selection: lesson.paper.selection, cue }
+      : { utterance, positionMs: lesson.positionMs, playing: lesson.playing, frame: frame.current ?? latest.current.capture(), watchedFromMs, cue };
     frame.current = null;
     let say = "";
     let completed = false;

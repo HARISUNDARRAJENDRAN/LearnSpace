@@ -9,7 +9,7 @@ import type { PaperBlock, PaperContent, PaperReference } from "../../lib/researc
 import { MathText } from "../study/MathText";
 import { loadPdfjs, type PaperSelection } from "./PaperReader";
 
-export type PaperFocusHandle = { goTo: (target: { page?: number | null; sectionId?: string | null; chunkId?: string | null }) => void };
+export type PaperFocusHandle = { goTo: (target: { page?: number | null; sectionId?: string | null; chunkId?: string | null; reference?: number | null }) => void };
 type Theme = "paper" | "sepia" | "night";
 type Settings = { theme: Theme; size: number; columns: 1 | 2 };
 
@@ -116,10 +116,11 @@ export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocu
   }, [reference, settingsOpen, onClose]);
 
   useImperativeHandle(ref, () => ({
-    goTo: ({ page, sectionId, chunkId }) => {
+    goTo: ({ page, sectionId, chunkId, reference }) => {
       const box = scrollRef.current;
       if (!box) return;
-      const target = (chunkId && box.querySelector<HTMLElement>(`[data-chunk="${CSS.escape(chunkId)}"]`))
+      const target = (reference && box.querySelector<HTMLElement>(`.paper-focus-references li[value="${reference}"]`))
+        || (chunkId && box.querySelector<HTMLElement>(`[data-chunk="${CSS.escape(chunkId)}"]`))
         || (sectionId && box.querySelector<HTMLElement>(`[data-section="${CSS.escape(sectionId)}"]`))
         || (page && box.querySelector<HTMLElement>(`[data-page="${page}"]`));
       if (!target) return;

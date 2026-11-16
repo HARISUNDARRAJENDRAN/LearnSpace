@@ -205,28 +205,36 @@ test("E2E player error — unavailable embeds keep the StudySession usable", asy
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
 });
 
-test("E2E B — Research opens Paper Study and preserves save and reading position", async ({ page }) => {
+test("E2E B — Research opens a paper session and keeps the save and the reading position", async ({ page }) => {
   await login(page);
-  await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
-  const paper = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
+  const search = `/app/research?q=${encodeURIComponent("A deterministic Study paper")}`;
+  await page.goto(search);
+  const paper = page.locator("article.research-paper-row").filter({ hasText: "A deterministic Study paper" }).first();
   await expect(paper).toBeVisible();
-  await paper.getByRole("button", { name: "Save" }).click();
-  await expect(paper.getByRole("button", { name: "Saved" })).toBeVisible();
-  // The Library holds finished sessions only; unsaving goes through the same endpoint its old shelf used.
+  await paper.getByRole("button", { name: "Save to library" }).click();
+  await expect(paper.getByRole("button", { name: "Remove from library" })).toBeVisible();
   const unsaveResponse = await page.request.post("/api/v1/library", { data: { resourceId: paperResourceId, action: "remove" } });
   expect(unsaveResponse.status()).toBe(200);
-  await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
-  const paperAfterUnsave = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
-  await paperAfterUnsave.getByRole("button", { name: "Save" }).click();
-  await expect(paperAfterUnsave.getByRole("button", { name: "Saved" })).toBeVisible();
+  await page.goto(search);
+  const paperAfterUnsave = page.locator("article.research-paper-row").filter({ hasText: "A deterministic Study paper" }).first();
+  await paperAfterUnsave.getByRole("button", { name: "Save to library" }).click();
+  await expect(paperAfterUnsave.getByRole("button", { name: "Remove from library" })).toBeVisible();
   // Each material is a session of its own, so the paper opens beside the unfinished video from E2E A.
-  await paperAfterUnsave.getByRole("button", { name: "Study paper" }).click();
+  await paperAfterUnsave.getByRole("button", { name: "A deterministic Study paper" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
-  await expect(page.getByText("Paper source unavailable")).toBeVisible();
-  const pageInput = page.getByRole("spinbutton");
-  await pageInput.fill("2");
-  await page.getByRole("button", { name: "Save position" }).click();
-  await expect(page.getByText("Reading position saved")).toBeVisible();
+  const paperSessionId = page.url().split("/").at(-1) ?? "";
+  // The fixture's arXiv id is not a real paper, so the reader says so and the session stays usable.
+  await expect(page.getByText("This PDF couldn't be opened here.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "AI", exact: true })).toBeVisible();
+  const progressResponse = await page.request.post(`/api/v1/study-sessions/${paperSessionId}/progress`, {
+    data: { resourceId: paperResourceId, progressPct: 40, anchor: { kind: "paper", page: 2 }, event: "checkpoint", idempotencyKey: `e2e-paper-${randomUUID()}` },
+  });
+  expect(progressResponse.status()).toBe(200);
+  // The Research side of the Library keeps the saved paper with the reader's place.
+  await page.goto("/app/library?view=papers");
+  const saved = page.locator("article.research-paper-row").filter({ hasText: "A deterministic Study paper" });
+  await expect(saved.getByText("Page 2 · 40% read")).toBeVisible();
+  await expect(page.locator(".research-library-resume").filter({ hasText: "A deterministic Study paper" })).toBeVisible();
 });
 
 test("E2E D — A mixed collection starts beside the sessions already in progress", async ({ page }) => {

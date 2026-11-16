@@ -55,7 +55,7 @@ export async function getLibrarySessionContents(userId: string, sessionId: strin
         voice: voiceRows.filter((row) => row.resourceId === lesson.id).map((row) => ({ id: row.id, role: row.speaker === "you" ? "you" : "luna", text: row.text, createdAt: iso(row.createdAt) })),
         chats: threadRows.filter((thread) => thread.resourceId === lesson.id).flatMap((thread) => {
           const messages = (messagesByThread.get(thread.id) ?? []).map((row) => {
-            const view = messageView(row, null);
+            const view = messageView(row, null, lesson.type === "paper" || lesson.type === "pdf" ? "paper" : "video");
             return { id: row.id, role: view.role === "user" ? "you" : "luna", text: view.text, createdAt: view.createdAt } satisfies LibraryChatMessage;
           }).filter((message) => message.text.trim());
           return messages.length > 0 ? [{ id: thread.id, startedAt: iso(thread.startedAt), messages }] : [];

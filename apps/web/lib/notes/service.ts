@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { type Transaction, withUserTransaction } from "@learnspace/db";
 import { agentRuns, modelInvocations, resourceChunks, sessionTranscript, videoNotes } from "@learnspace/db/schema";
 import {
-  applyNoteOps, diagramSchema, NOTES_CONTRACT_VERSION, NOTES_MAX_BLOCKS, type NoteBlock, type NoteOp, noteOpSchema, type NotesEditRequest, notesGuideOutputSchema, type NotesGuideStatus, type NoteLine,
-  notesScribeOutputSchema, type NotesView, type VoiceTurnEvent, type VoiceTurnRequest,
+  applyNoteOps, diagramSchema, NOTES_CONTRACT_VERSION, NOTES_MAX_BLOCKS, type NoteBlock, type NoteOp, scribeNoteOpSchema, type NotesEditRequest, notesGuideOutputSchema, type NotesGuideStatus, type NoteLine,
+  notesScribeOutputSchema, type NotesScribeOutput, type NotesView, type VoiceTurnEvent, type VoiceTurnRequest,
 } from "@learnspace/shared/notes";
 import { strictJsonSchema } from "@learnspace/shared/tutor";
 import { and, asc, desc, eq } from "drizzle-orm";
@@ -13,10 +13,11 @@ import { AuthError } from "../auth/errors";
 import { restoreLatex } from "../math";
 import { masteryRecord } from "../mastery/service";
 import { admitNotesRequest, admitTutorGeneration, admitTutorRun, recordGlobalSpend } from "../tutor/limits";
-import { videoContext } from "../tutor/service";
+import { studyContext } from "../tutor/service";
+import { loadPaperContext, loadPaperPassages, paperCitationAnchors, retrievePaperEvidence, type PaperContext, type PaperEvidence } from "../research/paper-context";
 import { formatClock } from "../tutor/scope";
 import { isLecture, parseCommand, splitReply } from "./commands";
-import { buildGuidePrompt, buildScribePrompt, buildTalkerPrompt, CHIME_IN, GREETING, GUIDE_INSTRUCTIONS, guideParts, IDLE, lessonText, singleGuideReach, SCRIBE_INSTRUCTIONS, TALKER_INSTRUCTIONS, WAITING } from "./prompt";
+import { buildGuidePrompt, buildPaperGuidePrompt, buildPaperTalkerPrompt, buildScribePrompt, buildTalkerPrompt, CHIME_IN, GREETING, GUIDE_INSTRUCTIONS, guideParts, IDLE, lessonText, PAPER_GUIDE_INSTRUCTIONS, PAPER_SCRIBE_INSTRUCTIONS, PAPER_TALKER_INSTRUCTIONS, paperTalkerText, singleGuideReach, SCRIBE_INSTRUCTIONS, TALKER_INSTRUCTIONS, WAITING } from "./prompt";
 import { notesSources } from "./sources";
 
 export const NOTES_PURPOSE = "voice_notes";
@@ -42,7 +43,7 @@ const RETRYABLE = /^(stalled|provider_unreachable|provider_stream_broken|provide
 
 type History = { revision: number; blocks: NoteBlock[] };
 type Row = { revision: number; blocks: NoteBlock[]; history: History[]; guideStatus: string | null; guideStartedAt: Date | null };
-type Video = Awaited<ReturnType<typeof videoContext>>;
+type Video = Awaited<ReturnType<typeof studyContext>>;
 const EMPTY: Row = { revision: 0, blocks: [], history: [], guideStatus: null, guideStartedAt: null };
 
 /** The newest undo steps that fit: at most MAX_UNDO pages, and no more blocks in all than MAX_UNDO_BLOCKS. */
@@ -84,7 +85,7 @@ async function readRow(tx: Transaction, userId: string, resourceId: string, lock
 
 /** The notes for the video a session the learner owns is on now. */
 async function readNotes(tx: Transaction, userId: string, sessionId: string, lock: boolean): Promise<{ video: Video; row: Row }> {
-  const video = await videoContext(tx, userId, sessionId);
+  const video = await studyContext(tx, userId, sessionId);
   return { video, row: await readRow(tx, userId, video.resourceId, lock) };
 }
 
@@ -116,14 +117,14 @@ export async function editNotes(userId: string, sessionId: string, request: Note
 }
 
 /** Records one model call against the run: cost, latency and how it ended. */
-async function closeRun(tx: Transaction, runId: string, kind: "talk" | "scribe" | "guide", usage: TutorUsage | null, latencyMs: number | null, failure: string | null): Promise<void> {
+async function closeRun(tx: Transaction, runId: string, kind: "talk" | "scribe" | "guide", usage: TutorUsage | null, latencyMs: number | null, failure: string | null, firstOutputMs: number | null = null): Promise<void> {
   const costUsd = usage ? estimateCostUsd(usage) : 0;
   const effort = TUTOR_MODEL.depths[kind === "talk" ? "quick" : kind === "guide" ? "long" : "edit"].effort;
   // Three independent writes, sent together on the transaction's connection: one round trip instead of three.
   await Promise.all([
     usage ? tx.insert(modelInvocations).values({
       agentRunId: runId, provider: TUTOR_MODEL.provider, modelName: TUTOR_MODEL.id, purpose: `${NOTES_PURPOSE}:${kind}:${effort}`, promptTemplateId: `notes-${kind === "talk" ? "talker" : kind}`, promptTemplateVer: NOTES_CONTRACT_VERSION,
-      inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens, reasoningTokens: usage.reasoningTokens, latencyMs,
+    inputTokens: usage.inputTokens, cachedTokens: usage.cachedTokens, outputTokens: usage.outputTokens, reasoningTokens: usage.reasoningTokens, firstOutputMs, latencyMs,
       estimatedCostUsd: costUsd.toFixed(8), cacheStatus: "miss", safetyStatus: failure ?? "ok", completedAt: new Date(),
     }) : null,
     recordGlobalSpend(tx, costUsd),
@@ -171,7 +172,7 @@ async function recentLines(tx: Transaction, sessionId: string, resourceId: strin
   return { lines: rows.reverse().map(({ speaker, text }) => ({ speaker, text })) as NoteLine[], positionMs: rows.find((row) => row.positionMs !== null)?.positionMs ?? null };
 }
 
-type Prepared = { video: Video; row: Row; chunks: Chunk[]; lines: NoteLine[]; positionMs: number | null; record: string; runId: string };
+type Prepared = { video: Video; row: Row; chunks: Chunk[]; lines: NoteLine[]; positionMs: number | null; record: string; runId: string; paper: PaperContext | null };
 
 /** Thrown inside the run's transaction to roll back a run whose turn turned out not to go ahead. */
 class Skipped extends Error {}
@@ -196,7 +197,7 @@ function readOnly<T>(userId: string, reads: (tx: Transaction) => Promise<T>): Pr
  *    all succeeded (and the rate limits allowed the turn); its transaction rolls back otherwise.
  * A turn with a `skip` (given the lesson) waits for the lesson before recording its run; a skipped turn returns null.
  */
-async function prepareTurn(userId: string, sessionId: string, turn: { goal: string; maxTokens: number; lines: number; record: boolean; skip: ((chunks: Chunk[]) => boolean) | null }): Promise<Prepared | null> {
+async function prepareTurn(userId: string, sessionId: string, turn: { goal: string; maxTokens: number; lines: number; record: boolean; skip: ((chunks: Chunk[]) => boolean) | null; resourceType?: Video["resourceType"] }): Promise<Prepared | null> {
   const admitted = admitNotesRequest(userId);
   let located: (video: Video) => void = () => undefined;
   let lost: (error: unknown) => void = () => undefined;
@@ -204,10 +205,15 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
   // Its failure is the notes lane's, reported there.
   found.catch(() => undefined);
   const notes = readOnly(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
+    if (turn.resourceType && video.resourceType !== turn.resourceType) throw new AuthError("STUDY_RESOURCE_TYPE_MISMATCH", `This ${video.resourceType} needs its matching voice request.`, 422);
+    if (video.resourceType === "paper" && !video.versionId) throw new AuthError("PAPER_CONTENT_NOT_READY", "The paper text is still being prepared.", 409, undefined, { transcript: video.transcript });
     located(video);
-    const [row, chunks] = await Promise.all([readRow(tx, userId, video.resourceId, false), lessonChunks(tx, userId, video.versionId)]);
-    return { video, row, chunks };
+    const [row, chunks, paper] = await Promise.all([
+      readRow(tx, userId, video.resourceId, false), lessonChunks(tx, userId, video.versionId),
+      video.resourceType === "paper" && video.versionId ? loadPaperContext(tx, userId, video.resourceId, video.versionId) : Promise.resolve(null),
+    ]);
+    return { video, row, chunks, paper };
   });
   notes.catch(lost);
   const talk = readOnly(userId, async (tx) => {
@@ -238,7 +244,7 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
   const [admission, read, conversation, runId] = await Promise.allSettled([admitted, notes, talk, run]);
   for (const lane of [admission, read, conversation, runId]) if (lane.status === "rejected" && !(lane.reason instanceof Skipped)) throw lane.reason;
   if (read.status !== "fulfilled" || conversation.status !== "fulfilled" || runId.status !== "fulfilled") return null;
-  return { ...read.value, ...conversation.value, runId: runId.value };
+    return { ...read.value, ...conversation.value, runId: runId.value };
 }
 
 /**
@@ -249,16 +255,24 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
  */
 export async function runVoiceTurn(userId: string, sessionId: string, input: VoiceTurnRequest, options: { signal: AbortSignal; emit: (event: VoiceTurnEvent) => void; model?: TutorModel; firstWordsMs?: number }): Promise<void> {
   const model = options.model ?? openAiTutorModel;
+  const paperTurn = "anchor" in input;
   const prepared = await prepareTurn(userId, sessionId, {
     goal: "Talk with the learner", maxTokens: TUTOR_MODEL.depths.quick.maxOutputTokens, lines: RECENT_LINES, record: true,
+    resourceType: paperTurn ? "paper" : "video",
     // The video playing aloud reaches the microphone too; its own words never start a turn.
-    skip: input.utterance && input.playing ? (chunks) => isLecture(input.utterance ?? "", chunks, input.positionMs, input.playing) : null,
+    skip: !paperTurn && input.utterance && input.playing ? (chunks) => isLecture(input.utterance ?? "", chunks, input.positionMs, input.playing) : null,
   });
   if (!prepared) return options.emit({ type: "done" });
-  const { row, video, chunks, lines, record, runId } = prepared;
-  const windowAt = input.positionMs === null ? null : input.positionMs - (input.positionMs % LESSON_WINDOW_STEP_MS);
-  const place = input.positionMs === null ? "(No video position yet.)"
-    : `(At ${formatClock(input.positionMs)} in the video, ${input.playing ? "playing" : "paused"}.)`;
+  const { row, video, chunks, lines, record, runId, paper } = prepared;
+  if (paperTurn && (!paper || !video.versionId)) throw new AuthError("PAPER_CONTENT_NOT_READY", "The paper text is still being prepared.", 409);
+  const windowAt = !paperTurn && input.positionMs !== null ? input.positionMs - (input.positionMs % LESSON_WINDOW_STEP_MS) : null;
+  const place = !paperTurn && input.positionMs !== null ? `(At ${formatClock(input.positionMs)} in the video, ${input.playing ? "playing" : "paused"}.)` : "(No video position.)";
+  const paperEvidence = paperTurn ? await withUserTransaction(userId, (tx) => retrievePaperEvidence(tx, {
+    userId, sessionId, agentRunId: runId, paper: paper!, question: `${input.utterance ?? ""} ${input.selection ?? ""}`.trim(), anchor: {
+      ...(input.anchor.page !== undefined ? { page: input.anchor.page } : {}),
+      ...(input.anchor.sectionId !== undefined ? { sectionId: input.anchor.sectionId } : {}),
+    },
+  })) : null;
   let said = "";
   let read = 0;
   const flush = (text: string, final: boolean) => {
@@ -266,28 +280,36 @@ export async function runVoiceTurn(userId: string, sessionId: string, input: Voi
     read = next;
     if (say) { said += say; options.emit({ type: "say", text: say }); }
     for (const command of commands) {
-      const control = parseCommand(command);
+      const control = parseCommand(command, paperEvidence?.evidence);
       if (control) options.emit({ type: "control", control });
     }
   };
   let result: Awaited<ReturnType<TutorModel>> | null = null;
   let failure: TutorModelError | null = null;
+  let paperFirstTokenMs: number | null = null;
   const request = {
-    depth: "quick" as const, fast: true, cacheKey: `notes-talker:${sessionId}`, image: input.frame,
+    depth: "quick" as const, fast: true, cacheKey: `notes-talker:${sessionId}`, image: paperTurn ? null : input.frame,
     // The lesson stays the same all session, so it sits in the cached prefix with Luny's instructions.
-    instructions: `${TALKER_INSTRUCTIONS}\n\n${lessonText(video.title, chunks, windowAt)}`,
-    user: buildTalkerPrompt({ record, blocks: row.blocks, lines, place, utterance: input.utterance, positionMs: input.positionMs }),
+    instructions: paperTurn && paper && paperEvidence
+      ? `${PAPER_TALKER_INSTRUCTIONS}\n\n${paperTalkerText({ title: paper.title, abstract: paper.abstract, outline: paper.outline, passages: paperEvidence.evidence.map((item) => ({ content: item.content, page: item.anchor.page, sectionId: item.anchor.sectionId })) })}`
+      : `${TALKER_INSTRUCTIONS}\n\n${lessonText(video.title, chunks, windowAt)}`,
+    user: paperTurn ? buildPaperTalkerPrompt({ record, blocks: row.blocks, lines, anchor: {
+      ...(input.anchor.page !== undefined ? { page: input.anchor.page } : {}),
+      ...(input.anchor.sectionId !== undefined ? { sectionId: input.anchor.sectionId } : {}),
+    }, selection: input.selection ?? null, utterance: input.utterance })
+      : buildTalkerPrompt({ record, blocks: row.blocks, lines, place, utterance: input.utterance, positionMs: input.positionMs }),
     // A turn the learner didn't start: Luny answering words she let go by, picking the talk back up, chiming in after they
     // paused the video, or opening the talk.
     developer: input.utterance ? "" : input.cue === "waiting" ? WAITING : input.cue === "idle" ? IDLE
-      : input.watchedFromMs !== null && input.positionMs !== null ? CHIME_IN(formatClock(input.watchedFromMs), formatClock(input.positionMs)) : GREETING(lines.length > 0),
+      : !paperTurn && input.watchedFromMs !== null && input.positionMs !== null ? CHIME_IN(formatClock(input.watchedFromMs), formatClock(input.positionMs)) : GREETING(lines.length > 0),
   };
   for (let attempt = 0; ; attempt++) {
     const watchdog = new AbortController();
     let stalled = false;
     const timer = setTimeout(() => { stalled = true; watchdog.abort(); }, options.firstWordsMs ?? FIRST_WORDS_MS);
     try {
-      result = await model(request, { signal: AbortSignal.any([options.signal, watchdog.signal]), onFirstOutput: () => clearTimeout(timer), onText: (text) => flush(text, false) });
+      const startedAt = performance.now();
+      result = await model(request, { signal: AbortSignal.any([options.signal, watchdog.signal]), onFirstOutput: () => { clearTimeout(timer); if (paperTurn && paperFirstTokenMs === null) paperFirstTokenMs = Math.round(performance.now() - startedAt); }, onText: (text) => flush(text, false) });
       flush(result.text, true);
       failure = null;
     } catch (error) {
@@ -308,10 +330,11 @@ export async function runVoiceTurn(userId: string, sessionId: string, input: Voi
       ...(spoken ? [{ speaker: "luna" as const, text: spoken }] : []),
     ] : [];
     await Promise.all([
-      entries.length ? tx.insert(sessionTranscript).values(entries.map((line) => ({ studySessionId: sessionId, userId, resourceId: video.resourceId, speaker: line.speaker, text: line.text.slice(0, 4_000), positionMs: input.positionMs }))) : null,
-      closeRun(tx, runId, "talk", result?.usage ?? failure?.usage ?? null, result?.firstOutputMs ?? null, failure?.code ?? null),
+      entries.length ? tx.insert(sessionTranscript).values(entries.map((line) => ({ studySessionId: sessionId, userId, resourceId: video.resourceId, speaker: line.speaker, text: line.text.slice(0, 4_000), positionMs: paperTurn ? null : input.positionMs }))) : null,
+      closeRun(tx, runId, "talk", result?.usage ?? failure?.usage ?? null, result?.latencyMs ?? null, failure?.code ?? null, paperFirstTokenMs ?? result?.firstOutputMs ?? null),
     ]);
   });
+  if (paperTurn) console.info(JSON.stringify({ metric: "paper_voice_first_token", resourceId: video.resourceId, latencyMs: paperFirstTokenMs ?? result?.firstOutputMs ?? null }));
   if (failure) {
     if (failure.code === "cancelled") return;
     throw new AuthError("NOTES_VOICE_FAILED", failure.code === "provider_http_429" ? "Luny is busy right now. Try again in a minute." : "Luny couldn't answer just now.", 502);
@@ -327,7 +350,11 @@ export async function runScribe(userId: string, sessionId: string, options: { si
   const model = options.model ?? openAiTutorModel;
   const prepared = await prepareTurn(userId, sessionId, { goal: "Keep the learner's notebook", maxTokens: TUTOR_MODEL.depths.edit.maxOutputTokens, lines: SCRIBE_LINES, record: false, skip: null });
   if (!prepared) throw new Error("The scribe run was not recorded.");
-  const { video, row, lines, chunks, runId, positionMs } = prepared;
+  const { video, row, lines, chunks, runId, positionMs, paper } = prepared;
+  const paperEvidence = paper && video.versionId ? await withUserTransaction(userId, (tx) => retrievePaperEvidence(tx, {
+    userId, sessionId, agentRunId: runId, paper, question: lines.filter((line) => line.speaker === "you").slice(-6).map((line) => line.text).join(" "), anchor: {},
+  })) : null;
+  const citablePassages = paperEvidence?.evidence ?? [];
   // A long lecture is read around where the conversation was, as Luny reads it, in the same steps so the prefix stays cached.
   const windowAt = positionMs === null ? null : positionMs - (positionMs % LESSON_WINDOW_STEP_MS);
   if (!lines.length) {
@@ -344,13 +371,18 @@ export async function runScribe(userId: string, sessionId: string, options: { si
   const onText = onOp ? (text: string) => {
     const ops = partialOps(text);
     for (; shown < ops.length - 1; shown++) {
-      const op = noteOpSchema.safeParse(ops[shown]);
-      if (op.success) onOp(op.data, row.revision);
+      const op = scribeNoteOpSchema.safeParse(ops[shown]);
+      if (op.success) {
+        const [mapped] = citedScribeOps([op.data], citablePassages, video.resourceType === "paper");
+        if (mapped) onOp(mapped, row.revision);
+      }
     }
   } : undefined;
   try {
     // The lesson sits in the cached prefix with the instructions, as it does for Luny: it is the same on every pass of a session.
-    result = await model({ depth: "edit", instructions: `${SCRIBE_INSTRUCTIONS}\n\n${lessonText(video.title, chunks, windowAt)}`, developer: "", user, schema: SCRIBE_SCHEMA, cacheKey: `notes-scribe:${sessionId}` }, { signal: options.signal, ...(onText ? { onText } : {}) });
+    result = await model({ depth: "edit", instructions: video.resourceType === "paper" && paper
+      ? `${PAPER_SCRIBE_INSTRUCTIONS}\n\n${paperTalkerText({ title: paper.title, abstract: paper.abstract, outline: paper.outline, passages: citablePassages.map((passage) => ({ content: passage.content, page: passage.anchor.page, sectionId: passage.anchor.sectionId })) })}`
+      : `${SCRIBE_INSTRUCTIONS}\n\n${lessonText(video.title, chunks, windowAt)}`, developer: "", user, schema: SCRIBE_SCHEMA, cacheKey: `notes-scribe:${sessionId}` }, { signal: options.signal, ...(onText ? { onText } : {}) });
   } catch (error) {
     const code = error instanceof TutorModelError ? error.code : "internal_error";
     await withUserTransaction(userId, (tx) => closeRun(tx, runId, "scribe", error instanceof TutorModelError ? error.usage : null, null, code)).catch(() => undefined);
@@ -364,11 +396,22 @@ export async function runScribe(userId: string, sessionId: string, options: { si
       readRow(tx, userId, video.resourceId, true),
     ]);
     if (!output?.ops.length) return view(current, video);
-    const { blocks, applied } = applyNoteOps(current.blocks, output.ops, "luna", current.revision + 1, row.revision);
+    const ops = citedScribeOps(output.ops, citablePassages, video.resourceType === "paper");
+    const { blocks, applied } = applyNoteOps(current.blocks, ops, "luna", current.revision + 1, row.revision);
     if (applied === 0) return view(current, video);
     const next: Row = { ...current, revision: current.revision + 1, blocks, history: keepHistory([...current.history, { revision: current.revision + 1, blocks: current.blocks }]) };
     await writeNotes(tx, userId, video.resourceId, next);
     return view(next, video);
+  });
+}
+
+function citedScribeOps(ops: NotesScribeOutput["ops"], evidence: PaperEvidence[], isPaper: boolean): NoteOp[] {
+  return ops.flatMap((op) => {
+    const { cite, ...edit } = op;
+    if (!isPaper || edit.action === "delete" || edit.action === "move") return [edit];
+    const anchors = paperCitationAnchors(cite ?? [], evidence);
+    if (anchors.length || edit.type === "heading" || edit.type === "subheading" || edit.type === "task" || (edit.action === "update" && edit.text === null)) return [{ ...edit, ...(anchors.length ? { anchors } : {}) }];
+    return [];
   });
 }
 
@@ -408,7 +451,7 @@ export async function startGuide(userId: string, sessionId: string, options: { m
     let status = guideStatus(row, video);
     // A guide written in one piece before long lectures were split covers only their first stretch. It is kept as it is,
     // as the first part, and the rest of the lecture is written after it.
-    if (status === "ready" && video.versionId && row.blocks[0]?.by === "luna" && !row.blocks.some((block) => partOf(block.id) !== null)) {
+    if (video.resourceType === "video" && status === "ready" && video.versionId && row.blocks[0]?.by === "luna" && !row.blocks.some((block) => partOf(block.id) !== null)) {
       const chunks = await lessonChunks(tx, userId, video.versionId);
       if (singleGuideReach(chunks) < chunks.length) {
         let end = 0;
@@ -446,6 +489,7 @@ const writtenParts = (blocks: NoteBlock[], parts: Chunk[][]) => new Set([...bloc
  */
 async function writeGuide(userId: string, job: { video: Video & { versionId: string }; runId: string; startedAt: Date }, model: TutorModel): Promise<void> {
   const { video, runId, startedAt } = job;
+  if (video.resourceType === "paper") return writePaperGuide(userId, job, model);
   // Only the run that started the guide finishes it; one cut off and started again leaves it to the newer run.
   const finish = (current: Row) => current.guideStatus === "writing" && current.guideStartedAt?.getTime() === startedAt.getTime();
   let parts: Chunk[][];
@@ -516,4 +560,46 @@ async function writeGuide(userId: string, job: { video: Video & { versionId: str
     // Parts still to write and none failed: not started, so the notes page asks for the next wave.
     await writeNotes(tx, userId, video.resourceId, complete ? { guideStatus: "ready" } : failures.length ? { guideStatus: "failed" } : { guideStatus: null, guideStartedAt: null });
   });
+}
+
+async function writePaperGuide(userId: string, job: { video: Video & { versionId: string }; runId: string; startedAt: Date }, model: TutorModel): Promise<void> {
+  const { video, runId, startedAt } = job;
+  const finish = (current: Row) => current.guideStatus === "writing" && current.guideStartedAt?.getTime() === startedAt.getTime();
+  try {
+    const context = await withUserTransaction(userId, async (tx) => {
+      const paper = await loadPaperContext(tx, userId, video.resourceId, video.versionId);
+      const passages = (await loadPaperPassages(tx, video.versionId)).filter((passage) => passage.page !== null);
+      return { paper, passages };
+    });
+    const result = await model({
+      depth: "long", instructions: PAPER_GUIDE_INSTRUCTIONS, developer: "", schema: GUIDE_SCHEMA, cacheKey: `notes-paper-guide:${NOTES_CONTRACT_VERSION}`,
+      user: buildPaperGuidePrompt({ ...context.paper, passages: context.passages }),
+    }, { signal: new AbortController().signal });
+    const output = parse(notesGuideOutputSchema, result.text);
+    const evidence = context.passages.flatMap((passage) => passage.page === null ? [] : [{ anchor: { kind: "paper" as const, page: passage.page, sectionId: passage.sectionId ?? passage.headingPath.at(-1) ?? "unsectioned", chunkId: passage.chunkId } }]);
+    const guide = (output?.blocks ?? []).flatMap((block, index) => {
+      const anchors = paperCitationAnchors(block.cite ?? [], evidence);
+      if (!block.text.trim() || (!anchors.length && block.type !== "heading" && block.type !== "subheading") || (block.type === "diagram" && !validDiagram(block.text))) return [];
+      return [{ id: `${partPrefix(0)}${index}-${randomUUID().slice(0, 6)}`.slice(0, 24), type: block.type, text: block.text.trim(), done: false, by: "luna" as const, anchors }];
+    });
+    await withUserTransaction(userId, async (tx) => {
+      await closeRun(tx, runId, "guide", result.usage, result.latencyMs, guide.length ? null : result.refusal ? "refused" : "invalid_output");
+      const current = await readRow(tx, userId, video.resourceId, true);
+      if (!finish(current)) return;
+      if (!guide.length) return writeNotes(tx, userId, video.resourceId, { guideStatus: "failed" });
+      const room = Math.max(0, NOTES_MAX_BLOCKS - current.blocks.length);
+      if (guide.length > room) return writeNotes(tx, userId, video.resourceId, { guideStatus: "failed" });
+      const revision = current.revision + 1;
+      const history = current.blocks.length ? keepHistory([...current.history, { revision, blocks: current.blocks }]) : current.history;
+      await writeNotes(tx, userId, video.resourceId, {
+        revision, blocks: [...guide.map((block) => ({ ...block, rev: revision })), ...current.blocks], history, guideStatus: "ready",
+      });
+    });
+  } catch (error) {
+    await withUserTransaction(userId, async (tx) => {
+      await closeRun(tx, runId, "guide", error instanceof TutorModelError ? error.usage ?? null : null, null, error instanceof TutorModelError ? error.code : "internal_error");
+      const current = await readRow(tx, userId, video.resourceId, true);
+      if (finish(current)) await writeNotes(tx, userId, video.resourceId, { guideStatus: "failed" });
+    }).catch(() => undefined);
+  }
 }
