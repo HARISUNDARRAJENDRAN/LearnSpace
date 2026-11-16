@@ -1,5 +1,6 @@
 import { type Transaction, withUserTransaction } from "@learnspace/db";
 import { codingAttempts, codingProblems, codingProblemSecrets, resourceChunks, resources, videoCodingProfiles } from "@learnspace/db/schema";
+import { paperCitationAnchorSchema, type PaperCitationAnchor } from "@learnspace/shared/contracts";
 import {
   CODING_CONCEPTS, CODING_CONTRACT_VERSION, type CodingConcept, type CodingProblemOutput, codingProblemOutputSchema, type Difficulty, type Signature,
 } from "@learnspace/shared/coding";
@@ -14,18 +15,20 @@ import { verifyProblem as runnerVerify } from "./runner";
 import { openCodingRun, RUN_GOALS, runModel } from "./runs";
 
 /** Where a problem sits in the bank: the lesson it practises, its concept and level, and the problem it varies, if any. */
-export type Slot = { resourceId: string; concept: CodingConcept; difficulty: Difficulty; parentProblemId: string | null };
+export type Slot = { resourceId: string; concept: CodingConcept; difficulty: Difficulty; parentProblemId: string | null; paper?: { versionId: string; component: string; focus: string; anchor: PaperCitationAnchor } };
 
 /** What the browser and the tutor may know about a problem: everything except its tests and reference code. */
 export type ProblemSpec = {
   statement: string;
   signature: Signature;
   compare: "exact" | "unordered";
+  numericTolerance?: { absolute: number; relative: number };
   constraints: string[];
   examples: Array<{ args: unknown[]; expected: unknown; explanation: string }>;
   moments: Array<{ startMs: number; label: string }>;
   related: string[];
   efficiencyMatters: boolean;
+  paper?: { component: string; anchors: PaperCitationAnchor[] };
 };
 export type ProblemTutor = {
   hints: Array<{ level: number; stage: "correct" | "efficient"; text: string }>;
@@ -105,6 +108,7 @@ const MAX_VARIANT_SIMILARITY = 0.6;
 
 export function checkAuthored(output: CodingProblemOutput, slot: Slot, parent: { statement: string; examples: ProblemSpec["examples"] } | null, moments: ProblemSpec["moments"]) {
   const { signature } = output;
+  if (slot.paper && signature.returns.includes("double") && !output.numericTolerance) throw new AuthoringError("paper exercises with numeric output must declare bounded absolute and relative tolerance");
   const names = new Set(signature.params.map((param) => param.name));
   if (names.size !== signature.params.length) throw new AuthoringError("parameter names repeat");
   const examples = output.examples.map((example, index) => ({ args: parseArgs(signature, example.args, `example ${index + 1}`), expected: parseExpected(signature, example.expected, `example ${index + 1}`), explanation: example.explanation.trim() }));
@@ -121,7 +125,7 @@ export function checkAuthored(output: CodingProblemOutput, slot: Slot, parent: {
     if (JSON.stringify(parent.examples.map((example) => example.args)) === JSON.stringify(examples.map((example) => example.args))) throw new AuthoringError("the variant reuses the original's examples");
   }
   const spec: ProblemSpec = {
-    statement: output.statement.trim(), signature, compare: output.compare, constraints: output.constraints.map((line) => line.trim()), examples,
+    statement: output.statement.trim(), signature, compare: output.compare, ...(output.numericTolerance ? { numericTolerance: output.numericTolerance } : {}), constraints: output.constraints.map((line) => line.trim()), examples,
     moments, related: output.related.map((name) => name.trim()).filter(Boolean), efficiencyMatters: output.efficiencyMatters,
   };
   const tutor: ProblemTutor = {
@@ -183,6 +187,14 @@ export async function authorProblem(userId: string, sessionId: string, slot: Slo
           return passage?.startMs === null || passage === undefined ? [] : [{ startMs: passage.startMs, label: formatClock(passage.startMs) }];
         }).slice(0, 3);
         checked = checkAuthored(output, slot, context.parent, moments);
+        if (slot.paper && checked) {
+          const paperAnchors = [...new Map(output.cite.flatMap((number) => {
+            const anchor = context.passages[number - 1]?.anchor;
+            return anchor ? [[anchor.chunkId, anchor] as const] : [];
+          })).values()];
+          if (!paperAnchors.length) throw new AuthoringError("paper exercise cited no available paper passages");
+          checked.spec.paper = { component: slot.paper.component, anchors: paperAnchors };
+        }
         return null;
       } catch (error) {
         feedback = error instanceof AuthoringError ? error.message : "the output did not match the format";
@@ -214,19 +226,24 @@ export async function authorProblem(userId: string, sessionId: string, slot: Slo
 
 async function authoringContext(tx: Transaction, userId: string, slot: Slot) {
   const [resource] = await tx.select({ title: resources.title, versionId: resources.currentVersionId }).from(resources).where(eq(resources.id, slot.resourceId)).limit(1);
-  const [profile] = resource?.versionId ? await tx.select({ concepts: videoCodingProfiles.concepts }).from(videoCodingProfiles).where(eq(videoCodingProfiles.resourceVersionId, resource.versionId)).limit(1) : [];
-  const focus = ((profile?.concepts ?? []) as Array<{ concept: string; focus: string }>).find((item) => item.concept === slot.concept)?.focus ?? "";
-  const chunks = resource?.versionId ? await tx.select({ content: resourceChunks.content, startMs: resourceChunks.startMs }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, resource.versionId)).orderBy(asc(resourceChunks.ordinal)) : [];
+  const versionId = slot.paper?.versionId ?? resource?.versionId;
+    const [profile] = !slot.paper && versionId ? await tx.select({ concepts: videoCodingProfiles.concepts }).from(videoCodingProfiles).where(eq(videoCodingProfiles.resourceVersionId, versionId)).limit(1) : [];
+  const focus = slot.paper?.focus ?? ((profile?.concepts ?? []) as Array<{ concept: string; focus: string }>).find((item) => item.concept === slot.concept)?.focus ?? "";
+  const chunks = versionId ? await tx.select({ id: resourceChunks.id, content: resourceChunks.content, startMs: resourceChunks.startMs, anchor: resourceChunks.anchor }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, versionId)).orderBy(asc(resourceChunks.ordinal)) : [];
   const step = Math.max(1, chunks.length / PASSAGES);
-  const passages: Array<{ content: string; startMs: number | null }> = [];
-  for (let index = 0; index < chunks.length && passages.length < PASSAGES; index = Math.floor(passages.length * step)) passages.push(chunks[index]!);
+  const passages: Array<{ content: string; startMs: number | null; anchor?: PaperCitationAnchor }> = [];
+  for (let index = 0; index < chunks.length && passages.length < PASSAGES; index = Math.floor(passages.length * step)) {
+    const chunk = chunks[index]!;
+    const parsedAnchor = slot.paper ? paperCitationAnchorSchema.safeParse({ kind: "paper", page: chunk.anchor.page, sectionId: chunk.anchor.sectionId, chunkId: chunk.id }) : null;
+    passages.push({ content: chunk.content, startMs: slot.paper ? null : chunk.startMs, ...(parsedAnchor?.success ? { anchor: parsedAnchor.data } : {}) });
+  }
   const [parentRow] = slot.parentProblemId ? await tx.select({ title: codingProblems.title, spec: codingProblems.spec }).from(codingProblems).where(eq(codingProblems.id, slot.parentProblemId)).limit(1) : [];
   const parent = parentRow?.spec ? { statement: (parentRow.spec as ProblemSpec).statement, examples: (parentRow.spec as ProblemSpec).examples, title: parentRow.title ?? "" } : null;
   const avoid = (await tx.select({ title: codingProblems.title }).from(codingAttempts).innerJoin(codingProblems, eq(codingProblems.id, codingAttempts.problemId))
     .where(and(eq(codingAttempts.userId, userId), eq(codingProblems.concept, slot.concept))).limit(20)).flatMap((row) => (row.title ? [row.title] : []));
   const user = [
-    `<video_title>${fence(resource?.title ?? "")}</video_title>`,
-    `<transcript>\n${passages.map((chunk, index) => `[${index + 1}]${chunk.startMs === null ? "" : ` ${formatClock(chunk.startMs)}`}\n${fence(chunk.content.slice(0, PASSAGE_CHARS))}`).join("\n\n")}\n</transcript>`,
+    slot.paper ? `<paper_title>${fence(resource?.title ?? "")}</paper_title>\n<component>${fence(slot.paper.component)}: ${fence(focus)}</component>` : `<video_title>${fence(resource?.title ?? "")}</video_title>`,
+    `${slot.paper ? "<paper_passages>" : "<transcript>"}\n${passages.map((chunk, index) => `[${index + 1}]${chunk.startMs === null ? "" : ` ${formatClock(chunk.startMs)}`}\n${fence(chunk.content.slice(0, PASSAGE_CHARS))}`).join("\n\n")}\n${slot.paper ? "</paper_passages>" : "</transcript>"}`,
     parent ? `<original_problem title="${fence(parent.title)}">\n${fence(parent.statement)}\n</original_problem>` : "",
   ].filter(Boolean).join("\n\n");
   return { user, passages, focus, parent, avoid };

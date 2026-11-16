@@ -1,21 +1,19 @@
 "use client";
 
 import {
-  Bookmark,
   Brain,
   Check,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
-  FileSearch,
-  House,
   Compass,
+  House,
   LibraryBig,
   Plus,
   Search,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { SidebarSessions } from "./SidebarSessions";
 
@@ -43,8 +41,7 @@ const learnNavigation = [
 
 const researchNavigation = [
   { label: "Research Home", href: "/app/research", icon: House, tone: "research" },
-  { label: "Find Papers", href: "/app/research", icon: FileSearch, tone: "papers" },
-  { label: "Saved Papers", href: "/app/library", icon: Bookmark, tone: "saved" },
+  { label: "Discover", href: "/app/research/discover", icon: Compass, tone: "discover" },
 ] as const;
 
 // Sessions leads this list as its own expandable tree (SidebarSessions).
@@ -54,12 +51,16 @@ const sharedNavigation = [
 ] as const;
 
 function isActivePath(pathname: string, href: string): boolean {
-  if (href === "/app") return pathname === href;
-  return pathname.startsWith(href);
+  if (href === "/app" || href === "/app/research") return pathname === href;
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function isResearchPath(pathname: string): boolean {
+  return pathname === "/app/research" || pathname.startsWith("/app/research/") || pathname.startsWith("/app/study/paper/");
 }
 
 function modeFromPath(pathname: string): NavigationMode {
-  return pathname.startsWith("/app/research") ? "research" : "learn";
+  return isResearchPath(pathname) ? "research" : "learn";
 }
 
 export function AppSidebar({
@@ -72,13 +73,14 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [mode, setMode] = useState<NavigationMode>(() => modeFromPath(pathname));
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
 
   useEffect(() => {
-    if (pathname.startsWith("/app/research")) setMode("research");
+    if (isResearchPath(pathname)) setMode("research");
   }, [pathname]);
 
   useEffect(() => {
@@ -197,16 +199,19 @@ export function AppSidebar({
           <div className="application-nav-section">
             <p className="application-nav-label">{mode === "research" ? "RESEARCH" : "LEARN"}</p>
             {modeNavigation.map(({ label, href, icon: Icon, tone }) => {
-              const active = isActivePath(pathname, href) && !(mode === "research" && label === "Find Papers");
+              const active = isActivePath(pathname, href);
               return <NavLink key={`${mode}-${label}`} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
             })}
           </div>
           <div className="application-nav-section">
             <p className="application-nav-label">WORKSPACE</p>
             <SidebarSessions mode={mode} onClose={onClose} />
-            {sharedNavigation.map(({ label, href, icon: Icon, tone }) => {
-              const active = isActivePath(pathname, href) && !(mode === "research" && label === "Library");
-              return <NavLink key={href} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
+            {sharedNavigation.map(({ label, href: defaultHref, icon: Icon, tone }) => {
+              const href = label === "Library" && mode === "research" ? "/app/library?view=papers" : defaultHref;
+              const active = label === "Library"
+                ? isActivePath(pathname, "/app/library") && (mode === "research" ? searchParams.get("view") === "papers" : searchParams.get("view") !== "papers")
+                : isActivePath(pathname, href);
+              return <NavLink key={label} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
             })}
           </div>
         </nav>

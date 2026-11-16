@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { paperCitationAnchorSchema } from "./contracts.js";
 
 /** Bumped whenever the authoring, verification, hint or classification prompts change. */
 export const CODING_CONTRACT_VERSION = "coding-v1";
@@ -30,6 +31,8 @@ export type Signature = z.infer<typeof signatureSchema>;
 /** How a returned value is compared with the expected one: as is, or as a list whose order does not matter. */
 export const COMPARE_MODES = ["exact", "unordered"] as const;
 export type CompareMode = (typeof COMPARE_MODES)[number];
+export const numericToleranceSchema = z.object({ absolute: z.number().finite().min(0).max(1e-2), relative: z.number().finite().min(0).max(1e-2) }).strict();
+export type NumericTolerance = z.infer<typeof numericToleranceSchema>;
 
 export const DIFFICULTIES = ["easy", "medium", "hard"] as const;
 export type Difficulty = (typeof DIFFICULTIES)[number];
@@ -89,6 +92,7 @@ export const codingProblemOutputSchema = z.object({
   statement: z.string().max(4_000),
   signature: signatureSchema,
   compare: z.enum(COMPARE_MODES),
+  numericTolerance: numericToleranceSchema.optional(),
   constraints: z.array(z.string().max(200)).min(1).max(8),
   examples: z.array(z.object({ args: json, expected: json, explanation: z.string().max(400) }).strict()).min(2).max(3),
   edgeCases: z.array(z.object({ args: json, expected: json, why: z.string().max(200) }).strict()).min(3).max(10),
@@ -129,12 +133,14 @@ export type Verdict = (typeof VERDICTS)[number];
 // appear here.
 
 export type CodingProfileView = {
-  status: "waiting_transcript" | "classifying" | "ready" | "failed" | "unavailable";
-  /** The classifier thinks this lesson calls for coding practice: the Code tool shows itself. */
-  recommended: boolean;
+  status: "waiting_transcript" | "classifying" | "planning" | "ready" | "ineligible" | "failed" | "unavailable";
+  /** Server-decided capability: every coding entry point uses the same eligibility rule. */
+  eligible: boolean;
   category: VideoCategory | null;
-  concepts: Array<{ concept: CodingConcept; label: string; focus: string; startMs: number | null }>;
+  concepts: Array<{ concept: CodingConcept; label: string; focus: string; startMs: number | null; anchors?: z.infer<typeof paperCitationAnchorSchema>[]; component?: string }>;
 };
+
+export type CodingEligibilityView = { status: "pending" | "eligible" | "ineligible"; eligible: boolean; concepts?: CodingProfileView["concepts"] };
 
 export type CodingExampleView = { args: unknown[]; expected: unknown; explanation: string };
 
@@ -147,11 +153,13 @@ export type CodingProblemView = {
   statement: string;
   signature: Signature;
   compare: CompareMode;
+  numericTolerance: NumericTolerance | null;
   constraints: string[];
   examples: CodingExampleView[];
   starter: Record<CodingLanguage, string>;
   /** Moments in the lesson this problem practises. */
   moments: Array<{ startMs: number; label: string }>;
+  paper: { component: string; anchors: z.infer<typeof paperCitationAnchorSchema>[] } | null;
   /** Whether an efficient solution is a separate stage after a correct one. */
   efficiencyStage: boolean;
   related: string[];

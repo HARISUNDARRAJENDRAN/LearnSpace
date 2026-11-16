@@ -4,7 +4,8 @@ import type { StudySessionSummary } from "@learnspace/shared";
 import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, CircleStop, FileText, MoreHorizontal, PencilLine, Video } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useState } from "react";
+import { useCodingEligibility } from "../coding/useCodingEligibility";
 import { sessionParts, TOOL_PARAM } from "../study/tools";
 import { lastSeenRoute, sessionIdFromPath, useSessions } from "./sessions";
 
@@ -12,6 +13,39 @@ import { lastSeenRoute, sessionIdFromPath, useSessions } from "./sessions";
 const VISIBLE_SESSIONS = 6;
 const GROUP_KEY = "learnspace:sidebar-sessions-open";
 const EXPANDED_KEY = "learnspace:sidebar-sessions-expanded";
+
+/** Reads the server-provided resource capability; unknown capability stays closed. */
+export function sessionPartsFor(session: StudySessionSummary, codingEligible = false) {
+  const type = session.activeResource?.type;
+  if (type !== "video" && type !== "paper") return [];
+  // A project guide is a paper's tool; code appears only where the server says an exercise fits.
+  return sessionParts.filter((part) => (part.slug !== "code" || codingEligible) && (part.slug !== "guide" || type === "paper"));
+}
+
+export function sessionMatchesMode(session: StudySessionSummary, mode: "learn" | "research"): boolean {
+  return session.activeResource?.type === (mode === "research" ? "paper" : "video");
+}
+
+export function SessionPartLinks({ session, href, active, activeSlug, open, onPartClick, codingEligible: knownEligibility }: {
+  session: StudySessionSummary;
+  href: string;
+  active: boolean;
+  activeSlug: string;
+  open: boolean;
+  onPartClick: (event: ReactMouseEvent, session: StudySessionSummary, href: string) => void;
+  codingEligible?: boolean;
+}) {
+  const eligibility = useCodingEligibility(session.id, session.activeResource?.id ?? "", knownEligibility === undefined);
+  const parts = sessionPartsFor(session, knownEligibility ?? eligibility === true);
+  if (!parts.length) return null;
+  return <div className="application-disclosure" data-open={open || undefined} inert={!open}><ul className="application-session-parts" aria-label={`${session.title} workspace`}>
+    {parts.map(({ slug, label, Icon }) => {
+      const partHref = `${href}?${TOOL_PARAM}=${slug}`;
+      const current = active && activeSlug === slug;
+      return <li key={slug}><Link className={`application-session-part${current ? " is-active" : ""}`} href={partHref} aria-current={current ? "page" : undefined} onClick={(event) => onPartClick(event, session, partHref)}><Icon aria-hidden="true" /><span>{label}</span></Link></li>;
+    })}
+  </ul></div>;
+}
 
 function readStored<T>(key: string, fallback: T): T {
   try {
@@ -59,7 +93,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const visible = sessions.filter((session) => (mode === "research" ? session.mode === "research" : session.mode !== "research"));
+  const visible = sessions.filter((session) => sessionMatchesMode(session, mode));
   const listed = showAll ? visible : visible.filter((session, index) => index < VISIBLE_SESSIONS || session.id === activeId);
   const hidden = visible.length - listed.length;
 
@@ -68,7 +102,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
 
   useEffect(() => {
     if (!menu) return;
-    const close = (event: MouseEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".application-session-menu, .application-session-more")) setMenu(null); };
+    const close = (event: globalThis.MouseEvent) => { if (!(event.target instanceof Element) || !event.target.closest(".application-session-menu, .application-session-more")) setMenu(null); };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(null); };
     document.addEventListener("click", close);
     document.addEventListener("keydown", onKey);
@@ -102,7 +136,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   }
 
   // Inside the session already, a part opens beside the lesson without reloading it.
-  function openPart(event: React.MouseEvent, session: StudySessionSummary, href: string) {
+  function openPart(event: ReactMouseEvent, session: StudySessionSummary, href: string) {
     onClose();
     if (session.id !== activeId || !session.route || pathname !== session.route) return;
     event.preventDefault();
@@ -126,7 +160,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
             {listed.map((session, index) => {
               const open = expanded.includes(session.id);
               const isActive = session.id === activeId;
-              const parts = session.activeResource?.type === "video" ? sessionParts : [];
+              const parts = sessionPartsFor(session);
               const Icon = session.activeResource?.type === "paper" ? FileText : Video;
               const href = session.route ?? "/app/sessions";
               const menuOpen = menu?.sessionId === session.id;
@@ -163,17 +197,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
                       </div>
                     ) : null}
                   </div>
-                  {parts.length > 0 ? (
-                    <div className="application-disclosure" data-open={open || undefined} inert={!open}>
-                      <ul className="application-session-parts" aria-label={`${session.title} workspace`}>
-                        {parts.map(({ slug, label, Icon: PartIcon }) => {
-                          const partHref = `${href}?${TOOL_PARAM}=${slug}`;
-                          const current = isActive && activeSlug === slug;
-                          return <li key={slug}><Link className={`application-session-part${current ? " is-active" : ""}`} href={partHref} aria-current={current ? "page" : undefined} onClick={(event) => openPart(event, session, partHref)}><PartIcon aria-hidden="true" /><span>{label}</span></Link></li>;
-                        })}
-                      </ul>
-                    </div>
-                  ) : null}
+                  {parts.length > 0 ? <SessionPartLinks session={session} href={href} active={isActive} activeSlug={activeSlug} open={open} onPartClick={openPart} /> : null}
                 </li>
               );
             })}

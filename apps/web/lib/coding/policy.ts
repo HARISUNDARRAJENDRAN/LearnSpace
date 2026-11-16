@@ -1,5 +1,14 @@
 import type { AttemptOutcome, AttemptRole, CoachMoment, Difficulty, TutorState, Verdict } from "@learnspace/shared/coding";
 
+type CodingEligibilityProfile = { category?: string | null; practiceFit?: number | null; concepts: readonly unknown[]; feasibleComponents?: readonly unknown[]; verifiedExercises?: number };
+const VIDEO_CODING_CATEGORIES = new Set(["dsa_lesson", "programming_tutorial"]);
+
+/** The server's coding capability for a resource; every entry point uses this pure policy. */
+export function codingEligible(type: "video" | "paper", profile: CodingEligibilityProfile | null): boolean {
+  if (type === "paper") return profile !== null && (profile.feasibleComponents?.length ?? 0) > 0 && (profile.verifiedExercises ?? 0) > 0;
+  return profile !== null && VIDEO_CODING_CATEGORIES.has(profile.category ?? "") && (profile.practiceFit ?? 0) >= 0.6 && profile.concepts.length > 0;
+}
+
 /**
  * The tutoring policy: every decision about progression, help and credit. It is plain functions over stored numbers, so
  * the language model never decides whether a learner passed, may see a hint, or moves on; it only words what this allows.

@@ -88,6 +88,11 @@
       "types": "./src/coding-code.ts",
       "import": "./dist/coding-code.js",
       "default": "./dist/coding-code.js"
+    },
+    "./research-guide": {
+      "types": "./src/research-guide.ts",
+      "import": "./dist/research-guide.js",
+      "default": "./dist/research-guide.js"
     }
   },
   "scripts": {

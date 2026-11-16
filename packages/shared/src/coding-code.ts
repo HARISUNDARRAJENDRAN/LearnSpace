@@ -1,4 +1,4 @@
-import type { CodingLanguage, CompareMode, Signature, ValueType } from "./coding.js";
+import type { CodingLanguage, CompareMode, NumericTolerance, Signature, ValueType } from "./coding.js";
 
 /**
  * Code-shaped helpers shared by the app and the runner: checking values against a signature's types, comparing returned
@@ -51,19 +51,19 @@ function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, item: unknown) => (typeof item === "number" ? Number(item.toPrecision(12)) : item));
 }
 
-function close(expected: number, actual: number): boolean {
-  return Math.abs(expected - actual) <= 1e-6 * Math.max(1, Math.abs(expected));
+function close(expected: number, actual: number, tolerance?: NumericTolerance): boolean {
+  return Number.isFinite(expected) && Number.isFinite(actual) && Math.abs(expected - actual) <= (tolerance?.absolute ?? 1e-6) + (tolerance?.relative ?? 1e-6) * Math.abs(expected);
 }
 
 /** Whether a returned value equals the expected one, for the declared return type; doubles agree within 1e-6 (relative past 1). */
-export function sameValue(type: ValueType, expected: unknown, actual: unknown, mode: CompareMode = "exact"): boolean {
+export function sameValue(type: ValueType, expected: unknown, actual: unknown, mode: CompareMode = "exact", tolerance?: NumericTolerance): boolean {
   if (type.endsWith("[]")) {
     if (!Array.isArray(expected) || !Array.isArray(actual) || expected.length !== actual.length) return false;
     const inner = type.slice(0, -2) as ValueType;
     const [left, right] = mode === "unordered" ? [[...expected].sort((a, b) => canonical(a).localeCompare(canonical(b))), [...actual].sort((a, b) => canonical(a).localeCompare(canonical(b)))] : [expected, actual];
-    return left.every((item, index) => sameValue(inner, item, right[index]));
+    return left.every((item, index) => sameValue(inner, item, right[index], "exact", tolerance));
   }
-  if (type === "double") return typeof actual === "number" && typeof expected === "number" && close(expected, actual);
+  if (type === "double") return typeof actual === "number" && typeof expected === "number" && close(expected, actual, tolerance);
   if (type === "int" || type === "long") return typeof actual === "number" && Number.isInteger(actual) && actual === expected;
   return actual === expected;
 }
