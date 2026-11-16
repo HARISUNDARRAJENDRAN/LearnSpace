@@ -380,7 +380,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   }, []);
 
   useEffect(() => {
-    if (panel === "code" && codingEligible === false) collapse();
+    if (panel === "code" && codingEligible === false) setPanel(null);
   }, [panel, codingEligible]);
 
   // Practice covers the lesson, so the lesson waits for it.

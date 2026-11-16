@@ -70,7 +70,7 @@ test("explorer verification rejects failed, non-finite and nondeterministic sand
 
 test("planner and guide schemas are valid for OpenAI strict structured outputs", () => {
   const walk = (node: unknown, path: string): void => {
-    if (Array.isArray(node)) return node.forEach((item, index) => walk(item, `${path}/${index}`));
+    if (Array.isArray(node)) { node.forEach((item, index) => { walk(item, `${path}/${index}`); }); return; }
     if (!node || typeof node !== "object") return;
     const object = node as Record<string, unknown>;
     assert.equal(object.propertyNames, undefined, `${path}: strict mode forbids propertyNames (z.record)`);

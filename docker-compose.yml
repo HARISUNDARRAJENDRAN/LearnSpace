@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: learnspace
     ports:
-      - "${POSTGRES_PORT:-55432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
     volumes:
       - learnspace_postgres_data:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -67,12 +67,12 @@ services:
       EMAIL_FROM: "${EMAIL_FROM:-LearnSpace <noreply@example.com>}"
       # Coding practice: the runner executes and grades learner code; the app only sends it code and problem ids.
       RUNNER_URL: http://runner:4100
-      RUNNER_TOKEN: "${RUNNER_TOKEN:-local-runner-token-change-me}"
+      RUNNER_TOKEN: "${RUNNER_TOKEN:?Set a random RUNNER_TOKEN in the ignored root .env}"
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "127.0.0.1:${WEB_PORT:-3000}:3000"
     volumes:
       - .:/workspace
       - learnspace_node_modules:/workspace/node_modules
@@ -114,7 +114,7 @@ services:
       dockerfile: Dockerfile
       target: runner
     environment:
-      RUNNER_TOKEN: "${RUNNER_TOKEN:-local-runner-token-change-me}"
+      RUNNER_TOKEN: "${RUNNER_TOKEN:?Set a random RUNNER_TOKEN in the ignored root .env}"
       DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@postgres:5432/learnspace
       SANDBOX_IMAGE: learnspace-sandbox:1
       # gVisor (runsc) isolates sandboxes further where the host has it installed.

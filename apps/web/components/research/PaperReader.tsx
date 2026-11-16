@@ -42,12 +42,18 @@ export function loadPdfjs(): Promise<PdfModule> {
 
 type PageLink = { box: [number, number, number, number]; url: URL | null; page: number | null };
 
+/** A PDF-space rectangle [x0, y0, x1, y1] as [left, top, width, height] in viewport pixels (handles crop box and rotation). */
+function viewportBox(viewport: ReturnType<PDFPageProxy["getViewport"]>, rect: number[]): [number, number, number, number] {
+  const [x1, y1] = viewport.convertToViewportPoint(rect[0]!, rect[1]!) as [number, number];
+  const [x2, y2] = viewport.convertToViewportPoint(rect[2]!, rect[3]!) as [number, number];
+  return [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+}
+
 /** The page's link annotations: web links (http and https only) and links within the paper, resolved to their page. */
 async function pageLinks(doc: PDFDocumentProxy, page: PDFPageProxy, viewport: ReturnType<PDFPageProxy["getViewport"]>): Promise<PageLink[]> {
   const annotations: Array<{ subtype?: string; rect: number[]; url?: string; dest?: unknown }> = await page.getAnnotations({ intent: "display" });
   const links = await Promise.all(annotations.filter((item) => item.subtype === "Link").map(async (item): Promise<PageLink | null> => {
-    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(item.rect);
-    const box: PageLink["box"] = [Math.min(x1!, x2!), Math.min(y1!, y2!), Math.abs(x2! - x1!), Math.abs(y2! - y1!)];
+    const box = viewportBox(viewport, item.rect);
     if (item.url) {
       const url = URL.canParse(item.url) ? new URL(item.url) : null;
       return url && (url.protocol === "https:" || url.protocol === "http:") ? { box, url, page: null } : null;
@@ -74,8 +80,8 @@ function PdfPage({ doc, number, scale, width, height, visible, lib, onGoPage, ma
     let cancelled = false;
     void doc.getPage(number).then((page) => {
       if (cancelled) return;
-      const [x1, y1, x2, y2] = page.getViewport({ scale }).convertToViewportRectangle(mark.bbox);
-      const box = { key: mark.key, left: Math.min(x1!, x2!) - 3, top: Math.min(y1!, y2!) - 3, width: Math.abs(x2! - x1!) + 6, height: Math.abs(y2! - y1!) + 6 };
+      const [left, top, width, height] = viewportBox(page.getViewport({ scale }), mark.bbox);
+      const box = { key: mark.key, left: left - 3, top: top - 3, width: width + 6, height: height + 6 };
       setMarkBox(box);
       onMarkPlaced(number, box.top);
     });
@@ -105,13 +111,17 @@ function PdfPage({ doc, number, scale, width, height, visible, lib, onGoPage, ma
     return () => { cancelled = true; task?.cancel(); textLayer?.cancel(); };
   }, [doc, number, scale, visible, lib]);
   return <div className="paper-page" data-page={number} style={{ width, height, "--total-scale-factor": scale, "--scale-factor": scale } as React.CSSProperties}>
+    {/* biome-ignore lint/a11y/noAriaHiddenOnFocusable: the canvas has no tabIndex; the text layer carries the page for assistive tech. */}
     <canvas ref={canvasRef} style={{ width, height }} aria-hidden="true" />
     <div ref={textRef} className="textLayer" />
     {visible ? links.map((link, index) => {
       const style = { left: link.box[0], top: link.box[1], width: link.box[2], height: link.box[3] };
+      /* biome-ignore-start lint/suspicious/noArrayIndexKey: a page's links are read once and never reorder. */
       return link.url
+        // biome-ignore lint/a11y/useAnchorContent: the link overlays the PDF's own link text; aria-label names it.
         ? <a key={index} className="paper-page-link" style={style} href={link.url.href} target="_blank" rel="noopener noreferrer" aria-label={`Open ${link.url.hostname}`} title={link.url.href} />
         : <button key={index} type="button" className="paper-page-link" style={style} aria-label={`Go to page ${link.page}`} title={`Go to page ${link.page}`} onClick={() => onGoPage(link.page!)} />;
+      /* biome-ignore-end lint/suspicious/noArrayIndexKey: see above. */
     }) : null}
     {markBox ? <div key={markBox.key} className="paper-page-mark" style={{ left: markBox.left, top: markBox.top, width: markBox.width, height: markBox.height }} aria-hidden="true" /> : null}
     {visible ? null : <span className="paper-page-number" aria-hidden="true">{number}</span>}
@@ -135,20 +145,20 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
 
   useEffect(() => {
     let cancelled = false;
-    let loaded: PDFDocumentProxy | null = null;
+    let task: ReturnType<PdfModule["getDocument"]> | null = null;
     setState("loading");
     loadPdfjs().then(async (module) => {
-      const task = module.getDocument({ url: `/api/v1/papers/${resourceId}/pdf` });
-      loaded = await task.promise;
+      task = module.getDocument({ url: `/api/v1/papers/${resourceId}/pdf` });
+      const loaded = await task.promise;
       // Page boxes at scale 1, so every page has its final size before it is drawn (scroll position stays stable).
-      const boxes = await Promise.all(Array.from({ length: loaded.numPages }, (_, index) => loaded!.getPage(index + 1).then((p) => { const v = p.getViewport({ scale: 1 }); return { width: v.width, height: v.height }; })));
+      const boxes = await Promise.all(Array.from({ length: loaded.numPages }, (_, index) => loaded.getPage(index + 1).then((p) => { const v = p.getViewport({ scale: 1 }); return { width: v.width, height: v.height }; })));
       if (cancelled) return;
       setLib(module);
       setDoc(loaded);
       setSizes(boxes);
       setState("ready");
     }).catch(() => { if (!cancelled) setState("error"); });
-    return () => { cancelled = true; void loaded?.destroy(); };
+    return () => { cancelled = true; void task?.destroy(); };
   }, [resourceId]);
 
   const fitWidth = useCallback(() => {
@@ -184,6 +194,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
     if (best !== pageRef.current) setPage(best);
   }, [sizes.length]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scale is the re-measure trigger after a zoom.
   useEffect(() => {
     if (state !== "ready") return;
     if (!restored.current) {
@@ -251,6 +262,7 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
     <div ref={scrollRef} className="paper-reader-scroll" data-lenis-prevent onScroll={measure} onPointerUp={onPointerUp} data-own-wheel onPointerDown={(event) => event.stopPropagation()}>
       {state === "loading" ? <div className="paper-reader-state" role="status">Opening the paper…</div> : null}
       {state === "error" ? <div className="paper-reader-state" role="alert"><strong>This PDF couldn&apos;t be opened here.</strong><span>The source may be unavailable. The parsed text is still in Focus mode, Notes and Luny.</span></div> : null}
+      {/* biome-ignore lint/suspicious/noArrayIndexKey: the page number is the page's identity. */}
       {doc && lib ? <div className="paper-reader-pages">{sizes.map((size, index) => <PdfPage key={index + 1} doc={doc} lib={lib} number={index + 1} scale={scale} width={size.width * scale} height={size.height * scale} visible={visible.has(index + 1)} onGoPage={scrollToPage} mark={mark?.page === index + 1 ? mark : null} onMarkPlaced={onMarkPlaced} />)}</div> : null}
       {selection && onAsk ? <button type="button" className="paper-reader-ask" style={{ left: selection.x, top: selection.y }} onPointerUp={(event) => event.stopPropagation()} onClick={() => { onAsk({ text: selection.text, page: selection.page }); setSelection(null); window.getSelection()?.removeAllRanges(); }}><Sparkles aria-hidden="true" /> Ask Luny</button> : null}
     </div>

@@ -97,13 +97,14 @@ export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocu
   const needsPdf = Boolean(content?.blocks.some((block) => block.type === "figure" && block.bbox && block.page));
   useEffect(() => {
     if (!needsPdf || !content) return;
-    let loaded: PDFDocumentProxy | null = null;
+    let task: ReturnType<Awaited<ReturnType<typeof loadPdfjs>>["getDocument"]> | null = null;
     let cancelled = false;
     void loadPdfjs().then(async (lib) => {
-      loaded = await lib.getDocument({ url: `/api/v1/papers/${content.resourceId}/pdf` }).promise;
+      task = lib.getDocument({ url: `/api/v1/papers/${content.resourceId}/pdf` });
+      const loaded = await task.promise;
       if (!cancelled) setDoc(loaded);
     }).catch(() => undefined);
-    return () => { cancelled = true; void loaded?.destroy(); };
+    return () => { cancelled = true; void task?.destroy(); };
   }, [needsPdf, content]);
 
   useEffect(() => {
@@ -207,6 +208,7 @@ export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocu
       <button type="button" className="paper-focus-control" onClick={onClose} aria-label="Leave focus mode" title="Leave focus mode (Esc)"><X aria-hidden="true" /></button>
       <div className="paper-focus-settings-wrap">
         <button type="button" className="paper-focus-control" aria-expanded={settingsOpen} aria-label="Reading settings" onClick={() => setSettingsOpen((open) => !open)}><Type aria-hidden="true" /></button>
+        {/* biome-ignore lint/a11y/useSemanticElements: a popover of segmented controls, not a form; a fieldset would restyle it. */}
         {settingsOpen ? <div className="paper-focus-settings" role="group" aria-label="Reading settings">
           <p>Theme</p>
           <div className="paper-focus-segment">{(["paper", "sepia", "night"] as const).map((theme) => <button key={theme} type="button" aria-pressed={settings.theme === theme} data-swatch={theme} onClick={() => update({ theme })}>{theme === "paper" ? "Paper" : theme === "sepia" ? "Sepia" : "Night"}</button>)}</div>
@@ -217,6 +219,7 @@ export const PaperFocus = forwardRef<PaperFocusHandle, Props>(function PaperFocu
         </div> : null}
       </div>
     </div>
+    {/* biome-ignore lint/a11y/useKeyWithClickEvents lint/a11y/noStaticElementInteractions: clicking empty space dismisses the reference card; Escape does the same from the keyboard. */}
     <div ref={scrollRef} className="paper-focus-scroll" data-lenis-prevent onPointerUp={onPointerUp} onClick={(event) => { if (!(event.target as HTMLElement).closest(".paper-focus-cite, .paper-focus-reference")) setReference(null); }}>
       <article className="paper-focus-sheet" data-columns={settings.columns}>
         {!content ? <p className="paper-focus-state" role={failed ? "alert" : "status"}>{failed ? "The paper couldn't be loaded." : "Typesetting the paper…"}</p> : <>

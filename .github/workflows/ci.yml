@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+env:
+  # Compose requires RUNNER_TOKEN; CI never exposes the runner, so a fixed value is safe here.
+  RUNNER_TOKEN: ci-only-runner-token
+
 jobs:
   foundation:
     runs-on: ubuntu-latest

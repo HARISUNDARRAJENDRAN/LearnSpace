@@ -37,13 +37,13 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /** Sliders over the guide's parameter grid; every value shown was computed by running code in the sandbox. */
 function GuideExplorer({ explorer }: { explorer: Explorer }) {
   const [at, setAt] = useState<Record<string, number>>(() => Object.fromEntries(explorer.parameters.map((parameter) => [parameter.id, Math.floor((parameter.values.length - 1) / 2)])));
-  const valueOf = (id: string) => { const parameter = explorer.parameters.find((item) => item.id === id); return parameter?.values[at[id] ?? 0]; };
+  const valueAt = (id: string) => { const parameter = explorer.parameters.find((item) => item.id === id); return parameter?.values[at[id] ?? 0]; };
   const rowWhere = (fixed: Record<string, number | undefined>) => explorer.table.find((row) => explorer.parameters.every((parameter) => row.parameters[parameter.id] === fixed[parameter.id]));
-  const current = rowWhere(Object.fromEntries(explorer.parameters.map((parameter) => [parameter.id, valueOf(parameter.id)])));
+  const current = rowWhere(Object.fromEntries(explorer.parameters.map((parameter) => [parameter.id, valueAt(parameter.id)])));
   const chart = explorer.chart;
   const xParameter = chart ? explorer.parameters.find((parameter) => parameter.id === chart.xParameter) : undefined;
   const series = chart && xParameter ? chart.outputs.map((output) => xParameter.values.map((x) => {
-    const row = rowWhere(Object.fromEntries(explorer.parameters.map((parameter) => [parameter.id, parameter.id === xParameter.id ? x : valueOf(parameter.id)])));
+    const row = rowWhere(Object.fromEntries(explorer.parameters.map((parameter) => [parameter.id, parameter.id === xParameter.id ? x : valueAt(parameter.id)])));
     return row ? { x, y: row.outputs[output] } : null;
   }).filter((point): point is { x: number; y: number } => point !== null && Number.isFinite(point.y))) : [];
   return <div className="guide-explorer">
@@ -55,7 +55,7 @@ function GuideExplorer({ explorer }: { explorer: Explorer }) {
     <dl className="guide-outputs" aria-live="polite">
       {explorer.outputs.map((output) => <div key={output.id}><dt><MathText text={output.symbol ? `$${output.symbol}$` : ""} /> {output.label}</dt><dd>{current ? formatValue(current.outputs[output.id] ?? Number.NaN) : "–"}</dd></div>)}
     </dl>
-    {chart && xParameter && series.some((points) => points.length > 1) ? <GuideChart explorer={explorer} xLabel={xParameter.label} x={valueOf(xParameter.id)} series={series} /> : null}
+    {chart && xParameter && series.some((points) => points.length > 1) ? <GuideChart explorer={explorer} xLabel={xParameter.label} x={valueAt(xParameter.id)} series={series} /> : null}
   </div>;
 }
 
@@ -87,6 +87,7 @@ export function PaperGuide({ sessionId, onGo, onCollapse }: { sessionId: string;
   const [view, setView] = useState<GuideView | null>(null);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is the retry trigger.
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
@@ -127,6 +128,7 @@ export function PaperGuide({ sessionId, onGo, onCollapse }: { sessionId: string;
       <p><MathText text={guide.motivation.scenario} /> <Anchors anchors={guide.motivation.anchors} onGo={onGo} /></p>
       <Predict prompt={guide.motivation.prediction} answer={guide.motivation.answer} />
     </Section>
+    {/* biome-ignore-start lint/suspicious/noArrayIndexKey: a generated guide is stored whole and never reorders. */}
     <Section title="Work it through">
       <ol className="guide-steps">{guide.workedExample.steps.map((step, index) => <li key={index}>
         <p><MathText text={step.text} /> <Anchors anchors={step.anchors} onGo={onGo} /></p>
@@ -151,5 +153,6 @@ export function PaperGuide({ sessionId, onGo, onCollapse }: { sessionId: string;
       {guide.project.gpuReproductionPlan ? <div className="guide-gpu"><h4>{guide.project.gpuReproductionPlan.label}</h4><p className="guide-note">This needs more compute than LearnSpace&apos;s CPU sandbox; it can&apos;t be reproduced here.</p><ol className="guide-list">{guide.project.gpuReproductionPlan.steps.map((step) => <li key={step}><MathText text={step} /></li>)}</ol></div> : null}
     </Section>
     <Section title="Takeaways"><ul className="guide-list">{guide.takeaways.map((item, index) => <li key={index}><MathText text={item.text} /> <Anchors anchors={item.anchors} onGo={onGo} /></li>)}</ul></Section>
+    {/* biome-ignore-end lint/suspicious/noArrayIndexKey: see above. */}
   </article>);
 }
