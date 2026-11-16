@@ -47,6 +47,8 @@ Headings, captions, equations, table blocks, reference entries, and citation mar
 
 The package is workspace-discovered by the existing `packages/*` glob. The native crate depends on the vendored Rust crate by path. Build on Linux x64 glibc with Rust 1.98.1, Node 22+, and pnpm 11:
 
+The worker image builds this addon in its `worker-build` stage. That stage installs the pinned Rust toolchain, builds `@learnspace/pdf-parser`, then deploys the worker package with `native/*.node` included. The runtime stage remains Node 22 on Debian bookworm (glibc 2.36); no Rust toolchain is shipped in the worker image.
+
 ```bash
 rustup toolchain install 1.98.1 --profile minimal --target x86_64-unknown-linux-gnu
 pnpm --filter @learnspace/pdf-parser build

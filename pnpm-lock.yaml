@@ -200,6 +200,9 @@ importers:
 
   services/worker:
     dependencies:
+      '@learnspace/pdf-parser':
+        specifier: workspace:*
+        version: link:../../packages/pdf-parser
       '@learnspace/shared':
         specifier: workspace:*
         version: link:../../packages/shared

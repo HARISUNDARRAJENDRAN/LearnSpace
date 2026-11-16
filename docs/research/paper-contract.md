@@ -25,7 +25,7 @@ copies of them are allowed.
 | `heading_path` | section hierarchy, e.g. `{"3 Model Architecture","3.2 Attention"}` |
 | `page_from` / `page_to` | 1-based PDF pages |
 | `paragraph_from` / `paragraph_to` | paragraph index within the page when known |
-| `anchor` | `{ "kind": "paper", "page": 4, "sectionId": "3-2-attention", "bbox"?: [x0,y0,x1,y1] }`; bbox is in PDF points, origin top-left, only when the parser supplies it |
+| `anchor` | `{ "kind": "paper", "page": 4, "sectionId": "3-2-attention", "bbox"?: [x0,y0,x1,y1] }`; bbox is in PDF user space (points, origin bottom-left, as the parser emits it; pdf.js maps it with `viewport.convertToViewportRectangle`), the union of the parser text items matched to this single-page chunk; omitted when the match is weak |
 | `content` | plain text (markdown inline allowed); equations keep their source text |
 | `metadata` | `{ "citations"?: number[] /* bibliography ordinals cited in this passage */, "label"?: "Figure 3" \| "Table 2" \| "Eq. (4)", "caption"?: string, "latex"?: string, "unrecovered"?: string /* what the parser could not recover */ }` |
 
@@ -38,8 +38,8 @@ copies of them are allowed.
 
 - `ordinal` is the 1-based bibliography index, matching `metadata.citations` on passages.
 - `raw_reference` holds the exact bibliography text. `cited_doi` / `cited_arxiv_id` / `cited_resource_id` are set only when
-  verified against a scholarly source. `resolution_status` is `unresolved | resolved | ambiguous`, plus `confidence`.
-- `metadata`: `{ "title", "authors", "year", "venue", "url", "source": "openalex" | "semantic_scholar" | "arxiv" | "crossref", "abstract"? }`.
+  verified: an identifier written in the reference itself, or an Exa match that passes the title + year/author rule. `resolution_status` is `unresolved | resolved | ambiguous`, plus `confidence`.
+- `metadata`: `{ "title", "authors", "year", "venue", "url", "source": "reference-text" | "exa", "abstract"? }`.
   This is verified metadata only, never LLM-generated.
 
 ## Reading position

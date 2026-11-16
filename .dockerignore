@@ -5,6 +5,7 @@
 
 node_modules
 **/node_modules
+packages/pdf-parser/native/target
 dist
 **/dist
 **/*.tsbuildinfo

@@ -19,5 +19,6 @@
     "build": "pnpm build:native && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test dist/index.test.js"
-  }
+  },
+  "files": ["dist", "native/*.node"]
 }

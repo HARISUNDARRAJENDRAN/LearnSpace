@@ -330,6 +330,20 @@
       "when": 1794834000000,
       "tag": "0046_paper_practice",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794837600000,
+      "tag": "0047_paper_ingestion_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794841200000,
+      "tag": "0048_paper_references_worker_delete",
+      "breakpoints": true
     }
   ]
 }
