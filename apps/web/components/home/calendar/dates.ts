@@ -73,7 +73,38 @@ export const format = {
   long: (day: DayKey) => fromKey(day).toLocaleDateString("en", { weekday: "long", month: "long", day: "numeric" }),
   time: (date: Date) => `${pad(date.getHours())}:${pad(date.getMinutes())}`,
   hour: (hour: number) => `${pad(hour)}:00`,
+  // The calendar face reads in 12-hour time: "3:00 PM", "12 PM".
+  clock: (date: Date) => date.toLocaleTimeString("en", { hour: "numeric", minute: "2-digit" }),
+  hour12: (hour: number) => `${hour % 12 || 12} ${hour < 12 ? "AM" : "PM"}`,
+  duration: (minutes: number) => {
+    const hours = Math.floor(minutes / 60);
+    const rest = Math.round(minutes % 60);
+    return hours && rest ? `${hours}h ${rest}m` : hours ? `${hours}h` : `${rest}m`;
+  },
 };
+
+// "UTC+6", "UTC+5:30", "UTC-3"
+export function utcOffset(date: Date): string {
+  const offset = -date.getTimezoneOffset();
+  if (offset === 0) return "UTC";
+  const minutes = Math.abs(offset) % 60;
+  return `UTC${offset > 0 ? "+" : "-"}${Math.floor(Math.abs(offset) / 60)}${minutes ? `:${pad(minutes)}` : ""}`;
+}
+
+// "Today", "Tomorrow", "Yesterday" or "Nov 15".
+export function relativeDay(day: DayKey, today: DayKey): string {
+  if (day === today) return "Today";
+  if (day === addDays(today, 1)) return "Tomorrow";
+  if (day === addDays(today, -1)) return "Yesterday";
+  return format.short(day);
+}
+
+// The heading over the grid: "Nov 9 – 15", "Nov 14" or "November 2026".
+export function calendarTitle(view: "day" | "week" | "month", days: DayKey[], anchor: DayKey): string {
+  if (view === "month") return fromKey(anchor).toLocaleDateString("en", { month: "long", year: "numeric" });
+  if (view === "day") return format.short(anchor);
+  return rangeLabel(days);
+}
 
 export function rangeLabel(days: DayKey[]): string {
   const first = days[0]!;

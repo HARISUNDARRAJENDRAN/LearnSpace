@@ -17,7 +17,9 @@ import {
 import { ArrowLeft, ArrowRight, Check, Search, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Logo } from "../marketing/SiteNav";
+import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { FirstSession } from "./FirstSession";
+import { GoalStep } from "./GoalStep";
 
 type Concept = {
   id: string;
@@ -157,6 +159,9 @@ export function OnboardingFlow({
   useEffect(() => {
     setIsHydrated(true);
   }, []);
+
+  // Luny's speech models download while the learner answers these questions, so they are ready by their first lesson.
+  useEffect(prefetchSpeechModels, []);
 
   useEffect(() => {
     if (step !== 3) {
@@ -350,9 +355,9 @@ export function OnboardingFlow({
           <Logo />
           {step > 0 ? (
             <span className="onboarding-progress">
-              Step {step} of 6
+              Step {step} of 7
               <span className="onboarding-progress-steps" aria-hidden="true">
-                {[1, 2, 3, 4, 5, 6].map((index) => (
+                {[1, 2, 3, 4, 5, 6, 7].map((index) => (
                   <span key={index} className={index <= step ? "is-done" : undefined} />
                 ))}
               </span>
@@ -379,13 +384,15 @@ export function OnboardingFlow({
                 {step === 3 ? <h1 id="onboarding-title">What could you spend hours learning about?</h1> : null}
                 {step === 4 ? <h1 id="onboarding-title">What helps ideas stick?</h1> : null}
                 {step === 5 ? <h1 id="onboarding-title">Where are you starting from?</h1> : null}
-                {step === 6 ? <h1 id="onboarding-title">What will you study right now?</h1> : null}
+                {step === 6 ? <h1 id="onboarding-title">What&apos;s your goal right now?</h1> : null}
+                {step === 7 ? <h1 id="onboarding-title">What will you study right now?</h1> : null}
                 {step === 1 ? <p>Choose the path that feels closest right now.</p> : null}
                 {step === 2 ? <p>Select everything that sounds like you.</p> : null}
                 {step === 3 ? <p>Pick at least three. You can always change these later.</p> : null}
                 {step === 4 ? <p>There is no wrong way to learn. Choose what feels useful.</p> : null}
                 {step === 5 ? <p>We&apos;ll use this as a starting point, never a label.</p> : null}
-                {step === 6 ? <p>Pick a video to start. It becomes your first session.</p> : null}
+                {step === 6 ? <p>An exam, a project, a skill. Whatever you are working toward this week.</p> : null}
+                {step === 7 ? <p>Pick a video to start. It becomes your first session.</p> : null}
               </div>
 
               {step === 1 ? (
@@ -525,7 +532,8 @@ export function OnboardingFlow({
                 </fieldset>
               ) : null}
 
-              {step === 6 ? <FirstSession preferredDuration={flow.preferredDuration} /> : null}
+              {step === 6 ? <GoalStep interests={selectedConcepts.map((concept) => concept.name)} onDone={() => setStep(7)} /> : null}
+              {step === 7 ? <FirstSession preferredDuration={flow.preferredDuration} /> : null}
 
               {saveError ? <p className="onboarding-inline-error" role="status">{saveError}</p> : null}
               {submitError ? <p className="onboarding-inline-error" role="alert">{submitError}</p> : null}

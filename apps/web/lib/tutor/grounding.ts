@@ -69,7 +69,7 @@ export function groundOutput(output: Pick<TutorModelOutput, "outcome" | "blocks"
   if (blocks.length === 0) return { outcome: "not_covered", blocks: [], sources: [] };
   // Sources only some removed block used are dropped from the answer too.
   const used = new Set(blocks.flatMap(blockSources));
-  const keep = sources.flatMap((source, index) => used.has(index) ? [index] : []);
+  const keep = sources.flatMap((_source, index) => used.has(index) ? [index] : []);
   const renumber = new Map(keep.map((old, index) => [old, index]));
   const followUps = [...new Set(output.followUps.map((question) => clean(question.replace(/\*\*/g, ""), 120)).filter(nonEmpty))].slice(0, 3);
   return { outcome: general || used.size === 0 ? "general" : "answer", blocks: blocks.map((block) => renumberBlock(block, (index) => renumber.get(index)!)), sources: keep.map((index) => sources[index]!), followUps };

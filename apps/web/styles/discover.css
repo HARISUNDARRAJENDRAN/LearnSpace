@@ -224,7 +224,7 @@
 .discover-theatre-copy { position: relative; display: grid; max-width: min(640px, 56%); text-shadow: 0 1px 12px rgb(0 0 0 / 35%); gap: 10px; padding: 96px 56px 200px; }
 .discover-theatre-copy h1 { margin: 0; font-size: clamp(40px, 4.6vw, 68px); font-weight: 750; line-height: 1.02; letter-spacing: -.045em; text-wrap: balance; }
 .discover-theatre-copy h2 { margin: 0; font-size: clamp(20px, 1.8vw, 26px); font-weight: 650; line-height: 1.25; letter-spacing: -.02em; text-wrap: balance; }
-.discover-theatre-add { display: inline-flex; width: fit-content; min-height: 48px; align-items: center; gap: 8px; margin-top: 12px; padding: 0 24px; border: 0; border-radius: 10px; background: #fff; color: #111; font: inherit; font-size: 16px; font-weight: 650; cursor: pointer; }
+.discover-theatre-add { display: inline-flex; width: fit-content; min-height: 48px; align-items: center; gap: 8px; margin-top: 12px; padding: 0 24px; border: 0; border-radius: 10px; background: #fff; color: #111; font: inherit; font-size: 16px; font-weight: 650; cursor: pointer; text-decoration: none; }
 .discover-theatre-add:hover { background: #e9e9ec; }
 .discover-theatre-add:disabled { cursor: wait; opacity: .75; }
 .discover-theatre-add svg { width: 18px; height: 18px; }

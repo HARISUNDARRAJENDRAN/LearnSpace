@@ -50,8 +50,8 @@ test("signup → interests → Discover preview → full feed → topic controls
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByRole("button", { name: "I know the basics" }).click();
     await page.getByRole("button", { name: "Continue" }).click();
-    // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
-    await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+    // Onboarding is saved once the goal question shows; leaving it lands where the app sends a new learner.
+    await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
     await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/app/);
     userId = (await db<{ id: string }[]>`SELECT id FROM identity.users WHERE email = ${email}`)[0]!.id;
@@ -151,6 +151,8 @@ test("signup → interests → Discover preview → full feed → topic controls
       }
       await db`DELETE FROM catalog.resource_concepts WHERE resource_id = ANY(${resources}::uuid[])`;
       await db`DELETE FROM catalog.video_details WHERE resource_id = ANY(${resources}::uuid[])`;
+      await db`DELETE FROM study.mastery_checks WHERE resource_id = ANY(${resources}::uuid[])`;
+      await db`DELETE FROM study.video_notes WHERE resource_id = ANY(${resources}::uuid[])`;
       await db`DELETE FROM catalog.resources WHERE id = ANY(${resources}::uuid[])`;
     } finally { await Promise.all([db.end(), worker.end(), closeRecommendationRedis()]); }
   }

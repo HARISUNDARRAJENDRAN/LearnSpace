@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { activityEvents, collectionEnrollments, collectionItems, collectionSections, collections, libraryItems, resources, userResourceProgress, videoDetails, paperDetails } from "@learnspace/db/schema";
-import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest } from "@learnspace/shared";
+import type { LibraryCollectionDetail, LibraryCollectionSummary, LibraryItemRequest, StudySessionSummary } from "@learnspace/shared";
 import { collectionIdSchema, collectionKindSchema, studyResourceReadinessSchema } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 import { projectStudyBehavior } from "../discovery/service";
 import { invalidateHomeFeedCache } from "../discovery/cache";
-import { startCollection } from "../study/service";
+import { listStudySessions, startCollection } from "../study/service";
 
 export type SavedLibraryResource = {
   resourceId: string;
@@ -21,6 +21,8 @@ export type SavedLibraryResource = {
 };
 
 export type LibraryPageData = {
+  /** Finished sessions, with their whole workspace: a single video once it and its mastery check are done, a course once every lesson is. */
+  sessions: StudySessionSummary[];
   savedResources: SavedLibraryResource[];
   collections: LibraryCollectionSummary[];
 };
@@ -68,6 +70,11 @@ async function visibleResource(tx: Transaction, userId: string, resourceId: stri
 }
 
 export async function getLibraryPage(userId: string): Promise<LibraryPageData> {
+  const [sessions, rest] = await Promise.all([listStudySessions(userId, "library"), libraryShelves(userId)]);
+  return { sessions, ...rest };
+}
+
+async function libraryShelves(userId: string): Promise<Omit<LibraryPageData, "sessions">> {
   return withUserTransaction(userId, async (tx) => {
     const [savedRows, collectionRows] = await Promise.all([
       tx.select({ item: libraryItems, resource: resources, video: videoDetails, paper: paperDetails }).from(libraryItems).innerJoin(resources, eq(resources.id, libraryItems.resourceId)).leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id)).leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id)).where(and(eq(libraryItems.userId, userId), eq(libraryItems.status, "saved"))).orderBy(desc(libraryItems.updatedAt)).limit(60),

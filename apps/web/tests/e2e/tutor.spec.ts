@@ -3,6 +3,7 @@ import { expect, type Page, test } from "@playwright/test";
 import postgres from "postgres";
 import { sessionCookieName } from "../../lib/auth/cookies";
 import { createSession } from "../../lib/auth/repository";
+import { openTool, studyTool } from "./study-tools";
 
 test.describe.configure({ mode: "serial" });
 
@@ -62,6 +63,7 @@ test.afterAll(async () => {
   await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
   await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
   await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+  await db`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
   await db`DELETE FROM study.mastery_checks WHERE user_id = ${userId}`;
   await db`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
   await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
@@ -113,7 +115,7 @@ test("the tutor answers from the transcript, checks understanding, seeks the vid
   expect(started.status()).toBe(200);
   sessionId = ((await started.json()) as { sessionId: string }).sessionId;
   await page.goto(`/app/study/video/${sessionId}`);
-  await page.getByRole("button", { name: "AI", exact: true }).click();
+  await openTool(page, "AI");
   const panel = page.getByRole("complementary", { name: "Side panel" });
   await expect(panel.getByText("Learn from this video")).toBeVisible();
 
@@ -137,7 +139,8 @@ test("the tutor answers from the transcript, checks understanding, seeks the vid
 
   // Leaving and coming back restores the conversation and the graded check.
   await page.reload();
-  await page.getByRole("button", { name: "AI", exact: true }).click();
+  // The session reopens with the panel the learner left open.
+  await expect(studyTool(page, "AI")).toHaveAttribute("aria-pressed", "true");
   await expect(panel.getByRole("heading", { name: "What does the learning rate do?" })).toBeVisible();
   await expect(panel.getByRole("paragraph").filter({ hasText: "What does the learning rate do?" })).toBeVisible();
   await expect(panel.getByRole("region", { name: "Check your understanding" }).getByText("Not quite")).toBeVisible();
@@ -180,7 +183,8 @@ test("the tutor answers from the transcript, checks understanding, seeks the vid
   await doubt.getByRole("button", { name: "Got it" }).click();
   await expect(doubt.getByText("1 reply · Resolved")).toBeVisible();
   await page.reload();
-  await page.getByRole("button", { name: "AI", exact: true }).click();
+  // The session reopens with the panel the learner left open.
+  await expect(studyTool(page, "AI")).toHaveAttribute("aria-pressed", "true");
   await expect(panel.getByRole("region", { name: /Doubt about/ }).getByText("1 reply · Resolved")).toBeVisible();
 });
 
@@ -198,13 +202,19 @@ test("the tutor API refuses other learners' sessions and malformed actions", asy
 test("watching the video to the end opens a hard check that must be passed to move on", async ({ page }) => {
   const watched = await page.request.post(`/api/v1/study-sessions/${sessionId}/progress`, { data: { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 239_000 }, event: "complete", idempotencyKey: `complete-${randomUUID()}` } });
   expect((await watched.json()).masteryRequired).toBe(true);
+  // A watched lesson whose check is not passed opens on the check: no rewatching the video to get back to it.
   await page.goto(`/app/study/video/${sessionId}`);
-  await page.getByRole("button", { name: "Check", exact: true }).click();
   const panel = page.locator(".session-tool-slot:not([hidden])");
+  await expect(page.getByRole("button", { name: "Check", exact: true })).toHaveAttribute("aria-pressed", "true");
   // Finishing the video wrote the set in the background, so the panel opens on the first question.
   await expect(panel.getByText("1 / 5")).toBeVisible();
   await expect(panel.getByRole("button", { name: "Start the check" })).toHaveCount(0);
-  for (let index = 0; index < 3; index += 1) {
+  await panel.getByRole("button", { name: /It overshoots the minimum/ }).click();
+  await expect(panel.getByText("Large steps jump past the minimum.")).toBeVisible();
+  // Leaving mid-check and coming back resumes on the next unanswered question, with the answer kept.
+  await page.reload();
+  await expect(panel.getByText("2 / 5")).toBeVisible();
+  for (let index = 0; index < 2; index += 1) {
     await panel.getByRole("button", { name: /It overshoots the minimum/ }).click();
     await expect(panel.getByText("Large steps jump past the minimum.")).toBeVisible();
     await panel.getByRole("button", { name: "Next question" }).click();
@@ -215,8 +225,25 @@ test("watching the video to the end opens a hard check that must be passed to mo
     await expect(panel.getByText("Right: big steps overshoot the minimum.")).toBeVisible();
     await panel.getByRole("button", { name: index === 1 ? "See results" : "Next question" }).click();
   }
-  await expect(panel.getByText("100%")).toBeVisible();
-  await expect(panel.getByText("Mastered. The next video is unlocked.")).toBeVisible();
-  // The pass is stored, so the lesson stays complete after a reload.
+  // The results: the score on the dial, what it was built from, and an analysis written from these answers.
+  const results = panel.locator(".mastery-results");
+  await expect(results.locator(".mastery-score strong")).toHaveText("100%");
+  await expect(results.locator(".mastery-band")).toHaveText("Excellent");
+  await expect(results.getByText("Lesson mastered.")).toBeVisible();
+  await expect(results.getByRole("heading", { name: "Concept mastery" })).toBeVisible();
+  await expect(results.getByText("You traced how the step size drives overshooting.")).toBeVisible();
+  await page.locator(".session-tool-slot:not([hidden]) .session-tool-body").screenshot({ path: "test-results/mastery-results.png" });
+  // Review answers walks the questions and comes back to the results.
+  await results.getByRole("button", { name: "Review answers" }).click();
+  await expect(panel.getByText("1 / 5")).toBeVisible();
+  await panel.getByRole("button", { name: "Back to results" }).click();
+  await expect(results.locator(".mastery-band")).toHaveText("Excellent");
+  // The pass and its analysis are stored, so a reload opens on the same results.
   expect((await (await page.request.get(`/api/v1/study-sessions/${sessionId}/mastery`)).json()).state).toBe("passed");
+  await page.reload();
+  await openTool(page, "Check");
+  await expect(results.getByText("You traced how the step size drives overshooting.")).toBeVisible();
+  // A single lesson has no next video, so Continue ends the session.
+  await results.getByRole("button", { name: "Back to Sessions" }).click();
+  await page.waitForURL("**/app/sessions");
 });

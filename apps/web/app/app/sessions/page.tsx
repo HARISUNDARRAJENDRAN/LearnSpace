@@ -1,26 +1,19 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { FirstSession } from "../../../components/onboarding/FirstSession";
-import { StudyWorkspace } from "../../../components/study/StudyWorkspace";
-import { VideoSession } from "../../../components/study/VideoSession";
 import { requireCompletedSession } from "../../../lib/discovery/access";
 import { getOnboardingState } from "../../../lib/onboarding/service";
-import { findCurrentStudySession, getStudySession } from "../../../lib/study/service";
+import { lastSeenSessionRoute } from "../../../lib/study/service";
 
 export const metadata: Metadata = { title: "Sessions | LearnSpace" };
 
 export const dynamic = "force-dynamic";
 
-/** Sessions is the current study session itself, rendered in place so there is no redirect hop. */
+/** Sessions opens the session the learner was in last, where they left it; with none open, it asks for the next video. */
 export default async function SessionsRoute() {
   const auth = await requireCompletedSession();
-  const current = await findCurrentStudySession(auth.user.id);
-  if (current) {
-    const session = await getStudySession(auth.user.id, current.id);
-    const key = `${session.id}:${session.activeResourceId}`;
-    if (session.activeResource?.type === "video") return <VideoSession key={key} session={session} active={session.activeResource} />;
-    if (session.activeResource?.type === "paper") return <StudyWorkspace key={key} session={session} />;
-  }
-  // With nothing in progress, Sessions asks for the next video instead of showing an empty desk.
+  const route = await lastSeenSessionRoute(auth.user.id);
+  if (route) redirect(route);
   const { draft } = await getOnboardingState(auth.user.id);
   return (
     <main className="product-page sessions-page" aria-labelledby="sessions-pick-title">

@@ -21,7 +21,7 @@ export async function GET(_request: Request, context: Context) {
   }
 }
 
-/** The learner's own edits to the notes, or undoing Luna's last edit. */
+/** The learner's own edits to the notes, or undoing Luny's last edit. */
 export async function PATCH(request: Request, context: Context) {
   try {
     const session = await requireCompletedSession();

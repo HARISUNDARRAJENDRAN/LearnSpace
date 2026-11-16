@@ -142,6 +142,8 @@ test.afterAll(async () => {
   await db`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.paper_details WHERE resource_id IN ${db(seededResourceIds)}`;
+  await db`DELETE FROM study.mastery_checks WHERE resource_id IN ${db(seededResourceIds)}`;
+  await db`DELETE FROM study.video_notes WHERE resource_id IN ${db(seededResourceIds)}`;
   await db`DELETE FROM catalog.resources WHERE id IN ${db(seededResourceIds)}`;
   if (adjacentRelationId) {
     await db`DELETE FROM knowledge.concept_relations WHERE id = ${adjacentRelationId}`;
@@ -173,8 +175,8 @@ async function completeDiscoveryOnboarding(page: import("@playwright/test").Page
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
-  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  // Onboarding is saved once the goal question shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
 }
@@ -206,6 +208,12 @@ test("the last onboarding step plans a first session onto the calendar", async (
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
 
+  // The goal question turns the learner's answer into this week's to-dos.
+  await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create my to-dos" })).toBeDisabled();
+  await page.getByRole("textbox", { name: "Your goal right now" }).fill("Get comfortable with Python recursion");
+  await page.getByRole("button", { name: "Create my to-dos" }).click();
+
   await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Start now" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Skip for now" })).toHaveCount(0);
@@ -214,12 +222,17 @@ test("the last onboarding step plans a first session onto the calendar", async (
   await picks.first().click();
   await page.getByRole("button", { name: "45 min" }).click();
   await page.getByRole("button", { name: "Start now" }).click();
-  // The picked video is the learner's session as soon as onboarding ends.
-  await expect(page).toHaveURL(/\/app\/sessions$/);
+  // The picked video is the learner's session as soon as onboarding ends, and its lesson opens.
+  await expect(page).toHaveURL(/\/app\/study\/video\/[0-9a-f-]+$/);
   await expect(page.getByRole("heading", { name: "What will you study right now?" })).toHaveCount(0);
   await page.goto("/app");
   const calendar = page.getByRole("region", { name: "Study plan" });
   await expect(calendar.getByRole("button", { name: /Watch / }).first()).toHaveClass(/kind-watch/);
+  // The goal's to-dos are all-day items the learner ticks off on the calendar.
+  const todo = calendar.getByRole("button", { name: /^Done: / }).first();
+  await expect(todo).toHaveAttribute("aria-pressed", "false");
+  await todo.click();
+  await expect(todo).toHaveAttribute("aria-pressed", "true");
 });
 
 test("completed learner reaches Home and can use the app navigation", async ({ page }) => {
@@ -256,8 +269,8 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
-  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  // Onboarding is saved once the goal question shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app\/discover$/);
 
@@ -314,7 +327,7 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await expect(page).toHaveURL(/\/app\/discover\/coding-programming\?step=1$/);
   await page.reload();
   await expect(units.getByRole("button").first()).toHaveAttribute("aria-current", "step");
-  await expect(page.getByRole("button", { name: "Add this to Library" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Watch later" })).toBeVisible();
   for (const width of [1280, 1024, 768, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await expect(page.getByRole("heading", { name: "Coding & Programming", level: 1 })).toBeVisible();

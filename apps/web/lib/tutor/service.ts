@@ -12,9 +12,10 @@ import { estimateCostUsd, openAiTutorModel, TUTOR_MODEL, type TutorDepth, type T
 import { AuthError } from "../auth/errors";
 import { recordStudyQuestion } from "../study/service";
 import { cacheEligible, findCachedAnswer, storeCachedAnswer } from "./cache";
+import { type CourseOutline, courseOutline, lessonOutline } from "./context";
 import { answerText, blockView, type Evidence, type GroundedAnswer, groundOutput, type Interaction, type LearnerState, mergeLearner, OUTCOME_NOTICE, type ReplyContext, readLearner, recordCheck, type StoredBlock, suggestMove } from "./grounding";
 import { admitTutorGeneration, recordGlobalSpend } from "./limits";
-import { buildTutorPrompt, type HistoryTurn, TUTOR_INSTRUCTIONS } from "./prompt";
+import { buildTutorPrompt, type HistoryTurn, type SharedCode, TUTOR_INSTRUCTIONS } from "./prompt";
 import { retrieveEvidence } from "./retrieval";
 import { formatClock, lexicalQuery, questionTerms, resolveScope, type TutorScope } from "./scope";
 
@@ -42,7 +43,7 @@ type AssistantContent = {
   cache?: "exact" | "semantic";
   doubt?: TutorDoubt;
 };
-type UserContent = { positionMs?: number; replyTo?: { messageId: string; blockId: string }; doubt?: TutorDoubt };
+type UserContent = { positionMs?: number; replyTo?: { messageId: string; blockId: string }; doubt?: TutorDoubt; sharedCode?: { language: string; chars: number } };
 const doubtOf = (row: MessageRow) => (row.content as { doubt?: TutorDoubt }).doubt;
 type MessageRow = typeof tutorMessages.$inferSelect;
 
@@ -184,6 +185,12 @@ export type AdmittedTurn =
     recentChunkIds: string[];
     learner: LearnerState;
     firstTurn: boolean;
+    /** The session's code draft, when the learner shared it with this question. */
+    code: SharedCode | null;
+    /** The course or playlist this video is a lesson of. */
+    course: CourseOutline | null;
+    /** The headings of the learner's study guide to this video, the whole lecture's outline. */
+    outline: string[];
   };
 
 /**
@@ -238,7 +245,7 @@ export async function admitTutorTurn(userId: string, sessionId: string, input: T
       userId, studySessionId: video.sessionId, tutorThreadId: thread.id, purpose: PURPOSE, status: "executing", goal: "Answer a learner's question from the video transcript",
       policyVersion: TUTOR_CONTRACT_VERSION, maxIterations: 1, maxToolCalls: 0, maxTokens: TUTOR_MODEL.depths.deep.maxOutputTokens, correlationId: randomUUID(), startedAt: new Date(),
     }).returning({ id: agentRuns.id });
-    const userContent: UserContent = { positionMs: input.positionMs, ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.doubt ? { doubt: input.doubt } : {}) };
+    const userContent: UserContent = { positionMs: input.positionMs, ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.doubt ? { doubt: input.doubt } : {}), ...(input.code ? { sharedCode: { language: input.code.language, chars: input.code.code.length } } : {}) };
     const [userRow] = await tx.insert(tutorMessages).values({ threadId: thread.id, actorType: "user", idempotencyKey: input.idempotencyKey, contentText: input.question, content: userContent, createdAt: sql`clock_timestamp()` }).returning();
     const [assistantRow] = await tx.insert(tutorMessages).values({ threadId: thread.id, actorType: "assistant", status: "pending", agentRunId: run!.id, sourceMessageId: userRow!.id, content: { contract: TUTOR_CONTRACT_VERSION, versionId: video.versionId, ...(input.doubt ? { doubt: input.doubt } : {}) }, createdAt: sql`clock_timestamp()` }).returning();
     await tx.update(tutorThreads).set({ updatedAt: new Date() }).where(eq(tutorThreads.id, thread.id));
@@ -246,6 +253,8 @@ export async function admitTutorTurn(userId: string, sessionId: string, input: T
     return {
       kind: "new", userId, video: { ...video, versionId: video.versionId }, threadId: thread.id, agentRunId: run!.id, user: messageView(userRow!, video.versionId), assistantId: assistantRow!.id,
       question: input.question, positionMs: input.positionMs, replyTo, doubt, history, recentChunkIds, learner: readLearner(thread.metadata), firstTurn: main.length === 0,
+      code: input.code ?? null,
+      course: await courseOutline(tx, userId, video.sessionId), outline: await lessonOutline(tx, userId, video.resourceId),
     };
   });
 }
@@ -324,7 +333,7 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
   let usage: TutorUsage | null = null;
   let depth: TutorDepth = "quick";
   try {
-    const scope: TutorScope = resolveScope(turn.question, turn.positionMs, turn.video.durationMs);
+    const scope: TutorScope = resolveScope(turn.question, turn.positionMs, turn.video.durationMs, turn.course !== null);
     if (scope.kind === "out_of_range") {
       const text = `This video is ${turn.video.durationMs ? formatClock(turn.video.durationMs) : "shorter than that"} long, so there's nothing at ${formatClock(scope.requestedMs)}. Which moment did you mean?`;
       return await finishTurn(turn, { answer: { outcome: "clarify", blocks: [{ type: "text", id: "b0", text, src: [] }], sources: [] }, cache: "bypass" }, null, null);
@@ -334,7 +343,8 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
     const context = turn.replyTo?.prompt ?? turn.doubt?.anchor.quote ?? null;
     const terms = questionTerms(context ? `${context} ${turn.question}` : turn.question);
     const vector = await embed(context ? `${context}\n${turn.question}` : turn.question, options.signal);
-    const eligible = cacheEligible({ firstTurn: turn.firstTurn, replying: Boolean(context), publicSource: turn.video.publicSource, question: turn.question, scopeKind: scope.kind });
+    // An answer about the learner's own code is about that code only, so it is never served from or stored in the shared cache.
+    const eligible = !turn.code && cacheEligible({ firstTurn: turn.firstTurn, replying: Boolean(context), publicSource: turn.video.publicSource, question: turn.question, scopeKind: scope.kind });
     const { retrieval, cached } = await withUserTransaction(turn.userId, async (tx) => ({
       retrieval: await retrieveEvidence(tx, { userId: turn.userId, sessionId: turn.video.sessionId, agentRunId: turn.agentRunId, versionId: turn.video.versionId, question: turn.question, tsquery: lexicalQuery(terms), scope, vector, recentChunkIds: turn.recentChunkIds }),
       cached: eligible ? await findCachedAnswer(tx, turn.video.versionId, scope.key, turn.question, vector) : null,
@@ -348,7 +358,9 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
     }
     const prompt = buildTutorPrompt({
       title: turn.video.title, durationMs: turn.video.durationMs, positionMs: turn.positionMs, scope, timed: retrieval.timed, coverage: retrieval.coverage, evidence: retrieval.evidence,
-      learner: turn.learner, history: turn.history, question: turn.question, move: turn.doubt ? DOUBT_MOVE : suggestMove(turn.learner, turn.firstTurn, turn.replyTo), replyTo: turn.replyTo, doubt: turn.doubt ? { quote: turn.doubt.anchor.quote, passage: turn.doubt.passage } : null,
+      learner: turn.learner, history: turn.history, question: turn.question,
+      // The whole lecture's outline and the course's lesson list answer "what is all this about"; a question about one moment needs neither.
+      course: scope.kind === "course" ? turn.course : null, outline: scope.kind === "whole" || scope.kind === "course" ? turn.outline : [], move: turn.doubt ? DOUBT_MOVE : suggestMove(turn.learner, turn.firstTurn, turn.replyTo), replyTo: turn.replyTo, doubt: turn.doubt ? { quote: turn.doubt.anchor.quote, passage: turn.doubt.passage } : null, code: turn.code,
     });
     options.emit({ type: "phase", phase: "thinking" });
     const request = { instructions: TUTOR_INSTRUCTIONS, user: prompt.user, cacheKey: `learnspace-${TUTOR_CONTRACT_VERSION}` };

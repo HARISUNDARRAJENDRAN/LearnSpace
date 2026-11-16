@@ -14,7 +14,7 @@ LearnSpace is a session-centric learning, research, practice, and knowledge-rete
 
 ## Local development with Docker
 
-The root Compose file runs three services:
+The root Compose file runs these services:
 
 - `postgres` — PostgreSQL 16 with pgvector, holding all application data.
 - `web` — the Next.js UI and API. On start it installs dependencies, applies
@@ -22,6 +22,9 @@ The root Compose file runs three services:
   mounted source with hot reload.
 - `backend` — the discovery worker. It finds videos and papers through Exa,
   keeps YouTube metrics fresh and maintains recommendations.
+- `runner` — the code runner for AI Coding practice. It runs learner code in
+  throwaway `sandbox` containers through the host's Docker socket and is the
+  only reader of hidden tests (see `docs/ai-coding.md`).
 
 Discovery needs API keys, so without them the first boot works on the seeded
 catalog alone.
@@ -63,40 +66,98 @@ Shorts, live, private and non-embeddable videos, and score quality. It spends
 30 days are deleted, as YouTube's API policy requires. To enrich existing videos
 at once, run `pnpm --filter @learnspace/worker youtube:backfill`.
 
-## Notes with Luna
+## Notes with Luny
 
-A session's Notes panel is a page the learner and Luna write together by
-talking. All speech runs in the learner's browser and no audio leaves the
-device. Silero VAD detects turns, Moonshine Tiny transcribes, and Supertonic
-speaks (`apps/web/components/study/voice/`). All three run on the CPU through
-WebAssembly, which on integrated GPUs beat WebGPU. App pages send
-`Document-Isolation-Policy`, so they use every core (Chrome and Edge); other
-browsers run them on one thread, about half as fast. Entering the app downloads
-the speech models (~360 MB with dictation's) into the browser cache in the
-background, except on data saver or 2G, where they download on first use.
-Nothing is loaded until voice is turned on; the loaded models take ~570 MB and
-are released immediately when voice is turned off or Notes is closed. Chat dictation releases its separate model after each transcription. Playback keeps at most two audio buffers; the orb reads the existing meter and pauses offscreen. The model weights, ASR precision and TTS voice/steps are unchanged.
+A video's Notes panel opens on a study guide to that video, written before the
+learner arrives, which they and Luny then refine while talking out loud. Chat and mastery dictation still transcribe on the device with
+Moonshine (`apps/web/components/study/speech.worker.ts`).
 
-Each utterance is one streamed GPT-6 Luna turn (`lib/notes/`) that returns its
-spoken reply first, then note edits. The reply is spoken a sentence at a time
-while it streams. Edits apply only when the whole output is valid. Talking over
-Luna cancels her turn and its edits, and the cut-off words are sent again with
-what comes next. Luna's edits never overwrite a block the learner changed while
-she was answering, and her last edit can be undone. Turns share the tutor's
-daily budget (`voice_notes` runs). The panel shows the last turn's delay, from
-the end of speech to Luna's first sound. Notes are stored in
-`study.session_notes` (migration 0034).
+**Voice.** Opening Notes starts a conversation with Luny. Listening and
+speaking run on the learner's device (`apps/web/components/study/voice/`), and
+audio never leaves it. Silero decides when the learner is speaking. A pause of
+a fifth of a second ends a turn, and speech that resumes before Luny is heard
+joins the next one. While Luny talks or the video plays, only clearly louder
+speech counts, and a third of a second of it interrupts her. Supertonic speaks
+her replies on the CPU, a sentence at a time as they stream in, a little
+quicker on an exclamation and slower on a question.
 
-Notes opens with a voice orb. Speak to write, revise, move or remove notes,
-check off tasks, or say “undo that”. Diagrams, images and source links are
-stored as note blocks; source/image requests use the existing Exa integration.
-Use **Share lesson** and choose the current LearnSpace browser tab for visual
-tutoring. Each spoken/typed turn sends one cropped JPEG of the video, pointer,
-selected text and drawings. Frames are not stored. Without sharing, Luna uses
-the transcript and notes and does not claim to see the video. **Draw** lets the
-learner mark a region; Luna can add arrows, circles, boxes and short labels
-that stay attached to the video through zoom/fullscreen. Browser tab capture
-requires a supported desktop browser and an explicit sharing action.
+Speech recognition depends on the device. A desktop or laptop with a hardware
+WebGPU adapter (Chrome runs it on Vulkan, Metal or D3D12, so integrated GPUs
+such as Intel Iris Xe count) uses Parakeet Redux, a ternary build of Parakeet
+TDT 0.6B v3 (363 MB). Its encoder runs on WebGPU and its decoder on WASM. A
+warm-up checks that the GPU transcribes 4 s of speech within 1.3 s. A device
+that fails it is remembered (`learnspace:voice-listener`) and uses Moonshine
+Base on the CPU (62 MB, the model dictation uses). Phones, devices under 4 GB
+of memory, data saver and software-only GPUs use Moonshine from the start. On
+an Iris Xe laptop, both take about 0.2 s per second of speech. The models are
+prefetched in the background when the learner enters the app.
+
+Each turn is one `POST /voice`, streamed back as NDJSON. It carries what the
+learner said, their place in the video and a frame of it. The server reads the
+lesson, notebook, recent conversation and how the learner's mastery checks in
+the session went (scores and missed concepts), and GPT-6 Luna answers on the fast
+tier with no reasoning, as plain speech. The lesson sits in the cached prompt
+prefix. Her `[[seek m:ss]]`, `[[pause]]` and `[[play]]` commands are cut out of
+the speech and sent as lesson controls. Transcripts that match the lesson's own audio near the playhead
+are dropped, so the video playing aloud never starts a turn. The exchange is
+saved in `study.session_transcript` (migration 0035; per video since 0036) with its cost (`voice_notes`
+runs) once Luny has said anything. A learner turn pauses the video. Closing
+Notes hangs up and frees the models.
+
+**Chiming in.** Luny may speak first when the learner pauses the video after a
+minute of new watching and says nothing for two seconds: the turn carries
+`watchedFromMs`, and she either says one short thing (a check question, a
+connection, an offer to note something) or `[[listen]]`. Each unanswered
+chime-in doubles the watching needed before the next, up to four minutes;
+anything the learner says resets it. She never chimes in while the video plays,
+and stops when asked to.
+
+**Study guide.** Opening a lesson calls `POST /notes/guide`. Unless the video
+already has a guide, the server answers at once and then writes one in the
+background (`after()`, 300 s). GPT-6 Luna reads the whole timestamped
+transcript and writes a self-contained guide. It has a section per topic with
+its timestamp, explanations, plain-words (ELI5) versions, numbered steps,
+worked examples, takeaways, LaTeX, tables, code, diagrams, and asides that mark
+what comes from beyond the video. The guide is written once per learner and
+video and lands above anything already on the page. The notes row records it
+as `writing`, `ready` or `failed`. A run still `writing` after 300 s counts as
+failed, and the next open of the lesson or Notes tries again. Notes polls
+while the guide is being written or the transcript is still coming.
+
+**Notebook.** The notebook is one tiptap editor (`NotesEditor.tsx`) holding the
+blocks in `study.video_notes` (migration 0036), one page per learner per video,
+kept across sessions: headings and subheadings, paragraphs, bullets, numbered
+steps, tasks, callouts (plain words, example, takeaway, beyond the video),
+claims, open questions, conclusions, and diagrams, tables, code, images and
+links. In text, `$…$`/`$$…$$` math, `**bold**` and `` `code` `` render in
+place and show their source only in the note being edited. Code is highlighted
+with highlight.js, and code and tables open their source with Edit. The
+learner writes anywhere: `## `, `### `, `- `, `1. `, `[] ` and `? ` start a
+heading, subheading, bullet, step, task or question, and edits are saved a
+moment after they stop typing. A few seconds after each of Luny's replies, a scribe (GPT-6 Luna,
+deeper reasoning) reads the recent conversation and brings the notebook up to
+date (`POST /notes/consolidate`). It records the learner's consolidated
+understanding rather than a transcript, and makes the changes they ask for to
+the guide (simpler, deeper, another example, a diagram) in place. Wrong ideas are corrected in place,
+open questions are marked, and `[12:34]` timestamps play the lesson from that
+point. Neither the scribe nor Luny overwrites a block the learner changed in
+the meantime. The scribe's last edit can be undone (the toolbar, or "undo
+that"). Luny reads the notebook as it is on every turn. A returning learner
+picks up where they left off.
+
+Diagrams are editable (`NoteDiagram.tsx`, React Flow): the learner drags,
+resizes, recolours, reshapes and renames boxes, draws arrows between them,
+labels arrows with a double-click, adds and deletes boxes, and stretches the
+drawing taller. The result is saved as the same small JSON contract the scribe
+writes, and the scribe keeps the learner's positions, sizes and colours.
+
+**Seeing the lesson.** Opening Notes asks the browser to share this tab, so
+Luny sees the lesson as it is on screen. At the start of each learner turn she
+gets one cropped JPEG of the video. Frames are not
+stored. If the learner declines, Luny works from the transcript, and **Share this
+tab** asks again. Luny explains what she sees in words and puts diagrams in the
+notes; she can seek, pause or play the video, with commands written inline in
+her speech that are never spoken.
 
 ### Production Docker runtime
 

@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { sessionCookieName } from "./cookies";
 import { AuthError } from "./errors";
-import { findSessionByToken, type PublicUser, type UserRecord } from "./repository";
+import { findSessionByToken, findSessionWithOnboarding, type PublicUser, type SessionLookup, type UserRecord } from "./repository";
 
 export type CurrentSession = NonNullable<Awaited<ReturnType<typeof findSessionByToken>>>;
 
@@ -22,6 +22,17 @@ export async function requireCurrentSession(): Promise<CurrentSession> {
     throw new AuthError("UNAUTHENTICATED", "Sign in to continue.", 401);
   }
   return currentSession;
+}
+
+/** The signed-in session and whether its learner finished onboarding, read together. */
+export async function requireCurrentSessionWithOnboarding(): Promise<SessionLookup> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(sessionCookieName)?.value;
+  const found = token ? await findSessionWithOnboarding(token) : null;
+  if (!found) {
+    throw new AuthError("UNAUTHENTICATED", "Sign in to continue.", 401);
+  }
+  return found;
 }
 
 export function publicUser(user: UserRecord): PublicUser {

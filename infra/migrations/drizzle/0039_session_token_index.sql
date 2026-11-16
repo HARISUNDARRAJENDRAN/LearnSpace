@@ -1,0 +1,1 @@
+CREATE INDEX "auth_sessions_refresh_token_hash_idx" ON "identity"."auth_sessions" USING btree ("refresh_token_hash");

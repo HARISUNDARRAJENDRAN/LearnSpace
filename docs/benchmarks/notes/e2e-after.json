@@ -1,0 +1,705 @@
+{
+  "method": "End to end, timed in one run: the device (the real hook, workers and models in headless Chromium, a fake microphone) and the server (the real sign-in check and voice turn against a fresh local database, every round trip delayed by a proxy). Only the tutor model is a stand-in: 1080 ms to its first output, then a token every 15 ms. Interleaved before/after, two runs per setting, 10 turns each.",
+  "runs": [
+    {
+      "rttMs": 2,
+      "measuredAt": "2026-11-14T12:25:10.921Z",
+      "voice-multi": {
+        "loadMs": 7300,
+        "timings": [
+          {
+            "heardMs": 493,
+            "firstWordsMs": 1719,
+            "firstAudioMs": 2381
+          },
+          {
+            "heardMs": 567,
+            "firstWordsMs": 1692,
+            "firstAudioMs": 2397
+          },
+          {
+            "heardMs": 532,
+            "firstWordsMs": 1658,
+            "firstAudioMs": 2446
+          },
+          {
+            "heardMs": 431,
+            "firstWordsMs": 1567,
+            "firstAudioMs": 2243
+          },
+          {
+            "heardMs": 507,
+            "firstWordsMs": 1631,
+            "firstAudioMs": 2264
+          },
+          {
+            "heardMs": 549,
+            "firstWordsMs": 1669,
+            "firstAudioMs": 2312
+          },
+          {
+            "heardMs": 448,
+            "firstWordsMs": 1568,
+            "firstAudioMs": 2196
+          },
+          {
+            "heardMs": 554,
+            "firstWordsMs": 1675,
+            "firstAudioMs": 2330
+          },
+          {
+            "heardMs": 518,
+            "firstWordsMs": 1642,
+            "firstAudioMs": 2364
+          },
+          {
+            "heardMs": 438,
+            "firstWordsMs": 1565,
+            "firstAudioMs": 2186
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 507,
+            "p90": 554,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1642,
+            "p90": 1692,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2312,
+            "p90": 2397,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": null
+    },
+    {
+      "rttMs": 2,
+      "measuredAt": "2026-11-14T12:30:05.147Z",
+      "voice-multi": {
+        "loadMs": 7373,
+        "timings": [
+          {
+            "heardMs": 470,
+            "firstWordsMs": 1693,
+            "firstAudioMs": 2369
+          },
+          {
+            "heardMs": 539,
+            "firstWordsMs": 1661,
+            "firstAudioMs": 2316
+          },
+          {
+            "heardMs": 528,
+            "firstWordsMs": 1650,
+            "firstAudioMs": 2362
+          },
+          {
+            "heardMs": 417,
+            "firstWordsMs": 1542,
+            "firstAudioMs": 2205
+          },
+          {
+            "heardMs": 514,
+            "firstWordsMs": 1637,
+            "firstAudioMs": 2262
+          },
+          {
+            "heardMs": 521,
+            "firstWordsMs": 1641,
+            "firstAudioMs": 2355
+          },
+          {
+            "heardMs": 443,
+            "firstWordsMs": 1565,
+            "firstAudioMs": 2197
+          },
+          {
+            "heardMs": 572,
+            "firstWordsMs": 1696,
+            "firstAudioMs": 2347
+          },
+          {
+            "heardMs": 510,
+            "firstWordsMs": 1638,
+            "firstAudioMs": 2330
+          },
+          {
+            "heardMs": 445,
+            "firstWordsMs": 1570,
+            "firstAudioMs": 2210
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 510,
+            "p90": 539,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1638,
+            "p90": 1693,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2316,
+            "p90": 2362,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": null
+    },
+    {
+      "rttMs": 20,
+      "measuredAt": "2026-11-14T11:58:56.993Z",
+      "voice-multi": {
+        "loadMs": 8188,
+        "timings": [
+          {
+            "heardMs": 495,
+            "firstWordsMs": 2053,
+            "firstAudioMs": 2697
+          },
+          {
+            "heardMs": 508,
+            "firstWordsMs": 1780,
+            "firstAudioMs": 2414
+          },
+          {
+            "heardMs": 528,
+            "firstWordsMs": 1802,
+            "firstAudioMs": 2431
+          },
+          {
+            "heardMs": 565,
+            "firstWordsMs": 1841,
+            "firstAudioMs": 2479
+          },
+          {
+            "heardMs": 540,
+            "firstWordsMs": 1810,
+            "firstAudioMs": 2440
+          },
+          {
+            "heardMs": 571,
+            "firstWordsMs": 1842,
+            "firstAudioMs": 2512
+          },
+          {
+            "heardMs": 452,
+            "firstWordsMs": 1722,
+            "firstAudioMs": 2352
+          },
+          {
+            "heardMs": 501,
+            "firstWordsMs": 1772,
+            "firstAudioMs": 2476
+          },
+          {
+            "heardMs": 519,
+            "firstWordsMs": 1791,
+            "firstAudioMs": 2574
+          },
+          {
+            "heardMs": 601,
+            "firstWordsMs": 1871,
+            "firstAudioMs": 2499
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 519,
+            "p90": 571,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1802,
+            "p90": 1871,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2476,
+            "p90": 2574,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": {
+        "loadMs": 7149,
+        "timings": [
+          {
+            "heardMs": 554,
+            "firstWordsMs": 2051,
+            "firstAudioMs": 2676
+          },
+          {
+            "heardMs": 700,
+            "firstWordsMs": 1976,
+            "firstAudioMs": 2948
+          },
+          {
+            "heardMs": 577,
+            "firstWordsMs": 1847,
+            "firstAudioMs": 2678
+          },
+          {
+            "heardMs": 434,
+            "firstWordsMs": 1703,
+            "firstAudioMs": 2427
+          },
+          {
+            "heardMs": 516,
+            "firstWordsMs": 1787,
+            "firstAudioMs": 2506
+          },
+          {
+            "heardMs": 592,
+            "firstWordsMs": 1863,
+            "firstAudioMs": 2626
+          },
+          {
+            "heardMs": 1187,
+            "firstWordsMs": 2487,
+            "firstAudioMs": 3737
+          },
+          {
+            "heardMs": 523,
+            "firstWordsMs": 1839,
+            "firstAudioMs": 2504
+          },
+          {
+            "heardMs": 570,
+            "firstWordsMs": 1889,
+            "firstAudioMs": 2694
+          },
+          {
+            "heardMs": 431,
+            "firstWordsMs": 1749,
+            "firstAudioMs": 2358
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 554,
+            "p90": 700,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1847,
+            "p90": 2051,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2626,
+            "p90": 2948,
+            "n": 10
+          }
+        }
+      }
+    },
+    {
+      "rttMs": 20,
+      "measuredAt": "2026-11-14T12:08:31.113Z",
+      "voice-multi": {
+        "loadMs": 7311,
+        "timings": [
+          {
+            "heardMs": 491,
+            "firstWordsMs": 2044,
+            "firstAudioMs": 2706
+          },
+          {
+            "heardMs": 542,
+            "firstWordsMs": 1809,
+            "firstAudioMs": 2488
+          },
+          {
+            "heardMs": 538,
+            "firstWordsMs": 1809,
+            "firstAudioMs": 2436
+          },
+          {
+            "heardMs": 423,
+            "firstWordsMs": 1691,
+            "firstAudioMs": 2457
+          },
+          {
+            "heardMs": 306,
+            "firstWordsMs": 1575,
+            "firstAudioMs": 2306
+          },
+          {
+            "heardMs": 515,
+            "firstWordsMs": 1798,
+            "firstAudioMs": 2439
+          },
+          {
+            "heardMs": 531,
+            "firstWordsMs": 1803,
+            "firstAudioMs": 2437
+          },
+          {
+            "heardMs": 447,
+            "firstWordsMs": 1717,
+            "firstAudioMs": 2365
+          },
+          {
+            "heardMs": 508,
+            "firstWordsMs": 1777,
+            "firstAudioMs": 2559
+          },
+          {
+            "heardMs": 516,
+            "firstWordsMs": 1787,
+            "firstAudioMs": 2430
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me to direct.",
+          "And the rate tells lethal size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum."
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 508,
+            "p90": 538,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1787,
+            "p90": 1809,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2437,
+            "p90": 2559,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": {
+        "loadMs": 7184,
+        "timings": [
+          {
+            "heardMs": 534,
+            "firstWordsMs": 2032,
+            "firstAudioMs": 2718
+          },
+          {
+            "heardMs": 583,
+            "firstWordsMs": 1855,
+            "firstAudioMs": 2542
+          },
+          {
+            "heardMs": 555,
+            "firstWordsMs": 1828,
+            "firstAudioMs": 2490
+          },
+          {
+            "heardMs": 509,
+            "firstWordsMs": 1780,
+            "firstAudioMs": 2503
+          },
+          {
+            "heardMs": 533,
+            "firstWordsMs": 1800,
+            "firstAudioMs": 2459
+          },
+          {
+            "heardMs": 523,
+            "firstWordsMs": 1791,
+            "firstAudioMs": 2438
+          },
+          {
+            "heardMs": 454,
+            "firstWordsMs": 1722,
+            "firstAudioMs": 2333
+          },
+          {
+            "heardMs": 511,
+            "firstWordsMs": 1781,
+            "firstAudioMs": 2394
+          },
+          {
+            "heardMs": 524,
+            "firstWordsMs": 1847,
+            "firstAudioMs": 2464
+          },
+          {
+            "heardMs": 445,
+            "firstWordsMs": 1762,
+            "firstAudioMs": 2418
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 523,
+            "p90": 555,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 1791,
+            "p90": 1855,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2459,
+            "p90": 2542,
+            "n": 10
+          }
+        }
+      }
+    },
+    {
+      "rttMs": 60,
+      "measuredAt": "2026-11-14T12:15:29.703Z",
+      "voice-multi": {
+        "loadMs": 7273,
+        "timings": [
+          {
+            "heardMs": 585,
+            "firstWordsMs": 2893,
+            "firstAudioMs": 3535
+          },
+          {
+            "heardMs": 564,
+            "firstWordsMs": 2161,
+            "firstAudioMs": 2806
+          },
+          {
+            "heardMs": 583,
+            "firstWordsMs": 2179,
+            "firstAudioMs": 2807
+          },
+          {
+            "heardMs": 434,
+            "firstWordsMs": 2040,
+            "firstAudioMs": 2681
+          },
+          {
+            "heardMs": 518,
+            "firstWordsMs": 2114,
+            "firstAudioMs": 2752
+          },
+          {
+            "heardMs": 573,
+            "firstWordsMs": 2169,
+            "firstAudioMs": 2838
+          },
+          {
+            "heardMs": 441,
+            "firstWordsMs": 2036,
+            "firstAudioMs": 2718
+          },
+          {
+            "heardMs": 550,
+            "firstWordsMs": 2145,
+            "firstAudioMs": 2799
+          },
+          {
+            "heardMs": 574,
+            "firstWordsMs": 2174,
+            "firstAudioMs": 2804
+          },
+          {
+            "heardMs": 459,
+            "firstWordsMs": 2059,
+            "firstAudioMs": 2691
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 550,
+            "p90": 583,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 2145,
+            "p90": 2179,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2799,
+            "p90": 2838,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": null
+    },
+    {
+      "rttMs": 60,
+      "measuredAt": "2026-11-14T12:20:21.779Z",
+      "voice-multi": {
+        "loadMs": 7349,
+        "timings": [
+          {
+            "heardMs": 508,
+            "firstWordsMs": 2816,
+            "firstAudioMs": 3530
+          },
+          {
+            "heardMs": 595,
+            "firstWordsMs": 2189,
+            "firstAudioMs": 2819
+          },
+          {
+            "heardMs": 548,
+            "firstWordsMs": 2144,
+            "firstAudioMs": 2799
+          },
+          {
+            "heardMs": 457,
+            "firstWordsMs": 2049,
+            "firstAudioMs": 2696
+          },
+          {
+            "heardMs": 513,
+            "firstWordsMs": 2111,
+            "firstAudioMs": 2764
+          },
+          {
+            "heardMs": 579,
+            "firstWordsMs": 2176,
+            "firstAudioMs": 2816
+          },
+          {
+            "heardMs": 470,
+            "firstWordsMs": 2069,
+            "firstAudioMs": 2697
+          },
+          {
+            "heardMs": 504,
+            "firstWordsMs": 2099,
+            "firstAudioMs": 2811
+          },
+          {
+            "heardMs": 549,
+            "firstWordsMs": 2141,
+            "firstAudioMs": 2816
+          },
+          {
+            "heardMs": 442,
+            "firstWordsMs": 2039,
+            "firstAudioMs": 2679
+          }
+        ],
+        "heard": [
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?",
+          "So the gradient tells me the direction and the rate tells me the size.",
+          "I think a really big learning rate makes every step overshoot the minimum.",
+          "Why does momentum help when the valley is long and narrow?"
+        ],
+        "summary": {
+          "heardMs": {
+            "p50": 508,
+            "p90": 579,
+            "n": 10
+          },
+          "firstWordsMs": {
+            "p50": 2111,
+            "p90": 2189,
+            "n": 10
+          },
+          "firstAudioMs": {
+            "p50": 2799,
+            "p90": 2819,
+            "n": 10
+          }
+        }
+      },
+      "voice-single": null
+    }
+  ]
+}

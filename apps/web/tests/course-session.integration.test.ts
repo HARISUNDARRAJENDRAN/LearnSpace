@@ -6,7 +6,7 @@ import { AuthError } from "../lib/auth/errors";
 
 const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_URL);
 
-test("A Discover course imports as one session whose lessons unlock in order", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
+test("A Discover course imports as a session of its own whose lessons unlock in order", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
   const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!migratorUrl) throw new Error("DATABASE_MIGRATOR_URL is required");
   const [{ closeDb }, { createEmailUser }, study, library] = await Promise.all([
@@ -45,19 +45,22 @@ test("A Discover course imports as one session whose lessons unlock in order", {
     await migrator`INSERT INTO catalog.collection_sections (id, collection_id, title, position) VALUES (${queuedSectionId}, ${queuedCollectionId}, 'Course units', 0)`;
     await migrator`INSERT INTO catalog.collection_items (section_id, resource_id, position) VALUES (${queuedSectionId}, ${videoIds[3] ?? ""}, 0)`;
 
-    assert.equal(await study.findCurrentStudySession(learner.id), null);
+    const openSessions = () => study.listStudySessions(learner.id);
+    const librarySessions = async () => (await library.getLibraryPage(learner.id)).sessions.map((session) => session.id);
+    assert.deepEqual(await openSessions(), []);
     assert.equal(await study.isCourseImportable(slug, learner.id), true);
     const imported = await study.importCourseToSessions(learner.id, slug);
     assert.equal(imported.resourceType, "video");
-    assert.deepEqual(await study.findCurrentStudySession(learner.id), { id: imported.sessionId });
+    assert.deepEqual((await openSessions()).map((session) => [session.id, session.isCourse]), [[imported.sessionId, true]]);
 
-    // Only one session at a time: another import, a single video or a Library course waits for this course to finish.
-    const inProgress = (error: unknown) => error instanceof AuthError && error.code === "SESSION_IN_PROGRESS";
-    await assert.rejects(study.importCourseToSessions(learner.id, slug), inProgress);
-    await assert.rejects(study.startOrResumeStudySession(learner.id, { resourceId: videoIds[3] ?? "", origin: "discover", idempotencyKey: randomUUID() }), inProgress);
-    await assert.rejects(study.startCollection(learner.id, queuedCollectionId, randomUUID()), inProgress);
-    // Continuing the course that is already in Sessions reopens it instead.
+    // Importing the course again, or starting it from the Library, reopens its session instead of making a second one.
+    assert.equal((await study.importCourseToSessions(learner.id, slug)).sessionId, imported.sessionId);
     assert.equal((await study.startCollection(learner.id, collectionId, randomUUID())).sessionId, imported.sessionId);
+    // Anything else starts a session of its own beside the course, which stays where it was.
+    const single = await study.startOrResumeStudySession(learner.id, { resourceId: videoIds[3] ?? "", origin: "discover", idempotencyKey: randomUUID() });
+    assert.notEqual(single.sessionId, imported.sessionId);
+    assert.deepEqual((await openSessions()).map((session) => session.id), [single.sessionId, imported.sessionId]);
+    await study.endStudySession(learner.id, single.sessionId);
     await library.addCourseToLibrary(learner.id, queuedSlug);
 
     let view = await study.getStudySession(learner.id, imported.sessionId);
@@ -75,8 +78,17 @@ test("A Discover course imports as one session whose lessons unlock in order", {
     view = await study.getStudySession(learner.id, imported.sessionId);
     assert.equal(view.activeResourceId, videoIds[1]);
     assert.deepEqual(view.course?.sections.flatMap((section) => section.lessons.map((lesson) => lesson.state)), ["completed", "current", "locked"]);
+    // A finished lesson stays inside its course: the course moves to the Library only once every lesson is done.
+    assert.deepEqual(await librarySessions(), []);
 
+    // A lesson whose completion was already logged once (an earlier watch) still moves the course on when it is finished.
+    const copied = await migrator`
+      INSERT INTO activity.activity_events (schema_version, user_id, study_session_id, resource_id, event_type, actor_type, source, idempotency_key, occurred_at, payload)
+      SELECT schema_version, user_id, study_session_id, ${videoIds[1] ?? ""}, event_type, actor_type, source, replace(idempotency_key, ${videoIds[0] ?? ""}, ${videoIds[1] ?? ""}), now() - interval '5 days', payload
+      FROM activity.activity_events WHERE user_id = ${learner.id} AND idempotency_key = ${`study:milestone:${imported.sessionId}:${videoIds[0]}:completed`}`;
+    assert.equal(copied.count, 1);
     await complete(imported.sessionId, videoIds[1] ?? "");
+    assert.equal((await study.getStudySession(learner.id, imported.sessionId)).activeResourceId, videoIds[2]);
     await complete(imported.sessionId, videoIds[2] ?? "");
     view = await study.getStudySession(learner.id, imported.sessionId);
     assert.equal(view.status, "completed");
@@ -85,13 +97,26 @@ test("A Discover course imports as one session whose lessons unlock in order", {
     assert.equal(enrollment?.status, "completed");
 
     // The finished course hands over to the queued Library course, which opens as its own course board.
-    const next = await study.findCurrentStudySession(learner.id);
+    const [next, ...others] = await openSessions();
     assert.ok(next && next.id !== imported.sessionId);
+    assert.deepEqual(others, []);
     const nextView = await study.getStudySession(learner.id, next.id);
     assert.equal(nextView.course?.collectionId, queuedCollectionId);
     assert.equal(nextView.activeResourceId, videoIds[3]);
     await complete(next.id, videoIds[3] ?? "");
-    assert.equal(await study.findCurrentStudySession(learner.id), null);
+    assert.deepEqual(await openSessions(), []);
+    assert.deepEqual(await librarySessions(), [next.id, imported.sessionId]);
+
+    // Reopening a finished video is a rewatch: ended before it is finished again, it is let go rather than kept.
+    const rewatch = await study.startOrResumeStudySession(learner.id, { resourceId: videoIds[0] ?? "", origin: "discover", idempotencyKey: randomUUID() });
+    await study.endStudySession(learner.id, rewatch.sessionId);
+    assert.deepEqual(await librarySessions(), [next.id, imported.sessionId]);
+    // A session still open with its video finished (mastery check and all) moves to the Library when it is ended.
+    const revisit = await study.startOrResumeStudySession(learner.id, { resourceId: videoIds[0] ?? "", origin: "discover", idempotencyKey: randomUUID() });
+    await migrator`UPDATE study.user_resource_progress SET status = 'completed', progress_pct = 100, completed_at = now() WHERE user_id = ${learner.id} AND resource_id = ${videoIds[0] ?? ""}`;
+    await study.endStudySession(learner.id, revisit.sessionId);
+    assert.deepEqual(await openSessions(), []);
+    assert.deepEqual(await librarySessions(), [revisit.sessionId, next.id, imported.sessionId]);
 
     // A finished course is revisited from the Library, never reopened as a session.
     await assert.rejects(study.startCollection(learner.id, collectionId, randomUUID()), (error: unknown) => error instanceof AuthError && error.code === "COURSE_COMPLETED");

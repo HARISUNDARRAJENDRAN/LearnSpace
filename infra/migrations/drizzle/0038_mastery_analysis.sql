@@ -1,0 +1,1 @@
+ALTER TABLE "study"."mastery_checks" ADD COLUMN "analysis" jsonb;

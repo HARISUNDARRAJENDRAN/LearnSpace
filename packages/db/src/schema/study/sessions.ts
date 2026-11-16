@@ -26,6 +26,10 @@ export const studySessions = studySchema.table(
     lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     summary: text("summary"),
+    // Where the learner left the workspace: the open study tool, the canvas view and the code draft. Each key is written on its own.
+    workspace: jsonb("workspace").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+    // The learner's own order in the sidebar; sessions they never moved (null) come first, newest first.
+    position: integer("position"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

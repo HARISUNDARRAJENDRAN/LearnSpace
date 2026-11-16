@@ -6,14 +6,7 @@ import { useState } from "react";
 
 type StartResponse = { route?: unknown };
 
-/** Sessions holds one thing at a time; a start refused for that reason sends the learner back to it. */
-class SessionInProgressError extends Error {}
-
 async function startedRoute(response: Response): Promise<string> {
-  if (response.status === 409) {
-    const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
-    if (body?.error?.code === "SESSION_IN_PROGRESS") throw new SessionInProgressError();
-  }
   if (!response.ok) throw new Error("Study start failed");
   return routeFrom(await response.json());
 }
@@ -25,9 +18,8 @@ function routeFrom(value: unknown): string {
 
 export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, recommendationRunId, label = "Start learning", className = "", onClick }: { resourceId?: string; sourceUrl?: string; sourceMode?: SourceDiscoveryMode; origin: StudyOrigin; recommendationRunId?: string | null; label?: string; className?: string; onClick?: () => void }) {
   const router = useRouter();
-  const [state, setState] = useState<"idle" | "loading" | "error" | "blocked">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   async function start() {
-    if (state === "blocked") return router.push("/app/sessions");
     setState("loading");
     try {
       let canonicalResourceId = resourceId;
@@ -46,11 +38,11 @@ export function StartStudyButton({ resourceId, sourceUrl, sourceMode, origin, re
       const route = await startedRoute(response);
       onClick?.();
       router.push(route);
-    } catch (error) {
-      setState(error instanceof SessionInProgressError ? "blocked" : "error");
+    } catch {
+      setState("error");
     }
   }
-  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"} title={state === "blocked" ? "Finish your current session before starting something new." : undefined}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : state === "blocked" ? "Finish current session first" : label}</button>;
+  return <button className={className} data-state={state} type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }
 
 export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", className = "" }: { resourceId: string; saved: boolean; savedLabel?: string; className?: string }) {
@@ -77,16 +69,15 @@ export function SaveResourceButton({ resourceId, saved, savedLabel = "Saved", cl
 
 export function StartCollectionButton({ collectionId, label }: { collectionId: string; label: string }) {
   const router = useRouter();
-  const [state, setState] = useState<"idle" | "loading" | "error" | "blocked">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   async function start() {
-    if (state === "blocked") return router.push("/app/sessions");
     setState("loading");
     try {
       const response = await fetch(`/api/v1/library/collections/${collectionId}/start`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idempotencyKey: crypto.randomUUID() }) });
       router.push(await startedRoute(response));
-    } catch (error) {
-      setState(error instanceof SessionInProgressError ? "blocked" : "error");
+    } catch {
+      setState("error");
     }
   }
-  return <button type="button" onClick={() => void start()} disabled={state === "loading"} title={state === "blocked" ? "Finish your current session before starting this course." : undefined}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : state === "blocked" ? "Finish current session first" : label}</button>;
+  return <button type="button" onClick={() => void start()} disabled={state === "loading"}>{state === "loading" ? "Opening…" : state === "error" ? "Try again" : label}</button>;
 }

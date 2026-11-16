@@ -106,29 +106,32 @@ test("first app entry goes to Discover once; empty Home works across later sessi
 test("populated Home shows recent study, the agent's next actions and the learner's level", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
   await expect(page.getByRole("region", { name: "Recent study" })).toContainText("Home E2E Python lesson");
-  await expect(page.getByRole("region", { name: "Next actions" }).getByRole("button", { name: "Add to plan" }).first()).toBeVisible();
+  await expect(page.getByRole("region", { name: "Next actions" }).getByRole("button", { name: /^Remove .* from your calendar$/ }).first()).toBeVisible();
   await expect(page.getByRole("region", { name: "Level & rank" })).toContainText(/Level \d+/);
 });
 
 test("the study plan calendar creates, switches views and deletes an item", async ({ page }) => {
   await page.goto("/app", { waitUntil: "networkidle" });
   const calendar = page.getByRole("region", { name: "Study plan" });
-  await calendar.getByRole("button", { name: "Plan", exact: true }).click();
+  await calendar.getByRole("button", { name: "New event", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Plan study" });
   await expect(dialog.getByLabel("Date")).toHaveValue(/^\d{2}\/\d{2}\/\d{4}$/);
-  await dialog.getByLabel("Title", { exact: true }).fill("Learn polymorphism in Java");
-  await dialog.getByRole("radio", { name: "Practice" }).check();
+  // The learner says what to study; the type comes from the words, never from a picker.
+  // The radio is visually hidden inside its card, so pick it the way a learner does: by its label.
+  await dialog.locator("label", { hasText: "Something else" }).click();
+  await expect(dialog.getByRole("radio", { name: /Something else/ })).toBeChecked();
+  await dialog.getByRole("textbox", { name: "What to study" }).fill("Practice polymorphism in Java");
   await dialog.getByRole("button", { name: "Add to plan" }).click();
   await expect(dialog).toBeHidden();
-  const event = calendar.getByRole("button", { name: /Learn polymorphism in Java/ });
+  const event = calendar.getByRole("button", { name: /Practice polymorphism in Java/ });
   await expect(event).toBeVisible();
   await expect(event).toHaveClass(/kind-practice/);
   await calendar.getByRole("tab", { name: "Month" }).click();
   await expect(calendar.getByRole("tab", { name: "Month" })).toHaveAttribute("aria-selected", "true");
-  await calendar.getByRole("button", { name: /Learn polymorphism in Java/ }).click();
+  await calendar.getByRole("button", { name: /Practice polymorphism in Java/ }).click();
   const edit = page.getByRole("dialog", { name: "Plan item" });
   await expect(edit.getByRole("region", { name: "Progress" })).toBeVisible();
   await edit.getByRole("button", { name: "Delete" }).click();
   await edit.getByRole("button", { name: "Confirm delete" }).click();
-  await expect(calendar.getByRole("button", { name: /Learn polymorphism in Java/ })).toHaveCount(0);
+  await expect(calendar.getByRole("button", { name: /Practice polymorphism in Java/ })).toHaveCount(0);
 });

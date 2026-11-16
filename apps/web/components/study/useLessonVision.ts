@@ -15,7 +15,7 @@ export function useLessonVision(lessonElement: () => HTMLElement | null) {
     const current = media.current;
     media.current = null;
     current?.stream.getTracks().forEach((track) => { track.stop(); });
-    if (current) { current.video.pause(); current.video.srcObject = null; }
+    if (current) { current.video.pause(); current.video.srcObject = null; current.video.remove(); }
     setSharing(false);
   }, []);
   const start = useCallback(async () => {
@@ -30,14 +30,18 @@ export function useLessonVision(lessonElement: () => HTMLElement | null) {
       const video = document.createElement("video");
       video.srcObject = stream;
       video.muted = true;
-      await video.play();
-      if (id !== generation.current) { stream.getTracks().forEach((track) => { track.stop(); }); video.srcObject = null; return; }
+      // Chrome rejects play() for a video outside the document ("the media was removed from the document").
+      video.setAttribute("aria-hidden", "true");
+      video.style.cssText = "position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none";
+      document.body.append(video);
+      try { await video.play(); } catch (cause) { video.srcObject = null; video.remove(); throw cause; }
+      if (id !== generation.current) { stream.getTracks().forEach((track) => { track.stop(); }); video.srcObject = null; video.remove(); return; }
       media.current = { stream, video };
       stream.getVideoTracks()[0]?.addEventListener("ended", stop, { once: true });
       setSharing(true);
     } catch (cause) {
       stream?.getTracks().forEach((track) => { track.stop(); });
-      if (id === generation.current) setError(cause instanceof Error && cause.name !== "NotAllowedError" ? cause.message : "Choose Share lesson, then select this LearnSpace tab.");
+      if (id === generation.current) setError(cause instanceof Error && cause.name === "Error" ? cause.message : "Luny can’t see the lesson yet.");
     }
   }, [stop]);
   const capture = useCallback((): string | null => {

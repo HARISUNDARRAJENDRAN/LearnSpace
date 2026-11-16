@@ -10,6 +10,9 @@ export const RETRIEVAL_STRATEGY = "transcript-hybrid-rrf-v1";
 // Roughly what a lecture's relevant part needs; a summary of a scope gets more room so it can cover it.
 const ANSWER_BUDGET_TOKENS = 6_000;
 const SUMMARY_BUDGET_TOKENS = 14_000;
+// A summary of a long lecture (CS50 runs 24 hours) needs passages from all of it, so its room grows with the transcript.
+const LONG_SUMMARY_BUDGET_TOKENS = 24_000;
+const LONG_TRANSCRIPT_TOKENS = 60_000;
 const RRF_K = 60;
 const MIN_VECTOR_SIMILARITY = 0.2;
 
@@ -49,9 +52,9 @@ export function rankCandidates(candidates: Candidate[], scope: TutorScope, recen
 /** Picks evidence inside the token budget: everything in scope when it fits, else the best chunks with their neighbours. */
 export function selectEvidence(ranked: Scored[], scope: TutorScope): { chosen: Scored[]; coverage: "full" | "partial" } {
   const pool = ranked.filter((candidate) => candidate.inScope);
-  const summary = scope.kind === "whole" || scope.kind === "watched";
-  const budget = summary ? SUMMARY_BUDGET_TOKENS : ANSWER_BUDGET_TOKENS;
+  const summary = scope.kind === "whole" || scope.kind === "course" || scope.kind === "watched";
   const total = pool.reduce((sum, candidate) => sum + candidate.tokenCount, 0);
+  const budget = !summary ? ANSWER_BUDGET_TOKENS : total > LONG_TRANSCRIPT_TOKENS ? LONG_SUMMARY_BUDGET_TOKENS : SUMMARY_BUDGET_TOKENS;
   if (total <= budget && pool.length <= MAX_EVIDENCE && (summary || scope.kind === "near" || scope.kind === "at")) return { chosen: pool, coverage: "full" };
   const chosen = new Map<string, Scored>();
   let used = 0;
@@ -62,10 +65,14 @@ export function selectEvidence(ranked: Scored[], scope: TutorScope): { chosen: S
   };
   const byOrdinal = new Map(pool.map((candidate) => [candidate.ordinal, candidate]));
   if (summary) {
-    // A summary needs the whole arc, so spread picks evenly across the scope before filling with the best matches.
+    // A summary needs the whole arc: split the scope into equal stretches and take the best match in each, so every part of
+    // the lecture is heard from, then fill with the best matches overall.
     const ordered = [...pool].sort((a, b) => a.ordinal - b.ordinal);
     const slots = Math.min(ordered.length, Math.floor(MAX_EVIDENCE * 0.75));
-    for (let index = 0; index < slots; index += 1) take(ordered[Math.floor((index * ordered.length) / slots)]);
+    for (let index = 0; index < slots; index += 1) {
+      const stretch = ordered.slice(Math.floor((index * ordered.length) / slots), Math.floor(((index + 1) * ordered.length) / slots));
+      take(stretch.reduce<Scored | undefined>((best, candidate) => (!best || candidate.score > best.score ? candidate : best), undefined));
+    }
   }
   const best = [...pool].sort((a, b) => b.score - a.score || a.ordinal - b.ordinal);
   for (const candidate of best.slice(0, 3)) {

@@ -31,8 +31,6 @@
   border-top: 1px solid var(--line-subtle);
 }
 
-.library-page > .product-lane:first-child { margin-top: 0; }
-
 .product-lane-heading {
   display: flex;
   align-items: center;
@@ -78,7 +76,6 @@
 .collection-detail-intro > button,
 .research-search button,
 .research-card-actions button:first-child,
-.saved-resource-action button,
 .paper-progress-actions button,
 .ask-panel button {
   display: inline-flex;
@@ -107,7 +104,6 @@
 .collection-detail-intro > button:hover,
 .research-search button:hover,
 .research-card-actions button:first-child:hover,
-.saved-resource-action button:hover,
 .paper-progress-actions button:hover,
 .ask-panel button:hover {
   background: var(--accent-blue-hover);
@@ -121,8 +117,6 @@
   border-top: 1px solid var(--line-subtle);
 }
 
-.saved-resource-row p,
-.collection-card p,
 .research-card p,
 .collection-detail-section > div > p:last-child {
   margin: 0;
@@ -145,34 +139,6 @@
   background: var(--accent-blue);
 }
 
-.collection-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.collection-card {
-  min-height: 160px;
-  padding: 16px;
-  border: 1px solid var(--line-subtle);
-  border-radius: 10px;
-  background: var(--surface-raised);
-}
-
-.collection-card-top {
-  display: flex;
-  justify-content: space-between;
-  color: #8c806d;
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.collection-kind { color: #6a7b55; font-weight: 700; }
-.collection-card h3 { margin: 22px 0 7px; font-size: 20px; line-height: 1.15; }
-.collection-card h3 a:hover { text-decoration: underline; }
-.collection-card p { margin-bottom: 14px; }
-.collection-progress { display: grid; gap: 6px; color: #7e806e; font-size: 10px; }
 
 .lane-empty {
   padding: 22px 0;
@@ -180,13 +146,11 @@
   font-size: 13px;
 }
 
-.saved-resource-list,
 .research-list {
   display: grid;
   border-top: 1px solid var(--line-subtle);
 }
 
-.saved-resource-row,
 .research-card {
   display: flex;
   align-items: center;
@@ -196,7 +160,6 @@
   border-bottom: 1px solid var(--line-subtle);
 }
 
-.saved-resource-row h3,
 .research-card h3 {
   margin: 7px 0 6px;
   color: #35463a;
@@ -204,9 +167,6 @@
   line-height: 1.2;
 }
 
-.saved-resource-row p { max-width: 650px; }
-.saved-resource-action { display: flex; flex-wrap: wrap; flex: 0 0 auto; gap: 8px; }
-.saved-resource-action button { border: 0; }
 
 .research-search {
   max-width: 700px;
@@ -269,21 +229,18 @@
 .rewatch-dialog-note { margin: 0; padding: 10px 18px 14px; color: #6b6f6d; font-size: 13px; }
 .collection-item-progress { color: #71805d; font-size: 10px; }
 
-@media (max-width: 900px) {
-  .collection-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 
 @media (max-width: 640px) {
   .product-page { width: min(100% - 30px, 600px); padding-top: 24px; }
   .product-lane { margin-top: 32px; }
-  .collection-grid { grid-template-columns: 1fr; }
-  .saved-resource-row, .research-card { display: grid; align-items: start; gap: 17px; }
-  .saved-resource-action, .research-card-actions { justify-content: start; }
+  .research-card { display: grid; align-items: start; gap: 17px; }
+  .research-card-actions { justify-content: start; }
   .research-search > div { display: grid; }
   .research-search input { min-height: 42px; }
   .collection-detail-section { grid-template-columns: 1fr; gap: 13px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .product-primary-link, .product-secondary-link, .collection-detail-intro > button, .research-search button, .research-card-actions button:first-child, .saved-resource-action button, .paper-progress-actions button, .ask-panel button { transition: none; }
+  .product-primary-link, .product-secondary-link, .collection-detail-intro > button, .research-search button, .research-card-actions button:first-child, .paper-progress-actions button, .ask-panel button { transition: none; }
 }
+

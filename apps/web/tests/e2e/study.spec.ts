@@ -116,6 +116,8 @@ test.afterAll(async () => {
   await db`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${db(resourceIds)}`;
   await db`DELETE FROM catalog.video_details WHERE resource_id = ${videoResourceId}`;
   await db`DELETE FROM catalog.paper_details WHERE resource_id = ${paperResourceId}`;
+  await db`DELETE FROM study.mastery_checks WHERE resource_id IN ${db(resourceIds)}`;
+  await db`DELETE FROM study.video_notes WHERE resource_id IN ${db(resourceIds)}`;
   await db`DELETE FROM catalog.resources WHERE id IN ${db(resourceIds)}`;
   if (userIds.length > 0) await db`DELETE FROM identity.users WHERE id IN ${db(userIds)}`;
   await db.end({ timeout: 5 });
@@ -140,8 +142,8 @@ async function completeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
-  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  // Onboarding is saved once the goal question shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
 }
@@ -210,28 +212,15 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   await expect(paper).toBeVisible();
   await paper.getByRole("button", { name: "Save" }).click();
   await expect(paper.getByRole("button", { name: "Saved" })).toBeVisible();
-  await page.goto("/app/library");
-  const savedRow = page.locator("article.saved-resource-row").filter({ hasText: "A deterministic Study paper" });
-  await expect(savedRow.getByRole("button", { name: "Unsave" })).toBeVisible();
-  const unsaveResponse = page.waitForResponse((response) => response.url().endsWith("/api/v1/library") && response.request().method() === "POST");
-  await savedRow.getByRole("button", { name: "Unsave" }).click();
-  expect((await unsaveResponse).status()).toBe(200);
-  await page.goto("/app/library");
-  await expect(page.locator("article.saved-resource-row").filter({ hasText: "A deterministic Study paper" })).toHaveCount(0);
+  // The Library holds finished sessions only; unsaving goes through the same endpoint its old shelf used.
+  const unsaveResponse = await page.request.post("/api/v1/library", { data: { resourceId: paperResourceId, action: "remove" } });
+  expect(unsaveResponse.status()).toBe(200);
   await page.goto(`/app/research?q=${encodeURIComponent("A deterministic Study paper")}`);
   const paperAfterUnsave = page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first();
   await paperAfterUnsave.getByRole("button", { name: "Save" }).click();
   await expect(paperAfterUnsave.getByRole("button", { name: "Saved" })).toBeVisible();
-  // Sessions hold one session at a time: the paper waits until the video from E2E A is finished.
+  // Each material is a session of its own, so the paper opens beside the unfinished video from E2E A.
   await paperAfterUnsave.getByRole("button", { name: "Study paper" }).click();
-  await expect(paperAfterUnsave.getByRole("button", { name: "Finish current session first" })).toBeVisible();
-  if (!videoSessionId) throw new Error("video Study session is required for paper E2E");
-  const completeResponse = await page.request.post(`/api/v1/study-sessions/${videoSessionId}/progress`, {
-    data: { resourceId: videoResourceId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `e2e-complete-${randomUUID()}` },
-  });
-  expect(completeResponse.status()).toBe(200);
-  await page.reload();
-  await page.locator("article.research-card").filter({ hasText: "A deterministic Study paper" }).first().getByRole("button", { name: "Study paper" }).click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
   await expect(page.getByText("Paper source unavailable")).toBeVisible();
   const pageInput = page.getByRole("spinbutton");
@@ -240,19 +229,19 @@ test("E2E B — Research opens Paper Study and preserves save and reading positi
   await expect(page.getByText("Reading position saved")).toBeVisible();
 });
 
-test("E2E D — Library shows a mixed collection and holds it while another session is in progress", async ({ page }) => {
+test("E2E D — A mixed collection starts beside the sessions already in progress", async ({ page }) => {
   await login(page);
   const addResponse = await page.request.post("/api/v1/library/courses", { data: { slug: `study-e2e-${runKey}` } });
   expect(addResponse.ok()).toBe(true);
+  // The added course waits in the Library's Watch later, ready to continue in Sessions.
   await page.goto("/app/library");
-  const collection = page.locator("article.collection-card").filter({ hasText: "A mixed Study collection" });
-  await expect(collection).toBeVisible();
-  await collection.getByRole("link", { name: "A mixed Study collection" }).click();
-  await expect(page).toHaveURL(`/app/library/collections/${collectionId}`);
+  const saved = page.locator(".watch-later-card").filter({ hasText: "A mixed Study collection" });
+  await expect(saved.getByRole("button", { name: "Continue in Sessions" })).toBeVisible();
+  await page.goto(`/app/library/collections/${collectionId}`);
   const collectionDetail = page.locator("main.collection-detail-page");
   await expect(collectionDetail.getByText("A deterministic Study video").first()).toBeVisible();
   await expect(collectionDetail.getByText("A deterministic Study paper")).toBeVisible();
-  // The paper from E2E B is still the current session, so the course waits for it.
+  // The course starts as its own session while the video and paper sessions stay in progress.
   await page.getByRole("button", { name: "Start collection" }).click();
-  await expect(page.getByRole("button", { name: "Finish current session first" })).toBeVisible();
+  await expect(page).toHaveURL(/\/app\/study\/(video|paper)\/[0-9a-f-]+$/);
 });

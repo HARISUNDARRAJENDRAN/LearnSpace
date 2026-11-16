@@ -319,6 +319,8 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   gap: 14px;
   margin-top: 11px;
   overflow: hidden auto;
+  /* Reaching the end of the sidebar's list never carries the scroll on to the page. */
+  overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(0,0,0,.16) transparent;
 }
@@ -371,15 +373,17 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   transition: opacity var(--motion-fast) var(--motion-ease-standard);
 }
 
+/* A 12px glyph leaves the 20px tile 4px of padding all round, so every icon reads at the same weight. */
 .application-nav-icon svg {
-  width: 15px;
-  height: 15px;
+  width: 12px;
+  height: 12px;
   color: currentColor;
   fill: none;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.2;
+  stroke-width: 2.4;
+  overflow: visible;
 }
 
 .application-nav-link[data-nav-tone="home"] .application-nav-icon { background: #637487; }
@@ -473,6 +477,86 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   color: #a2a29f;
   font-size: 12px;
 }
+
+/* Sessions in the sidebar: each session folds open into its workspace parts. */
+.application-nav-row { position: relative; display: flex; min-width: 0; align-items: center; }
+.application-nav-row > .application-nav-link { flex: 1; min-width: 0; }
+.application-nav-disclosure,
+.application-session-toggle,
+.application-session-more {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #8a8a87;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--motion-ease-standard), color var(--motion-fast) var(--motion-ease-standard), opacity var(--motion-fast) var(--motion-ease-standard);
+}
+.application-nav-disclosure { position: absolute; right: 5px; }
+.application-nav-disclosure:hover,
+.application-session-toggle:is(button):hover,
+.application-session-more:hover,
+.application-session-more[aria-expanded="true"] { background: rgba(0,0,0,.06); color: #3a3a38; }
+.application-nav-disclosure svg,
+.application-session-toggle svg,
+.application-session-more svg { width: 14px; height: 14px; stroke-width: 1.8; transition: transform var(--motion-normal) var(--motion-ease-standard); }
+.application-nav-disclosure[aria-expanded="true"] svg,
+.application-session-toggle[aria-expanded="true"] svg { transform: rotate(90deg); }
+span.application-session-toggle { cursor: default; }
+span.application-session-toggle svg { width: 12px; height: 12px; }
+
+/* Rows fold with grid rows, so opening a session never jumps: the height animates from what is really there. */
+.application-disclosure { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--motion-slow) var(--motion-ease-out), opacity var(--motion-normal) var(--motion-ease-standard); }
+.application-disclosure[data-open] { grid-template-rows: 1fr; opacity: 1; }
+.application-disclosure > * { min-height: 0; overflow: hidden; }
+.application-disclosure:not([data-open]) > * { visibility: hidden; transition: visibility 0s var(--motion-slow); }
+
+.application-session-tree,
+.application-session-parts { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.application-session-tree { padding: 1px 0 2px 14px; }
+.application-session-row { position: relative; display: flex; min-width: 0; height: 29px; align-items: center; gap: 2px; padding: 0 3px 0 2px; border-radius: 6px; transition: background-color var(--motion-normal) var(--motion-ease-standard); }
+.application-session-row:hover,
+.application-session-row:focus-within { background: rgba(0,0,0,.035); }
+.application-session.is-active > .application-session-row { background: rgba(0,0,0,.05); }
+.application-session-link { display: flex; min-width: 0; height: 100%; flex: 1; align-items: center; gap: 6px; padding: 0 2px 0 4px; color: #4a4a48; font-size: 13px; text-decoration: none; }
+.application-session-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.application-session-link > small { flex: none; padding: 1px 5px; border-radius: 999px; background: rgba(0,0,0,.05); color: #7d7d7a; font-size: 10px; }
+.application-session.is-active .application-session-link { color: #232321; font-weight: 500; }
+.application-session-more { opacity: 0; }
+.application-session-row:hover .application-session-more,
+.application-session-row:focus-within .application-session-more,
+.application-session-more[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .application-session-more { opacity: 1; } }
+
+.application-session-parts { position: relative; padding: 1px 0 3px 21px; }
+.application-session-parts::before { position: absolute; top: 2px; bottom: 6px; left: 12px; width: 1px; background: rgba(0,0,0,.08); content: ""; }
+.application-session-part { display: flex; min-width: 0; height: 27px; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; color: #6a6a67; font-size: 12.5px; text-decoration: none; transition: background-color var(--motion-normal) var(--motion-ease-standard), color var(--motion-normal) var(--motion-ease-standard); }
+.application-session-part svg { width: 13px; height: 13px; flex: none; stroke-width: 1.9; }
+.application-session-part span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.application-session-part:hover { background: rgba(0,0,0,.04); color: #2c2c2a; }
+.application-session-part.is-active { background: rgba(0,0,0,.055); color: #1f1f1d; font-weight: 500; }
+.application-session-part.is-active svg { color: var(--ls-brand, #00a5ef); }
+
+.application-session-rename { flex: 1; min-width: 0; }
+.application-session-rename input { box-sizing: border-box; width: 100%; height: 23px; padding: 0 6px; border: 0; border-radius: 5px; outline: 0; background: #fff; box-shadow: inset 0 0 0 1px var(--ls-brand, #00a5ef), 0 0 0 3px rgb(0 165 239 / 14%); color: #1d1d1f; font: inherit; font-size: 13px; }
+
+.application-session-menu { position: absolute; z-index: 40; top: 28px; right: 0; width: 196px; padding: 5px; border: 1px solid rgba(0,0,0,.07); border-radius: 12px; background: #fff; box-shadow: 0 12px 36px rgba(0,0,0,.10), 0 2px 8px rgba(0,0,0,.04); animation: application-menu-in var(--motion-normal) var(--motion-ease-out); }
+.application-session-menu > p { margin: 4px 7px 6px; color: #5f5f5c; font-size: 12px; line-height: 1.4; }
+.application-session-menu > button { display: flex; width: 100%; height: 30px; align-items: center; gap: 9px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: #424240; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.application-session-menu > button:hover:not(:disabled) { background: rgba(0,0,0,.045); }
+.application-session-menu > button:disabled { color: #b5b5b2; cursor: default; }
+.application-session-menu > button svg { width: 15px; height: 15px; stroke-width: 1.7; }
+.application-session-menu > button.is-danger { color: #d92530; }
+@keyframes application-menu-in { from { opacity: 0; transform: translateY(-4px); } }
+
+.application-session-more-list { height: 26px; margin: 0 0 0 20px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: #8a8a87; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.application-session-more-list:hover { background: rgba(0,0,0,.04); color: #3a3a38; }
+.application-session-error { margin: 4px 8px 0 20px; color: #d92530; font-size: 12px; }
 
 .application-sidebar-footer {
   margin-top: 7px;
@@ -749,6 +833,8 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 .application-page.is-sidebar-collapsed .application-recent-link > span:last-child,
 .application-page.is-sidebar-collapsed .application-nav-section-heading > span:first-child,
 .application-page.is-sidebar-collapsed .application-recent-list,
+.application-page.is-sidebar-collapsed .application-nav-disclosure,
+.application-page.is-sidebar-collapsed .application-sessions > .application-disclosure,
 .application-page.is-sidebar-collapsed .application-profile-copy {
   display: none;
 }
@@ -1021,6 +1107,12 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
   .application-backdrop,
   .application-nav-link,
   .application-recent-link,
+  .application-disclosure,
+  .application-session-row,
+  .application-session-part,
+  .application-session-menu,
+  .application-nav-disclosure svg,
+  .application-session-toggle svg,
   .application-main,
   .application-header-view-group,
   .discovery-skeleton,

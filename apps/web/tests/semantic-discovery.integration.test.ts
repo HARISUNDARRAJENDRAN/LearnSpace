@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { CompactLearningState } from "@learnspace/shared/recommendation-model";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import test from "node:test";
@@ -25,7 +26,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
   const users: string[] = [], resources: string[] = [], collections: string[] = [], relationIds: string[] = [];
   const metrics: Record<string, unknown> = {};
   const provider = { async embedQuery() { return axis(0); }, async embedDocuments(texts: string[]) { return texts.map(() => axis(0)); } };
-  const profile = async (id: string) => (await db<{ state: any; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${id}`)[0]!;
+  const profile = async (id: string) => (await db<{ state: { learning: CompactLearningState; preferences: { conceptIds: string[] } }; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${id}`)[0]!;
   const event = async (userId: string, resourceId: string, type: string, payload: Record<string, unknown> = {}) => {
     await db`INSERT INTO activity.activity_events (schema_version,user_id,resource_id,event_type,actor_type,source,occurred_at,idempotency_key,payload) VALUES (1,${userId},${resourceId},${type},'user','integration',now(),${randomUUID()},${db.json(payload as postgres.JSONValue)})`;
   };
@@ -96,7 +97,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     let p = await profile(userId);
     assert.equal(p.revision, metadataOnly.revision + 1, "a recovered onboarding vector revises the profile without new activity");
     assert.deepEqual(p.state.learning.recentInterests, {});
-    assert.equal(p.state.learning.onboardingVector.length, 1536);
+    assert.equal(p.state.learning.onboardingVector?.length, 1536);
     assert.deepEqual(p.state.learning.longTermInterests, {}, "onboarding does not become behavioral evidence");
     assert.equal(await projectRecommendationProfiles(worker, provider, users), 0, "projection is restart-safe");
     const feed = await getHomeFeed(userId, "discover", { onTiming: (t) => { metrics.cacheMiss = t; } });
@@ -125,8 +126,8 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await projectRecommendationProfiles(worker, provider, [userId]);
     metrics.profileUpdateTwentyEventsMs = performance.now() - updateStart;
     p = await profile(userId);
-    assert.ok(p.state.learning.recentInterests[ai] > p.state.learning.recentInterests[python] || !p.state.learning.recentInterests[python]);
-    assert.ok(p.state.learning.longTermInterests[ai] > 0);
+    assert.ok((p.state.learning.recentInterests[ai] ?? 0) > (p.state.learning.recentInterests[python] ?? 0) || !p.state.learning.recentInterests[python]);
+    assert.ok((p.state.learning.longTermInterests[ai] ?? 0) > 0);
     assert.equal(p.state.learning.longTermInterests[python], undefined);
     assert.equal(await projectRecommendationProfiles(worker, provider, [userId]), 0);
     const shifted = await getHomeFeed(userId, "discover");
@@ -140,7 +141,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.deepEqual(removed.state.preferences.conceptIds, []);
     assert.equal(removed.state.learning.onboardingVector, null);
     assert.equal(removed.state.learning.longTermInterests[python], undefined);
-    assert.ok(removed.state.learning.longTermInterests[ai] > 0);
+    assert.ok((removed.state.learning.longTermInterests[ai] ?? 0) > 0);
     await db`UPDATE identity.user_settings SET learning_preferences = jsonb_set(learning_preferences,'{conceptIds}',${db.json([python])}), updated_at = now() WHERE user_id = ${userId}`;
     await projectRecommendationProfiles(worker, provider, [userId]);
     const { loadCompactProfile } = await import("../lib/discovery/compact-profile");
@@ -206,7 +207,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await projectRecommendationProfiles(worker, provider, [userId]);
     assert.equal((await profile(userId)).revision, beforeIgnored.revision + 1, "ignored-impression-only changes invalidate the feed");
     await getHomeFeed(userId, "discover");
-    const cached = await readRecommendationCache<any>(userId);
+    const cached = await readRecommendationCache<unknown>(userId);
     assert.ok(cached.entry);
     await writeRecommendationCache({ ...cached.entry!, freshUntil: Date.now() - 1 });
     const scheduled: Array<() => Promise<void>> = [];

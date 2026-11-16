@@ -17,8 +17,8 @@ export function SmoothScroll() {
     const lenis = new Lenis({
       allowNestedScroll: true,
       stopInertiaOnNavigate: true,
-      // A modal dialog scrolls on its own; the page behind it stays put.
-      prevent: (node) => node.nodeName === "DIALOG",
+      // A modal dialog and the fixed sidebar scroll on their own; the page behind them stays put.
+      prevent: (node) => node.nodeName === "DIALOG" || node.classList.contains("application-sidebar"),
     });
     let frame = 0;
     const tick = (time: number) => {

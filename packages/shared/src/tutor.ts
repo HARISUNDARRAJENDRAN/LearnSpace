@@ -1,10 +1,11 @@
 import { z } from "zod";
+import { CODE_LANGUAGES, MAX_SESSION_CODE_LENGTH } from "./contracts.js";
 
 /** Bumped whenever the prompt, output schema or grounding rules change; cached answers from another contract are never reused. */
 export const TUTOR_CONTRACT_VERSION = "tutor-v9";
 /** Transcript chunk embeddings share the discovery embedding model but live in their own retrieval profile. */
 export const TRANSCRIPT_EMBEDDING_PROFILE = "openai-text-embedding-3-small-1536";
-export const MAX_EVIDENCE = 24;
+export const MAX_EVIDENCE = 40;
 
 // What the model may write. Evidence is cited by its number in the prompt (1-based); the server maps it to real chunks.
 const cite = z.array(z.number().int().min(1).max(MAX_EVIDENCE)).max(4);
@@ -154,8 +155,12 @@ export const tutorTurnRequestSchema = z.object({
   positionMs: z.number().int().min(0).max(86_400_000),
   replyTo: z.object({ messageId: z.string().uuid(), blockId }).strict().optional(),
   doubt: tutorDoubtSchema.optional(),
+  // The session's code draft, sent only when the learner chose to share it with this question.
+  code: z.object({ language: z.enum(CODE_LANGUAGES), code: z.string().trim().min(1).max(MAX_SESSION_CODE_LENGTH) }).strict().optional(),
   idempotencyKey,
-}).strict().refine((input) => !(input.replyTo && input.doubt), "A turn answers a check or asks about a doubt, not both.");
+}).strict()
+  .refine((input) => !(input.replyTo && input.doubt), "A turn answers a check or asks about a doubt, not both.")
+  .refine((input) => !(input.code && input.doubt), "A doubt is about the tutor's words, so it does not carry code.");
 export type TutorTurnRequest = z.infer<typeof tutorTurnRequestSchema>;
 
 /** Restores an earlier conversation, or marks a doubt resolved ("Got it") or open again. */

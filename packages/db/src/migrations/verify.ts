@@ -57,7 +57,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "study.tutor_threads": ["tutor_threads_owner_policy"],
   "study.tutor_messages": ["tutor_messages_owner_policy"],
   "study.mastery_checks": ["mastery_checks_owner_policy", "mastery_checks_owner_insert_policy", "mastery_checks_owner_update_policy"],
-  "study.session_notes": ["session_notes_owner_policy", "session_notes_owner_insert_policy", "session_notes_owner_update_policy"],
+  "study.video_notes": ["video_notes_owner_policy", "video_notes_owner_insert_policy", "video_notes_owner_update_policy"],
+  "study.session_transcript": ["session_transcript_owner_policy", "session_transcript_owner_insert_policy"],
   "activity.activity_events": ["activity_events_owner_policy", "activity_events_worker_policy"],
   "retrieval.resource_chunks": ["resource_chunks_visible_policy", "resource_chunks_worker_policy", "resource_chunks_worker_insert_policy", "resource_chunks_worker_update_policy"],
   "retrieval.chunk_embeddings": ["chunk_embeddings_visible_policy", "chunk_embeddings_worker_policy", "chunk_embeddings_worker_insert_policy", "chunk_embeddings_worker_update_policy"],
@@ -67,16 +68,13 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "retrieval.retrieval_runs": ["retrieval_runs_owner_policy", "retrieval_runs_owner_insert_policy", "retrieval_runs_worker_policy", "retrieval_runs_worker_insert_policy", "retrieval_runs_worker_update_policy"],
   "retrieval.retrieved_chunks": ["retrieved_chunks_owner_policy", "retrieved_chunks_worker_policy"],
   "retrieval.citations": ["citations_owner_policy", "citations_worker_policy"],
-  "practice.exercise_attempts": ["exercise_attempts_owner_policy"],
-  "practice.exercises": ["exercises_select_policy", "exercises_insert_policy", "exercises_update_policy", "exercises_delete_policy", "exercises_worker_publication_policy"],
-  "practice.exercise_bindings": ["exercise_bindings_owner_policy", "exercise_bindings_owner_insert_policy", "exercise_bindings_owner_update_policy", "exercise_bindings_owner_delete_policy", "exercise_bindings_worker_policy", "exercise_bindings_worker_insert_policy", "exercise_bindings_worker_update_policy"],
-  "practice.exercise_examples": ["exercise_examples_visible_policy"],
-  "practice.code_snapshots": ["code_snapshots_owner_policy"],
-  "practice.observer_diagnostics": ["observer_diagnostics_owner_policy"],
-  "practice.hint_events": ["hint_events_owner_policy"],
-  "practice.exercise_versions": ["exercise_versions_visible_policy", "exercise_versions_worker_policy", "exercise_versions_worker_insert_policy", "exercise_versions_worker_update_policy"],
-  "practice.test_bundles": ["test_bundles_worker_policy", "test_bundles_worker_insert_policy", "test_bundles_worker_update_policy"],
-  "practice.execution_runs": ["execution_runs_app_select_policy", "execution_runs_ai_select_policy", "execution_runs_runner_select_policy", "execution_runs_runner_update_policy"],
+  "practice.video_coding_profiles": ["video_coding_profiles_app_select", "video_coding_profiles_app_insert", "video_coding_profiles_app_update"],
+  "practice.coding_problems": ["coding_problems_app_select", "coding_problems_app_insert", "coding_problems_app_update", "coding_problems_runner_select", "coding_problems_runner_update"],
+  "practice.coding_problem_secrets": ["coding_problem_secrets_app_insert", "coding_problem_secrets_runner_select", "coding_problem_secrets_runner_update"],
+  "practice.coding_attempts": ["coding_attempts_owner_select", "coding_attempts_owner_insert", "coding_attempts_owner_update"],
+  "practice.coding_submissions": ["coding_submissions_owner_select", "coding_submissions_owner_insert"],
+  "practice.coding_events": ["coding_events_owner_select", "coding_events_owner_insert"],
+  "practice.coding_mastery": ["coding_mastery_owner_select", "coding_mastery_owner_insert", "coding_mastery_owner_update"],
   "knowledge.concepts": ["concepts_visible_policy", "concepts_worker_insert_policy", "concepts_worker_update_policy"],
   "knowledge.concept_aliases": ["concept_aliases_visible_policy", "concept_aliases_worker_insert_policy", "concept_aliases_worker_update_policy"],
   "knowledge.concept_relations": ["concept_relations_visible_policy", "concept_relations_worker_insert_policy", "concept_relations_worker_update_policy"],
@@ -116,6 +114,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
 
 const requiredConstraints = [
   "resource_embeddings_nonzero_chk",
+  "coding_attempts_user_session_fkey",
+  "coding_problems_verified_chk",
   "auth_sessions_rotated_user_fkey",
   "auth_challenges_user_id_users_id_fk",
   "study_sessions_goal_user_fkey",
@@ -132,18 +132,6 @@ const requiredConstraints = [
   "citations_retrieved_chunk_fkey",
   "citations_version_chunk_fkey",
   "retrieval_runs_user_session_fkey",
-  "exercise_attempts_user_session_fkey",
-  "exercise_attempts_binding_version_fkey",
-  "code_snapshots_parent_attempt_fkey",
-  "execution_runs_attempt_snapshot_fkey",
-  "exercise_bindings_resource_version_fkey",
-  "exercise_bindings_version_chunk_fkey",
-  "exercise_bindings_session_resource_fkey",
-  "execution_runs_attempt_id_uq",
-  "observer_diagnostics_attempt_id_uq",
-  "observer_diagnostics_attempt_snapshot_fkey",
-  "observer_diagnostics_attempt_execution_fkey",
-  "hint_events_attempt_diagnostic_fkey",
   "artifact_details_source_agent_user_fkey",
   "artifact_details_source_agent_session_fkey",
   "agent_runs_thread_id_uq",
@@ -228,7 +216,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 90, `expected 90 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 88, `expected 88 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count
@@ -268,19 +256,15 @@ try {
     WHERE (n.nspname, c.relname, t.tgname) IN (
       ('catalog', 'resource_versions', 'resource_versions_immutable_trg'),
       ('catalog', 'resources', 'resources_current_version_ready_trg'),
-      ('practice', 'execution_runs', 'execution_runs_hashes_trg'),
-      ('practice', 'exercise_attempts', 'exercise_attempts_binding_context_trg'),
       ('knowledge', 'mastery_signals', 'mastery_signals_source_trg'),
       ('ops', 'outbox_events', 'outbox_events_append_only_trg'),
       ('ops', 'outbox_events', 'outbox_events_discovery_wake'),
       ('study', 'user_resource_progress', 'user_resource_progress_chunk_resource_trg'),
-      ('practice', 'observer_diagnostics', 'observer_diagnostics_model_invocation_trg'),
-      ('practice', 'hint_events', 'hint_events_model_invocation_trg'),
       ('retrieval', 'citations', 'citations_message_context_trg')
     )
       AND NOT t.tgisinternal
   `;
-  await requireCondition(triggerRows.length === 11, "target integrity triggers are incomplete");
+  await requireCondition(triggerRows.length === 7, "target integrity triggers are incomplete");
 
   const validationFunctionRows = await sql<{ name: string; security_definer: boolean; settings: string[] | null }[]>`
     SELECT
@@ -291,12 +275,11 @@ try {
     JOIN pg_namespace AS n ON n.oid = p.pronamespace
     WHERE (n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)) IN (
       ('study', 'validate_user_resource_progress_chunk', ''),
-      ('practice', 'validate_model_invocation_attempt', ''),
       ('retrieval', 'validate_citation_message_context', '')
     )
   `;
   await requireCondition(
-    validationFunctionRows.length === 3 &&
+    validationFunctionRows.length === 2 &&
       validationFunctionRows.every((row) => row.security_definer && row.settings?.some((setting) => setting.startsWith("search_path=pg_catalog")) === true),
     "validation functions are not safely configured",
   );
@@ -335,20 +318,6 @@ try {
   `);
   await requireCondition(allPolicies === 0, `found ${allPolicies} FOR ALL RLS policies`);
 
-  const invalidBindingWritePolicies = await count(`
-    SELECT count(*)::text AS count
-    FROM pg_policies
-    WHERE schemaname = 'practice'
-      AND tablename = 'exercise_bindings'
-      AND policyname IN ('exercise_bindings_owner_insert_policy', 'exercise_bindings_owner_update_policy', 'exercise_bindings_owner_delete_policy')
-      AND CASE
-        WHEN cmd IN ('INSERT', 'UPDATE') THEN position('study_session_id IS NOT NULL' IN coalesce(with_check, '')) = 0
-        WHEN cmd = 'DELETE' THEN position('study_session_id IS NOT NULL' IN coalesce(qual, '')) = 0
-        ELSE true
-      END
-  `);
-  await requireCondition(invalidBindingWritePolicies === 0, "exercise binding writes are not session-scoped");
-
   const invalidArtifactWritePolicies = await count(`
     SELECT count(*)::text AS count
     FROM pg_policies
@@ -378,25 +347,23 @@ try {
     FROM pg_views
     WHERE (schemaname, viewname) IN (
       ('retrieval', 'authorized_chunk_metadata'),
-      ('practice', 'learner_exercise_versions'),
-      ('practice', 'runner_execution_payload'),
       ('identity', 'support_user_summary'),
       ('agent', 'cost_metrics_redacted')
     )
     ORDER BY name
   `;
-  await requireCondition(views.length === 5, "security views are incomplete");
+  await requireCondition(views.length === 3, "security views are incomplete");
 
   const privilegeRows = await sql<{
-    app_can_read_solutions: boolean;
-    app_can_read_tests: boolean;
-    ai_can_read_tests: boolean;
-    app_can_update_execution: boolean;
-    app_can_insert_execution: boolean;
-    app_can_enqueue_execution: boolean;
-    runner_can_read_tests: boolean;
-    runner_can_update_execution: boolean;
-    runner_can_update_execution_result: boolean;
+    app_can_read_problem_secrets: boolean;
+    app_can_write_problem_secrets: boolean;
+    app_can_update_problem_secrets: boolean;
+    ai_can_read_problem_secrets: boolean;
+    runner_can_read_problem_secrets: boolean;
+    runner_can_write_problem_tests: boolean;
+    runner_can_rewrite_authored_secrets: boolean;
+    runner_can_mark_verified: boolean;
+    runner_can_rewrite_problem_spec: boolean;
     worker_can_update_events: boolean;
     app_can_update_outbox: boolean;
     worker_can_update_outbox_status: boolean;
@@ -410,15 +377,15 @@ try {
     worker_can_publish_collections: boolean;
   }[]>`
     SELECT
-      has_column_privilege('learnspace_app', 'practice.exercise_versions', 'solution_outline', 'SELECT') AS app_can_read_solutions,
-      has_table_privilege('learnspace_app', 'practice.test_bundles', 'SELECT') AS app_can_read_tests,
-      has_table_privilege('learnspace_ai', 'practice.test_bundles', 'SELECT') AS ai_can_read_tests,
-      has_table_privilege('learnspace_app', 'practice.execution_runs', 'UPDATE') AS app_can_update_execution,
-      has_table_privilege('learnspace_app', 'practice.execution_runs', 'INSERT') AS app_can_insert_execution,
-      has_function_privilege('learnspace_app', 'practice.enqueue_execution(uuid,uuid,uuid)', 'EXECUTE') AS app_can_enqueue_execution,
-      has_table_privilege('learnspace_runner', 'practice.test_bundles', 'SELECT') AS runner_can_read_tests,
-      has_column_privilege('learnspace_runner', 'practice.execution_runs', 'status', 'UPDATE') AS runner_can_update_execution,
-      has_column_privilege('learnspace_runner', 'practice.execution_runs', 'result', 'UPDATE') AS runner_can_update_execution_result,
+      has_table_privilege('learnspace_app', 'practice.coding_problem_secrets', 'SELECT') AS app_can_read_problem_secrets,
+      has_table_privilege('learnspace_app', 'practice.coding_problem_secrets', 'INSERT') AS app_can_write_problem_secrets,
+      has_table_privilege('learnspace_app', 'practice.coding_problem_secrets', 'UPDATE') AS app_can_update_problem_secrets,
+      has_table_privilege('learnspace_ai', 'practice.coding_problem_secrets', 'SELECT') AS ai_can_read_problem_secrets,
+      has_table_privilege('learnspace_runner', 'practice.coding_problem_secrets', 'SELECT') AS runner_can_read_problem_secrets,
+      has_column_privilege('learnspace_runner', 'practice.coding_problem_secrets', 'tests', 'UPDATE') AS runner_can_write_problem_tests,
+      has_column_privilege('learnspace_runner', 'practice.coding_problem_secrets', 'authored', 'UPDATE') AS runner_can_rewrite_authored_secrets,
+      has_column_privilege('learnspace_runner', 'practice.coding_problems', 'status', 'UPDATE') AS runner_can_mark_verified,
+      has_column_privilege('learnspace_runner', 'practice.coding_problems', 'spec', 'UPDATE') AS runner_can_rewrite_problem_spec,
       has_table_privilege('learnspace_worker', 'activity.activity_events', 'UPDATE') AS worker_can_update_events,
       has_table_privilege('learnspace_app', 'ops.outbox_events', 'UPDATE') AS app_can_update_outbox,
       has_column_privilege('learnspace_worker', 'ops.outbox_events', 'status', 'UPDATE') AS worker_can_update_outbox_status,
@@ -446,15 +413,15 @@ try {
       ,has_table_privilege('learnspace_worker', 'catalog.collection_sections', 'INSERT')
        AND has_table_privilege('learnspace_worker', 'catalog.collection_items', 'INSERT') AS worker_can_publish_collections
   `;
-  await requireCondition(privilegeRows[0]?.app_can_read_solutions === false, "application role can read hidden exercise solutions");
-  await requireCondition(privilegeRows[0]?.app_can_read_tests === false, "application role can read hidden test bundles");
-  await requireCondition(privilegeRows[0]?.ai_can_read_tests === false, "AI role can read hidden test bundles");
-  await requireCondition(privilegeRows[0]?.app_can_update_execution === false, "application role can forge execution results");
-  await requireCondition(privilegeRows[0]?.app_can_insert_execution === false, "application role can insert execution rows directly");
-  await requireCondition(privilegeRows[0]?.app_can_enqueue_execution === true, "application role cannot enqueue executions through the trusted boundary");
-  await requireCondition(privilegeRows[0]?.runner_can_read_tests === true, "runner role cannot read execution fixtures");
-  await requireCondition(privilegeRows[0]?.runner_can_update_execution === true, "runner role cannot update execution results");
-  await requireCondition(privilegeRows[0]?.runner_can_update_execution_result === true, "runner role cannot update execution result columns");
+  await requireCondition(privilegeRows[0]?.app_can_read_problem_secrets === false, "application role can read hidden tests and reference solutions");
+  await requireCondition(privilegeRows[0]?.app_can_write_problem_secrets === true, "application role cannot store an authored problem's tests");
+  await requireCondition(privilegeRows[0]?.app_can_update_problem_secrets === false, "application role can rewrite hidden tests");
+  await requireCondition(privilegeRows[0]?.ai_can_read_problem_secrets === false, "AI role can read hidden tests and reference solutions");
+  await requireCondition(privilegeRows[0]?.runner_can_read_problem_secrets === true, "runner role cannot read the tests it grades with");
+  await requireCondition(privilegeRows[0]?.runner_can_write_problem_tests === true, "runner role cannot store verified tests");
+  await requireCondition(privilegeRows[0]?.runner_can_rewrite_authored_secrets === false, "runner role can rewrite authored references");
+  await requireCondition(privilegeRows[0]?.runner_can_mark_verified === true, "runner role cannot publish verified problems");
+  await requireCondition(privilegeRows[0]?.runner_can_rewrite_problem_spec === false, "runner role can rewrite a problem's statement");
   await requireCondition(privilegeRows[0]?.worker_can_update_events === false, "worker role can mutate append-only activity events");
   await requireCondition(privilegeRows[0]?.app_can_update_outbox === false, "application role can mutate outbox delivery state");
   await requireCondition(privilegeRows[0]?.worker_can_update_outbox_status === true, "worker role cannot claim outbox delivery state");
@@ -543,45 +510,13 @@ try {
   `);
   await requireCondition(invalidCitations === 0, `found ${invalidCitations} invalid citation provenance rows`);
 
-  const invalidAttempts = await count(`
+  const invalidVerifiedProblems = await count(`
     SELECT count(*)::text AS count
-    FROM practice.exercise_attempts a
-    WHERE NOT EXISTS (SELECT 1 FROM practice.exercise_bindings b WHERE b.id = a.exercise_binding_id AND b.exercise_version_id = a.exercise_version_id)
-       OR NOT EXISTS (SELECT 1 FROM study.study_sessions s WHERE s.id = a.study_session_id AND s.user_id = a.user_id)
+    FROM practice.coding_problems p
+    LEFT JOIN practice.coding_problem_secrets s ON s.problem_id = p.id
+    WHERE p.status = 'verified' AND (s.problem_id IS NULL OR s.tests IS NULL OR s.perf_limit_ms IS NULL)
   `);
-  await requireCondition(invalidAttempts === 0, `found ${invalidAttempts} invalid exercise attempts`);
-
-  const invalidBindingSessions = await count(`
-    SELECT count(*)::text AS count
-    FROM practice.exercise_bindings b
-    WHERE b.study_session_id IS NOT NULL
-      AND b.resource_id IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1
-        FROM study.session_resources sr
-        WHERE sr.study_session_id = b.study_session_id
-          AND sr.resource_id = b.resource_id
-      )
-  `);
-  await requireCondition(invalidBindingSessions === 0, `found ${invalidBindingSessions} exercise bindings outside their study session`);
-
-  const invalidDiagnostics = await count(`
-    SELECT count(*)::text AS count
-    FROM practice.observer_diagnostics d
-    LEFT JOIN practice.code_snapshots snapshot ON snapshot.id = d.code_snapshot_id AND snapshot.attempt_id = d.attempt_id
-    LEFT JOIN practice.execution_runs execution ON execution.id = d.execution_run_id AND execution.attempt_id = d.attempt_id
-    WHERE snapshot.id IS NULL
-       OR (d.execution_run_id IS NOT NULL AND execution.id IS NULL)
-  `);
-  await requireCondition(invalidDiagnostics === 0, `found ${invalidDiagnostics} observer diagnostics with incompatible attempts`);
-
-  const invalidHints = await count(`
-    SELECT count(*)::text AS count
-    FROM practice.hint_events h
-    LEFT JOIN practice.observer_diagnostics d ON d.id = h.diagnostic_id AND d.attempt_id = h.attempt_id
-    WHERE h.diagnostic_id IS NOT NULL AND d.id IS NULL
-  `);
-  await requireCondition(invalidHints === 0, `found ${invalidHints} hints with incompatible diagnostics`);
+  await requireCondition(invalidVerifiedProblems === 0, `found ${invalidVerifiedProblems} verified coding problems without verified tests`);
 
   const invalidProgressChunks = await count(`
     SELECT count(*)::text AS count
@@ -613,27 +548,6 @@ try {
   `);
   await requireCondition(invalidTutorProvenance === 0, `found ${invalidTutorProvenance} tutor messages with incompatible provenance`);
 
-  const invalidModelInvocations = await count(`
-    SELECT count(*)::text AS count
-    FROM (
-      SELECT d.attempt_id, d.model_invocation_id
-      FROM practice.observer_diagnostics d
-      UNION ALL
-      SELECT h.attempt_id, h.model_invocation_id
-      FROM practice.hint_events h
-    ) AS provenance_refs
-    JOIN practice.exercise_attempts a ON a.id = provenance_refs.attempt_id
-    LEFT JOIN agent.model_invocations invocation ON invocation.id = provenance_refs.model_invocation_id
-    LEFT JOIN agent.agent_runs run ON run.id = invocation.agent_run_id
-    WHERE provenance_refs.model_invocation_id IS NOT NULL
-      AND (
-        invocation.id IS NULL
-        OR run.user_id <> a.user_id
-        OR run.study_session_id IS DISTINCT FROM a.study_session_id
-      )
-  `);
-  await requireCondition(invalidModelInvocations === 0, `found ${invalidModelInvocations} model invocations with incompatible attempts`);
-
   const invalidCitationMessages = await count(`
     SELECT count(*)::text AS count
     FROM retrieval.citations c
@@ -648,24 +562,6 @@ try {
       )
   `);
   await requireCondition(invalidCitationMessages === 0, `found ${invalidCitationMessages} citations with incompatible tutor messages`);
-
-  const invalidSnapshots = await count(`
-    SELECT count(*)::text AS count
-    FROM practice.code_snapshots cs
-    WHERE cs.parent_snapshot_id IS NOT NULL
-      AND NOT EXISTS (SELECT 1 FROM practice.code_snapshots parent WHERE parent.attempt_id = cs.attempt_id AND parent.id = cs.parent_snapshot_id)
-  `);
-  await requireCondition(invalidSnapshots === 0, `found ${invalidSnapshots} invalid code snapshot ancestry rows`);
-
-  const invalidExecutions = await count(`
-    SELECT count(*)::text AS count
-    FROM practice.execution_runs er
-    LEFT JOIN practice.exercise_attempts a ON a.id = er.attempt_id
-    LEFT JOIN practice.code_snapshots cs ON cs.id = er.code_snapshot_id AND cs.attempt_id = er.attempt_id
-    LEFT JOIN practice.test_bundles tb ON tb.id = er.test_bundle_id AND tb.exercise_version_id = a.exercise_version_id
-    WHERE a.id IS NULL OR cs.id IS NULL OR tb.id IS NULL
-  `);
-  await requireCondition(invalidExecutions === 0, `found ${invalidExecutions} invalid execution provenance rows`);
 
   const invalidTutorThreads = await count(`
     SELECT count(*)::text AS count

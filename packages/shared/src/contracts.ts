@@ -75,6 +75,30 @@ export const studySessionActionRequestSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(128),
 }).strict();
 
+/** The study tools that open beside a lesson. */
+export const STUDY_TOOLS = ["notes", "check", "code", "ai"] as const;
+export const studyToolSchema = z.enum(STUDY_TOOLS);
+export const CODE_LANGUAGES = ["python", "javascript", "typescript", "java", "cpp", "go", "rust", "sql"] as const;
+export const MAX_SESSION_CODE_LENGTH = 100_000;
+
+/**
+ * Where the learner left a session's workspace, restored when they come back to it. Every key is optional and written on its
+ * own, so the code autosave and the canvas autosave never overwrite each other.
+ */
+export const studyWorkspaceSchema = z.object({
+  panel: studyToolSchema.nullable(),
+  canvas: z.object({ x: z.number().finite().min(-1e6).max(1e6), y: z.number().finite().min(-1e6).max(1e6), zoom: z.number().finite().min(0.1).max(4), focused: z.boolean() }).strict(),
+  code: z.object({ language: z.enum(CODE_LANGUAGES), code: z.string().max(MAX_SESSION_CODE_LENGTH) }).strict(),
+}).partial().strict();
+
+export const updateStudySessionRequestSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+}).strict();
+
+export const reorderStudySessionsRequestSchema = z.object({
+  sessionIds: z.array(z.string().uuid()).min(1).max(200).refine((ids) => new Set(ids).size === ids.length, "Each session is listed once."),
+}).strict();
+
 export const libraryItemRequestSchema = z.object({
   resourceId: z.string().uuid(),
   action: z.enum(["save", "remove"]),
@@ -97,6 +121,11 @@ export type StartStudySessionRequest = z.infer<typeof startStudySessionRequestSc
 export type ActivateSessionResourceRequest = z.infer<typeof activateSessionResourceRequestSchema>;
 export type StudyProgressRequest = z.infer<typeof studyProgressRequestSchema>;
 export type StudySessionActionRequest = z.infer<typeof studySessionActionRequestSchema>;
+export type StudyTool = z.infer<typeof studyToolSchema>;
+export type CodeLanguage = (typeof CODE_LANGUAGES)[number];
+export type StudyWorkspace = z.infer<typeof studyWorkspaceSchema>;
+export type UpdateStudySessionRequest = z.infer<typeof updateStudySessionRequestSchema>;
+export type ReorderStudySessionsRequest = z.infer<typeof reorderStudySessionsRequestSchema>;
 export type LibraryItemRequest = z.infer<typeof libraryItemRequestSchema>;
 export type StartCollectionRequest = z.infer<typeof startCollectionRequestSchema>;
 
@@ -160,6 +189,25 @@ export type StudySessionView = {
   related: StudySessionResource[];
   /** Set when the session is an imported course: every lesson in order, unlocked one at a time. */
   course: StudySessionCourse | null;
+  workspace: StudyWorkspace;
+};
+
+/** A session as the sidebar and the Sessions page list it. */
+export type StudySessionSummary = {
+  id: string;
+  title: string;
+  status: StudySessionView["status"];
+  mode: StudySessionView["mode"];
+  lastActiveAt: string;
+  /** When a finished session moved to the Library. */
+  endedAt: string | null;
+  resourceCount: number;
+  progressPct: number;
+  activeResource: { id: string; title: string; type: "video" | "paper"; youtubeId: string | null; readiness: StudyResourceReadiness } | null;
+  route: string | null;
+  isCourse: boolean;
+  /** Whether the session's code draft has anything in it, so the sidebar lists Code Exercises only where there is code. */
+  hasCode: boolean;
 };
 
 export type StudyCourseLessonState = "completed" | "current" | "locked";

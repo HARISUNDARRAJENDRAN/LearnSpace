@@ -3,9 +3,40 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/protocol.ts",
+      "import": "./dist/protocol.js",
+      "default": "./dist/protocol.js"
+    },
+    "./api": {
+      "types": "./src/api.ts",
+      "import": "./dist/api.js",
+      "default": "./dist/api.js"
+    }
+  },
   "scripts": {
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
-  }
+    "lint": "tsc --noEmit",
+    "start": "node dist/server.js",
+    "dev": "tsx src/server.ts",
+    "sandbox:build": "docker build -t learnspace-sandbox:1 sandbox",
+    "test": "tsx --test src/server.test.ts src/grading/grade.test.ts src/problems.test.ts"
+  },
+  "dependencies": {
+    "@learnspace/shared": "workspace:*",
+    "dockerode": "5.0.1",
+    "postgres": "3.4.9",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/dockerode": "4.0.2",
+    "@types/node": "26.4.0",
+    "tsx": "4.23.12",
+    "typescript": "7.0.2"
+  },
+  "files": [
+    "dist"
+  ]
 }

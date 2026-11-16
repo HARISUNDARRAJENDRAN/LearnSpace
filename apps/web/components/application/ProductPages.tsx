@@ -1,48 +1,11 @@
 import Link from "next/link";
-import type { LibraryCollectionDetail, LibraryCollectionSummary, ResearchPaperSummary } from "@learnspace/shared";
+import type { LibraryCollectionDetail, ResearchPaperSummary } from "@learnspace/shared";
 import { RewatchLesson } from "../library/RewatchLesson";
 import { SaveResourceButton, StartCollectionButton, StartStudyButton } from "../study/StudyActions";
-import type { LibraryPageData, SavedLibraryResource } from "../../lib/library/service";
 import type { ResearchPageData } from "../../lib/research/service";
 
 function typeLabel(type: string): string {
   return type === "video" ? "Video" : type === "paper" || type === "pdf" ? "Paper" : type[0]?.toUpperCase() + type.slice(1) || "Resource";
-}
-
-export function LibraryPage({ data }: { data: LibraryPageData }) {
-  const enrolled = (status: LibraryCollectionSummary["status"]) => data.collections.filter((collection) => collection.status === status);
-  const owned = (kind: LibraryCollectionSummary["kind"]) => data.collections.filter((collection) => collection.ownership === "user" && collection.kind === kind);
-  const [active, finished, ownedPaths, generated] = [enrolled("active"), enrolled("completed"), owned("learning_path"), data.collections.filter((collection) => collection.source === "generated")];
-  return (
-    <main className="product-page library-page">
-      {active.length > 0 ? <LibraryLane title="Continue" collections={active} /> : null}
-      <LibraryLane title="Up next" collections={enrolled("queued")} empty="Add a course from Discover and it joins this queue. Each one starts when the course before it finishes." />
-      <LibraryLane title="Your playlists" collections={owned("manual")} empty="Create a playlist when you have a sequence in mind." />
-      {ownedPaths.length > 0 ? <LibraryLane title="Your learning paths" collections={ownedPaths} /> : null}
-      <SavedLane resources={data.savedResources} />
-      {generated.length > 0 ? <LibraryLane title="Made for you" collections={generated} /> : null}
-      {finished.length > 0 ? <LibraryLane title="Finished" collections={finished} /> : null}
-    </main>
-  );
-}
-
-function LibraryLane({ title, collections, empty = "Nothing here yet." }: { title: string; collections: LibraryCollectionSummary[]; empty?: string }) {
-  return <section className="product-lane"><div className="product-lane-heading"><h2>{title}</h2></div>{collections.length > 0 ? <div className="collection-grid">{collections.map((collection) => <CollectionCard key={collection.id} collection={collection} />)}</div> : <div className="lane-empty">{empty}</div>}</section>;
-}
-
-function CollectionCard({ collection }: { collection: LibraryCollectionSummary }) {
-  const progress = collection.status === "active" || collection.status === "completed" ? Math.round(collection.progressPct ?? 0) : null;
-  const sourceLabel = collection.source === "generated" ? "Made for you" : collection.source === "learnspace" ? "LearnSpace" : collection.source === "public" ? "Public" : collection.kind === "manual" ? "Your playlist" : collection.kind.replace("_", " ");
-  return <article className="collection-card"><div className="collection-card-top"><span className="collection-kind">{sourceLabel}</span><span>{collection.itemCount} {collection.itemCount === 1 ? "item" : "items"}</span></div><h3><Link href={`/app/library/collections/${collection.id}`}>{collection.title}</Link></h3>{collection.description ? <p>{collection.description}</p> : null}{progress !== null ? <div className="collection-progress"><span>{progress}% complete</span><div className="progress-track"><span style={{ width: `${progress}%` }} /></div></div> : <Link className="product-secondary-link" href={`/app/library/collections/${collection.id}`}>View collection <span aria-hidden="true">→</span></Link>}</article>;
-}
-
-function SavedLane({ resources: saved }: { resources: SavedLibraryResource[] }) {
-  return <section className="product-lane"><div className="product-lane-heading"><h2>Saved resources</h2></div>{saved.length > 0 ? <div className="saved-resource-list">{saved.map((resource) => <SavedResourceRow key={resource.resourceId} resource={resource} />)}</div> : <div className="lane-empty">Save a video or paper from Home and it will live here.</div>}</section>;
-}
-
-function SavedResourceRow({ resource }: { resource: SavedLibraryResource }) {
-  const canStudy = resource.type === "video" || resource.type === "paper" || resource.type === "pdf";
-  return <article className="saved-resource-row"><div><div className="product-meta"><span>{typeLabel(resource.type)}</span><span>{resource.readiness}</span></div><h3>{resource.title}</h3>{resource.description ? <p>{resource.description}</p> : null}</div><div className="saved-resource-action">{canStudy ? <><StartStudyButton resourceId={resource.resourceId} origin="library" label={resource.progressPct > 0 ? "Continue" : resource.type === "video" ? "Start learning" : "Study paper"} /><SaveResourceButton resourceId={resource.resourceId} saved savedLabel="Unsave" /></> : <SaveResourceButton resourceId={resource.resourceId} saved savedLabel="Unsave" />}</div></article>;
 }
 
 export function ResearchPage({ data }: { data: ResearchPageData }) {

@@ -246,6 +246,62 @@
       "when": 1794379261900,
       "tag": "0034_session_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794401712181,
+      "tag": "0035_session_transcript",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794627870063,
+      "tag": "0036_video_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794629497061,
+      "tag": "0037_streamed_mastery",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1794630172870,
+      "tag": "0038_mastery_analysis",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1794663287557,
+      "tag": "0039_session_token_index",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1794712596004,
+      "tag": "0040_video_agent_quota",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1794725752267,
+      "tag": "0041_session_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1794756612805,
+      "tag": "0042_coding_practice",
+      "breakpoints": true
     }
   ]
 }

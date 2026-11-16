@@ -1,6 +1,6 @@
 // XP is derived from recorded study evidence, never stored, so it cannot drift from what the learner did.
 // Each activity earns its own points; changing a rule re-scores everyone consistently.
-export const ACTIVITIES = ["watch", "read", "finish_video", "finish_paper", "question", "plan_watch", "plan_read", "plan_practice", "plan_review"] as const;
+export const ACTIVITIES = ["watch", "read", "finish_video", "finish_paper", "question", "plan_watch", "plan_read", "plan_practice", "plan_review", "on_time", "in_slot", "day_plan"] as const;
 export type Activity = (typeof ACTIVITIES)[number];
 
 // amount is minutes for watch/read, completed items' worth for plan kinds (0.5 = half done), and a count otherwise.
@@ -21,6 +21,10 @@ export const XP_RULES: Record<Activity, XpRule> = {
   // Practice has no evidence of its own besides the plan, so completing it carries more weight.
   plan_practice: { label: "Complete a Practice plan item", xp: 40, per: "completed item" },
   plan_review: { label: "Complete a Review plan item", xp: 30, per: "completed item" },
+  // Discipline bonuses only count study the observer already matched to the item, on items planned before they started.
+  on_time: { label: "Start a planned session on time", xp: 10, per: "session started within 10 min", dailyCap: 5 },
+  in_slot: { label: "Study inside your planned time", xp: 15, per: "planned slot fully used", dailyCap: 5 },
+  day_plan: { label: "Finish every plan item of a day", xp: 25, per: "day" },
 };
 
 // Every study day that continues a streak earns this on top.

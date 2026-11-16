@@ -9,7 +9,7 @@ const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.D
 test("StudySession starts provisionally, switches resources in place, and preserves meaningful progress", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
   const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!migratorUrl) throw new Error("DATABASE_MIGRATOR_URL is required");
-  const [{ closeDb }, { createEmailUser }, { addCourseToLibrary, getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, getStudySession, pauseSession, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
+  const [{ closeDb }, { createEmailUser }, { addCourseToLibrary, getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, endStudySession, getStudySession, lastSeenSessionRoute, listStudySessions, pauseSession, renameStudySession, reorderStudySessions, saveStudyWorkspace, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
     import("@learnspace/db"),
     import("../lib/auth/repository"),
     import("../lib/library/service"),
@@ -111,8 +111,37 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(first.route, `/app/study/video/${sessionId}`);
     assert.equal(first.readiness, "preparing");
 
-    // Sessions holds one thing at a time: the owner cannot start a second video while this one is in progress.
-    await assert.rejects(startOrResumeStudySession(owner.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `second-${randomUUID()}` }), (error: unknown) => error instanceof AuthError && error.code === "SESSION_IN_PROGRESS");
+    // Sessions keeps several workspaces: a second video opens a session of its own beside the first, newest first.
+    const second = await startOrResumeStudySession(owner.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `second-${randomUUID()}` });
+    assert.notEqual(second.sessionId, studySessionId);
+    assert.deepEqual((await listStudySessions(owner.id)).map((session) => session.id), [second.sessionId, studySessionId]);
+    // Each session keeps its own workspace, merged key by key, and nobody else can write to it.
+    await saveStudyWorkspace(owner.id, second.sessionId, { code: { language: "python", code: "print('second')" } });
+    await saveStudyWorkspace(owner.id, second.sessionId, { panel: "code", canvas: { x: 12, y: -40, zoom: 0.5, focused: false } });
+    await saveStudyWorkspace(owner.id, studySessionId, { panel: "notes" });
+    assert.deepEqual((await getStudySession(owner.id, second.sessionId)).workspace, { panel: "code", canvas: { x: 12, y: -40, zoom: 0.5, focused: false }, code: { language: "python", code: "print('second')" } });
+    assert.deepEqual((await getStudySession(owner.id, studySessionId)).workspace, { panel: "notes" });
+    await assert.rejects(saveStudyWorkspace(foreign.id, second.sessionId, { panel: "ai" }), (error: unknown) => error instanceof AuthError && error.status === 404);
+    await assert.rejects(saveStudyWorkspace(owner.id, second.sessionId, { panel: "terminal" }));
+    assert.equal((await listStudySessions(owner.id)).find((session) => session.id === second.sessionId)?.hasCode, true);
+    // Renamed and reordered by the learner; the order holds as new sessions arrive.
+    await renameStudySession(owner.id, second.sessionId, { title: "  Concurrency  " });
+    await assert.rejects(renameStudySession(foreign.id, second.sessionId, { title: "Stolen" }), (error: unknown) => error instanceof AuthError && error.status === 404);
+    await reorderStudySessions(owner.id, { sessionIds: [studySessionId, second.sessionId] });
+    assert.deepEqual((await listStudySessions(owner.id)).map((session) => [session.id, session.title]), [[studySessionId, "Study video without an ingested version"], [second.sessionId, "Concurrency"]]);
+    await assert.rejects(reorderStudySessions(foreign.id, { sessionIds: [second.sessionId] }), (error: unknown) => error instanceof AuthError && error.status === 404);
+    // Sessions reopens the session the learner was in last.
+    assert.equal(await lastSeenSessionRoute(owner.id), second.route);
+    await getStudySession(owner.id, studySessionId, { seen: true });
+    assert.equal(await lastSeenSessionRoute(owner.id), first.route);
+    await getStudySession(owner.id, second.sessionId, { seen: true });
+    assert.equal(await lastSeenSessionRoute(owner.id), second.route);
+    // Ending one leaves Sessions without it, goes back to the other, and leaves that one as it was.
+    await endStudySession(owner.id, second.sessionId);
+    assert.deepEqual((await listStudySessions(owner.id)).map((session) => session.id), [studySessionId]);
+    assert.equal(await lastSeenSessionRoute(owner.id), first.route);
+    await assert.rejects(getStudySession(owner.id, second.sessionId), (error: unknown) => error instanceof AuthError && error.status === 404);
+    await assert.rejects(saveStudyWorkspace(owner.id, second.sessionId, { panel: "ai" }), (error: unknown) => error instanceof AuthError && error.status === 404);
     // Two tabs of a learner with an empty Sessions share one session.
     const concurrentStarts = await Promise.all([
       startOrResumeStudySession(foreign.id, { resourceId: concurrentVideoId, origin: "home", idempotencyKey: `concurrent-a-${randomUUID()}` }),
@@ -295,27 +324,27 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(pauseEvents[0]?.count, 1);
     await startOrResumeStudySession(owner.id, { resourceId: videoId, origin: "home", idempotencyKey: `resume-after-pause-${randomUUID()}` });
 
-    // Finishing the last unit of the current course completes it, but the queued course waits while this session is still open.
+    // Finishing the session's own video completes it (the paper opened on the side never holds it back): the session moves to
+    // the Library, so Sessions has room and the queued course starts.
     await migrator`UPDATE catalog.collection_items SET required = false WHERE id = ${collectionPaperItemId}`;
     await migrator`UPDATE catalog.collection_enrollments SET current_item_id = ${collectionVideoItemId} WHERE user_id = ${owner.id} AND collection_id = ${ownCollectionId}`;
     await updateStudyProgress(owner.id, sessionId, { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `complete-${randomUUID()}` });
     const enrollments = await migrator<{ collection_id: string; status: string; current_item_id: string | null }[]>`SELECT collection_id, status, current_item_id FROM catalog.collection_enrollments WHERE user_id = ${owner.id} AND collection_id IN (${ownCollectionId}, ${curatedCollectionId})`;
     assert.equal(enrollments.find((row) => row.collection_id === ownCollectionId)?.status, "completed");
-    assert.equal(enrollments.find((row) => row.collection_id === curatedCollectionId)?.status, "queued");
+    assert.equal(enrollments.find((row) => row.collection_id === curatedCollectionId)?.status, "active");
+    assert.equal((await listStudySessions(owner.id)).some((session) => session.id === sessionId), false);
+    assert.deepEqual((await getLibraryPage(owner.id)).sessions.map((session) => [session.id, session.status, session.isCourse]), [[sessionId, "completed", false]]);
     await updateStudyProgress(owner.id, sessionId, { resourceId: videoId, progressPct: 100, anchor: { kind: "video", positionMs: 600000 }, event: "complete", idempotencyKey: `complete-retry-${randomUUID()}` });
     const completed = await migrator<{ status: string; progress_pct: number }[]>`SELECT status, progress_pct FROM study.user_resource_progress WHERE user_id = ${owner.id} AND resource_id = ${videoId}`;
     assert.equal(completed[0]?.status, "completed");
     assert.equal(Number(completed[0]?.progress_pct), 100);
     const completionEvents = await migrator<{ count: number }[]>`SELECT count(*)::int AS count FROM activity.activity_events WHERE user_id = ${owner.id} AND study_session_id = ${sessionId} AND resource_id = ${videoId} AND event_type = 'resource.completed'`;
     assert.equal(completionEvents[0]?.count, 1);
-    await pauseSession(owner.id, sessionId, `complete-session-${randomUUID()}`, "complete");
-    const sessionCompletionEvents = await migrator<{ count: number }[]>`
-      SELECT count(*)::int AS count FROM activity.activity_events WHERE user_id = ${owner.id} AND study_session_id = ${sessionId} AND event_type = 'session.completed'
-    `;
-    assert.equal(sessionCompletionEvents[0]?.count, 1);
-    // Completing the session empties Sessions, so the queued course starts.
     const [queuedCourse] = await migrator<{ status: string; current_item_id: string | null }[]>`SELECT status, current_item_id FROM catalog.collection_enrollments WHERE user_id = ${owner.id} AND collection_id = ${curatedCollectionId}`;
     assert.deepEqual(queuedCourse, { status: "active", current_item_id: curatedItemId });
+    // Ending a session that is already in the Library leaves it there.
+    await endStudySession(owner.id, sessionId);
+    assert.equal((await getStudySession(owner.id, sessionId)).status, "completed");
 
     await assert.rejects(() => getStudySession(foreign.id, sessionId ?? ""), (error: unknown) => error instanceof AuthError && error.status === 404);
     await assert.rejects(() => startOrResumeStudySession(owner.id, { resourceId: privateId, origin: "discover", idempotencyKey: `private-${randomUUID()}` }), (error: unknown) => error instanceof AuthError && error.status === 404);

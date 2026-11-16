@@ -38,7 +38,9 @@ import type {
   StudyResourceReadiness,
   StudySessionCourse,
   StudySessionResource,
+  StudySessionSummary,
   StudySessionView,
+  StudyWorkspace,
 } from "@learnspace/shared";
 import {
   activateSessionResourceRequestSchema,
@@ -52,6 +54,9 @@ import {
   studyResourceProvenanceReasonSchema,
   studyResourceProvenanceSchema,
   studyResourceReadinessSchema,
+  studyWorkspaceSchema,
+  reorderStudySessionsRequestSchema,
+  updateStudySessionRequestSchema,
 } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, ne, notInArray, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
@@ -65,6 +70,7 @@ type BindingRow = typeof sessionResources.$inferSelect;
 type IdempotencyResult = { status: string; response_body: Record<string, unknown> | null };
 // ponytail: keep the initial material window bounded; add cursor/search reads with transcript ingestion.
 const initialStudyChunkLimit = 80;
+const MAX_LISTED_SESSIONS = 200;
 
 type ResourceRecord = {
   id: string;
@@ -105,17 +111,36 @@ function courseOf(session: SessionRow): { collectionId: string; slug: string | n
   return typeof collectionId === "string" ? { collectionId, slug: typeof slug === "string" ? slug : null } : null;
 }
 
-function sessionInProgress(): AuthError {
-  return new AuthError("SESSION_IN_PROGRESS", "Finish your current session before starting something new.", 409);
-}
-
-/** Sessions holds one session at a time: the latest one still in progress. */
-async function currentSessionInTransaction(tx: Transaction, userId: string): Promise<SessionRow | null> {
-  const [current] = await tx.select().from(studySessions)
-    .where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), isNotNull(studySessions.activeResourceId)))
+/** The learner's open session for a course, so starting or importing a course they are already taking reopens it. */
+async function findCourseSession(tx: Transaction, userId: string, collectionId: string): Promise<SessionRow | null> {
+  const [session] = await tx.select().from(studySessions)
+    .where(and(
+      eq(studySessions.userId, userId),
+      inArray(studySessions.status, ["active", "paused"]),
+      isNotNull(studySessions.activeResourceId),
+      sql`${studySessions.metadata} -> 'course' ->> 'collectionId' = ${collectionId}`,
+    ))
     .orderBy(desc(studySessions.lastActiveAt))
     .limit(1);
-  return current ?? null;
+  return session ?? null;
+}
+
+async function reopenedSession(tx: Transaction, userId: string, session: SessionRow | null): Promise<StartStudySessionResponse | null> {
+  if (!session?.activeResourceId) return null;
+  const active = await loadResource(tx, userId, session.activeResourceId, true);
+  return active ? responseFor(session.id, active, resourceReadiness(active, session.activeVersionId), true) : null;
+}
+
+/** Each key on its own, so one stale or malformed key never costs the learner the rest of their workspace. */
+function parsedWorkspace(value: Record<string, unknown>): StudyWorkspace {
+  const workspace: StudyWorkspace = {};
+  const panel = studyWorkspaceSchema.shape.panel.safeParse(value.panel);
+  if (panel.success && panel.data !== undefined) workspace.panel = panel.data;
+  const canvas = studyWorkspaceSchema.shape.canvas.safeParse(value.canvas);
+  if (canvas.success && canvas.data) workspace.canvas = canvas.data;
+  const code = studyWorkspaceSchema.shape.code.safeParse(value.code);
+  if (code.success && code.data) workspace.code = code.data;
+  return workspace;
 }
 
 /** A course's playable lessons in study order; a video listed in two sections is studied once, and optional units are left out. */
@@ -620,9 +645,8 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
     if (!run[0] || !candidate[0]) throw new AuthError("INVALID_RECOMMENDATION_CONTEXT", "That recommendation is no longer available.", 422);
   }
 
+  // Material the learner is already studying reopens its session; anything new becomes a session of its own beside the others.
   let session = await findResumableSession(tx, userId, normalized.resourceId);
-  const current = await currentSessionInTransaction(tx, userId);
-  if (current && current.id !== session?.id) throw sessionInProgress();
   const resumedCourse = session ? courseOf(session) : null;
   if (resumedCourse) await assertCourseLessonUnlocked(tx, userId, resumedCourse.collectionId, normalized.resourceId);
   const resumed = Boolean(session);
@@ -694,15 +718,15 @@ export async function startOrResumeStudySession(userId: string, input: StartStud
   return response;
 }
 
-export async function getStudySession(userId: string, sessionId: string): Promise<StudySessionView> {
+/** `seen` records that the learner opened the session, so Sessions reopens it next time. */
+export async function getStudySession(userId: string, sessionId: string, options: { seen?: boolean } = {}): Promise<StudySessionView> {
   const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   return withUserTransaction(userId, async (tx) => {
     await pinReadyVersions(tx, normalizedSessionId);
-    const sessions = await tx
-      .select()
-      .from(studySessions)
-      .where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId)))
-      .limit(1);
+    const owned = and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"));
+    const sessions = options.seen
+      ? await tx.update(studySessions).set({ lastActiveAt: new Date() }).where(owned).returning()
+      : await tx.select().from(studySessions).where(owned).limit(1);
     const session = sessions[0];
     if (!session) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session is not available.", 404);
     const rows = await tx
@@ -811,6 +835,7 @@ export async function getStudySession(userId: string, sessionId: string): Promis
       }),
       related,
       course,
+      workspace: parsedWorkspace(session.workspace),
     };
   });
 }
@@ -1068,7 +1093,7 @@ async function recordProgress(tx: Transaction, userId: string, normalizedSession
     occurredAt: now,
     payload: { progressPct, watchedSeconds, milestone, runId: attribution?.[input.resourceId] ?? null, anchor: jsonAnchor(input.anchor), event: input.event },
   });
-  const shouldPersist = !stale && (eventInserted || input.event === "checkpoint" || masteryRequired);
+  const shouldPersist = !stale && (eventInserted || completing || input.event === "checkpoint" || masteryRequired);
   if (shouldPersist) {
     await tx
       .insert(userResourceProgress)
@@ -1098,11 +1123,14 @@ async function recordProgress(tx: Transaction, userId: string, normalizedSession
       });
     await tx.update(sessionResources).set({ lastAnchor: jsonAnchor(input.anchor), lastOpenedAt: now }).where(and(eq(sessionResources.studySessionId, normalizedSessionId), eq(sessionResources.resourceId, input.resourceId)));
     await tx.update(studySessions).set({ activeAnchor: jsonAnchor(input.anchor), lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(eq(studySessions.id, normalizedSessionId));
-    if (eventInserted && completing) {
-      await advanceCollectionEnrollment(tx, userId, input.resourceId);
-      // Last, so a finished session has made room before the next queued course starts.
-      if (await advanceSessionAfterCompletion(tx, userId, session, input.resourceId)) await startNextQueuedCollection(tx, userId);
-    }
+  }
+  // Every completion of the session's active lesson moves the session on, not only the first: a lesson finished once, then
+  // reopened and passed (or watched to the end) again, still hands over to the next. A repeat request no longer finds this
+  // lesson active and is refused above, so the session never moves twice.
+  if (completing && session.status !== "completed") {
+    await advanceCollectionEnrollment(tx, userId, input.resourceId);
+    // Last, so a finished session has made room before the next queued course starts.
+    if (await advanceSessionAfterCompletion(tx, userId, session, input.resourceId)) await startNextQueuedCollection(tx, userId);
   }
   if (eventInserted && input.event === "pause" && type === "video" && watchedSeconds < 30 && progressPct < 10 && now.getTime() - session.startedAt.getTime() < 120_000) {
     await insertStudyEvent(tx, { schemaVersion: 1, userId, studySessionId: normalizedSessionId, resourceId: input.resourceId, eventType: "resource.abandoned", actorType: "user", source: "web", idempotencyKey: `study:abandon:${normalizedSessionId}:${input.resourceId}`, occurredAt: now, payload: { progressPct, watchedSeconds, runId: attribution?.[input.resourceId] ?? null } });
@@ -1130,9 +1158,17 @@ export async function recordStudyQuestion(tx: Transaction, input: { userId: stri
   await insertStudyEvent(tx, { schemaVersion: 1, userId: input.userId, studySessionId: input.sessionId, resourceId: input.resourceId, resourceVersionId: input.resourceVersionId, eventType: "question.asked", actorType: "user", source: "web", correlationId: randomUUID(), idempotencyKey: `study:question:${input.sessionId}:${input.idempotencyKey}`, occurredAt: new Date(), payload: { question: input.question, anchor: { kind: "video", positionMs: input.positionMs } } });
 }
 
-export async function listStudySessions(userId: string): Promise<Array<{ id: string; title: string; status: SessionRow["status"]; mode: SessionRow["mode"]; lastActiveAt: string; resourceCount: number; progressPct: number; activeResource: { id: string; title: string; type: StudyType; youtubeId: string | null; readiness: StudyResourceReadiness } | null; route: string | null }>> {
+/**
+ * The learner's open sessions in their sidebar order (ones they never moved first, newest first, then the order they chose),
+ * or, for the Library, their finished sessions, most recently finished first.
+ */
+export async function listStudySessions(userId: string, shelf: "open" | "library" = "open"): Promise<StudySessionSummary[]> {
   return withUserTransaction(userId, async (tx) => {
-    const sessions = await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"))).orderBy(desc(studySessions.lastActiveAt)).limit(50);
+    const sessions = shelf === "open"
+      ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"])))
+        .orderBy(sql`${studySessions.position} ASC NULLS FIRST`, desc(studySessions.createdAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS)
+      : await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), eq(studySessions.status, "completed")))
+        .orderBy(desc(studySessions.endedAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS);
     const ids = sessions.map((session) => session.id);
     if (ids.length === 0) return [];
     const activeRows = await tx
@@ -1158,7 +1194,7 @@ export async function listStudySessions(userId: string): Promise<Array<{ id: str
     return sessions.map((session) => {
       const active = activeBySession.get(session.id) ?? null;
       const pct = active ? Number(progressByResource.get(active.id)?.progressPct ?? 0) : 0;
-      return { id: session.id, title: session.title ?? active?.title ?? "Study session", status: session.status, mode: session.mode, lastActiveAt: iso(session.lastActiveAt) ?? new Date(0).toISOString(), resourceCount: countBySession.get(session.id) ?? 0, progressPct: pct, activeResource: active, route: active ? routeFor(active.type, session.id) : null };
+      return { id: session.id, title: session.title ?? active?.title ?? "Study session", status: session.status, mode: sessionModeSchema.parse(session.mode), lastActiveAt: iso(session.lastActiveAt) ?? new Date(0).toISOString(), endedAt: iso(session.endedAt), resourceCount: countBySession.get(session.id) ?? 0, progressPct: pct, activeResource: active, route: active ? routeFor(active.type, session.id) : null, isCourse: courseOf(session) !== null, hasCode: Boolean(parsedWorkspace(session.workspace).code?.code.trim()) };
     });
   });
 }
@@ -1179,14 +1215,9 @@ async function startCollectionInTransaction(tx: Transaction, userId: string, nor
     .limit(1);
   const collection = collectionRows[0];
   if (!collection) throw new AuthError("COLLECTION_NOT_FOUND", "That collection is not available.", 404);
-  const current = await currentSessionInTransaction(tx, userId);
-  const currentCourse = current ? courseOf(current) : null;
-  // Continuing the course already in Sessions reopens it; anything else waits for that session to finish.
-  if (current && currentCourse?.collectionId === normalizedCollectionId && current.activeResourceId) {
-    const active = await loadResource(tx, userId, current.activeResourceId, true);
-    if (active) return responseFor(current.id, active, resourceReadiness(active, current.activeVersionId), true);
-  }
-  if (current) throw sessionInProgress();
+  // A course already in Sessions reopens where the learner left it.
+  const reopened = await reopenedSession(tx, userId, await findCourseSession(tx, userId, normalizedCollectionId));
+  if (reopened) return reopened;
   const lessons = await loadCourseLessons(tx, normalizedCollectionId);
   if (lessons.length > 0) return createCourseSession(tx, userId, collection, lessons);
   // A collection with no videos (papers only) keeps the single-material session.
@@ -1210,37 +1241,39 @@ async function startCollectionInTransaction(tx: Transaction, userId: string, nor
   return result;
 }
 
+/**
+ * What the session still has to finish, in study order: a course's unfinished lessons, or a single-material session's own
+ * material. Related material opened on the side never holds a session back. Empty means the session belongs in the Library.
+ */
+async function remainingSessionWork(tx: Transaction, userId: string, session: SessionRow): Promise<string[]> {
+  const course = courseOf(session);
+  const resourceIds = course
+    ? (await loadCourseLessons(tx, course.collectionId)).map((lesson) => lesson.resourceId)
+    : (await tx.select({ resourceId: sessionResources.resourceId }).from(sessionResources).where(and(eq(sessionResources.studySessionId, session.id), eq(sessionResources.role, "primary"))).orderBy(asc(sessionResources.position))).map((binding) => binding.resourceId);
+  const completed = await completedResourceIds(tx, userId, resourceIds);
+  return resourceIds.filter((resourceId) => !completed.has(resourceId));
+}
+
+/** Moves a finished session to the Library: it leaves Sessions, and a course's enrollment is finished with it. */
+async function completeSession(tx: Transaction, userId: string, session: SessionRow): Promise<void> {
+  const now = new Date();
+  await tx.update(studySessions).set({ status: "completed", endedAt: now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, session.id), eq(studySessions.userId, userId)));
+  // Every playable lesson is done, even if the course lists archived videos after them.
+  const course = courseOf(session);
+  if (course) await tx.update(collectionEnrollments).set({ status: "completed", progressPct: 100, completedAt: now, updatedAt: now }).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, course.collectionId)));
+}
+
 /** Finishing a lesson opens the next one in the same session; finishing the last one completes the session (and returns true). */
 async function advanceSessionAfterCompletion(tx: Transaction, userId: string, session: SessionRow, completedResourceId: string): Promise<boolean> {
-  const course = courseOf(session);
-  let remaining: string[];
-  if (course) {
-    const lessons = await loadCourseLessons(tx, course.collectionId);
-    const completed = await completedResourceIds(tx, userId, lessons.map((lesson) => lesson.resourceId));
-    remaining = lessons.flatMap((lesson) => completed.has(lesson.resourceId) ? [] : [lesson.resourceId]);
-  } else {
-    const bindings = await tx.select({ resourceId: sessionResources.resourceId }).from(sessionResources).where(eq(sessionResources.studySessionId, session.id));
-    const completed = await completedResourceIds(tx, userId, bindings.map((binding) => binding.resourceId));
-    remaining = bindings.flatMap((binding) => completed.has(binding.resourceId) ? [] : [binding.resourceId]);
-  }
-  const next = course && remaining[0] ? await loadResource(tx, userId, remaining[0]) : null;
+  const remaining = await remainingSessionWork(tx, userId, session);
+  const next = courseOf(session) && remaining[0] ? await loadResource(tx, userId, remaining[0]) : null;
   if (next) {
     await activateResourceInTransaction(tx, userId, session.id, next, "primary", undefined, { origin: "collection", correlationId: randomUUID(), intent: "start", requestKey: `course-advance:${completedResourceId}` });
     return false;
   }
   if (remaining.length > 0) return false;
-  const now = new Date();
-  await tx.update(studySessions).set({ status: "completed", endedAt: now, lastActiveAt: now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` }).where(and(eq(studySessions.id, session.id), eq(studySessions.userId, userId)));
-  // Every playable lesson is done, even if the course lists archived videos after them.
-  if (course) await tx.update(collectionEnrollments).set({ status: "completed", progressPct: 100, completedAt: now, updatedAt: now }).where(and(eq(collectionEnrollments.userId, userId), eq(collectionEnrollments.collectionId, course.collectionId)));
+  await completeSession(tx, userId, session);
   return true;
-}
-
-export async function findCurrentStudySession(userId: string): Promise<{ id: string } | null> {
-  return withUserTransaction(userId, async (tx) => {
-    const current = await currentSessionInTransaction(tx, userId);
-    return current ? { id: current.id } : null;
-  });
 }
 
 /** Whether a Discover course has lessons that can be studied, so its import button only shows when it will work. */
@@ -1251,13 +1284,15 @@ export async function isCourseImportable(slug: string, userId: string): Promise<
   });
 }
 
-/** Imports a whole Discover course as the learner's one session, starting at its first unfinished lesson. */
+/** Imports a whole Discover course as a session of its own, starting at its first unfinished lesson; importing it again reopens it. */
 export async function importCourseToSessions(userId: string, slug: string): Promise<StartStudySessionResponse> {
   const response = await withUserTransaction(userId, async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.course.import:${userId}`}, 0))`);
-    if (await currentSessionInTransaction(tx, userId)) throw sessionInProgress();
     const [collection] = await tx.select().from(collections).where(and(eq(collections.slug, slug), eq(collections.kind, "curated"), isNull(collections.ownerUserId))).limit(1);
     if (!collection) throw new AuthError("COURSE_NOT_AVAILABLE", "This course cannot be imported yet.", 404);
+    // The same lock as starting the course from the Library, so the two can never create it twice.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.collection.start:${userId}:${collection.id}`}, 0))`);
+    const reopened = await reopenedSession(tx, userId, await findCourseSession(tx, userId, collection.id));
+    if (reopened) return reopened;
     const lessons = await loadCourseLessons(tx, collection.id);
     if (lessons.length === 0) throw new AuthError("EMPTY_COLLECTION", "This course does not have any playable lessons yet.", 422);
     return createCourseSession(tx, userId, collection, lessons);
@@ -1293,4 +1328,87 @@ async function createCourseSession(tx: Transaction, userId: string, collection: 
   await tx.insert(collectionEnrollments).values({ userId, collectionId: collection.id, currentItemId: lesson.itemId, status: "active", progressPct: (completed.size / lessons.length) * 100 })
     .onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: lesson.itemId, status: "active", updatedAt: new Date() } });
   return responseFor(session.id, first, resourceReadiness(first, activated.resourceVersionId), false);
+}
+
+/** Where Sessions opens: the open session the learner was in last, if any. */
+export async function lastSeenSessionRoute(userId: string): Promise<string | null> {
+  const sessions = await listStudySessions(userId);
+  const open = sessions.filter((session) => session.route && (session.status === "active" || session.status === "paused"));
+  return open.toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))[0]?.route ?? null;
+}
+
+/** Renames a session; the title is the learner's from then on. */
+export async function renameStudySession(userId: string, sessionId: string, input: unknown): Promise<void> {
+  const { title } = updateStudySessionRequestSchema.parse(input);
+  await withUserTransaction(userId, async (tx) => {
+    const session = await lockOpenSession(tx, userId, sessionId);
+    await tx.update(studySessions).set({ title, updatedAt: new Date() }).where(and(eq(studySessions.id, session.id), eq(studySessions.userId, userId)));
+  });
+}
+
+/**
+ * Ends a session: it leaves Sessions. A finished one (every lesson of its course, or its own video, completed with its mastery
+ * check) moves to the Library; an unfinished one is let go. Its history (progress, notes, conversations, study events) stays
+ * either way: those feed Home, the plan and the learner model, and video progress and notes belong to the video.
+ */
+export async function endStudySession(userId: string, sessionId: string): Promise<void> {
+  await withUserTransaction(userId, async (tx) => {
+    const session = await lockOpenSession(tx, userId, sessionId);
+    if (session.status === "completed") return;
+    if ((await remainingSessionWork(tx, userId, session)).length === 0) {
+      await completeSession(tx, userId, session);
+      await startNextQueuedCollection(tx, userId);
+      return;
+    }
+    const now = new Date();
+    await tx.update(studySessions).set({ status: "abandoned", endedAt: session.endedAt ?? now, updatedAt: now, lockVersion: sql`${studySessions.lockVersion} + 1` })
+      .where(and(eq(studySessions.id, session.id), eq(studySessions.userId, userId)));
+  });
+  await invalidateHomeFeedCache(userId);
+}
+
+/** Stores the learner's sidebar order. Sessions left out keep theirs, after the listed ones. */
+export async function reorderStudySessions(userId: string, input: unknown): Promise<void> {
+  const { sessionIds } = reorderStudySessionsRequestSchema.parse(input);
+  await withUserTransaction(userId, async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study.sessions.order:${userId}`}, 0))`);
+    const owned = await tx.select({ id: studySessions.id }).from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.id, sessionIds), inArray(studySessions.status, ["active", "paused"])));
+    if (owned.length !== sessionIds.length) throw new AuthError("STUDY_SESSION_NOT_FOUND", "One of those sessions is no longer available.", 404);
+    const listed = `{${sessionIds.join(",")}}`;
+    await tx.execute(sql`
+      UPDATE study.study_sessions s SET position = o.ordinal::int, updated_at = now()
+      FROM unnest(${listed}::uuid[]) WITH ORDINALITY AS o(id, ordinal)
+      WHERE s.id = o.id AND s.user_id = ${userId}
+    `);
+    // Sessions not in the list (beyond the page the learner saw) move after the ones they ordered, keeping their own order.
+    await tx.execute(sql`
+      UPDATE study.study_sessions s SET position = ${sessionIds.length} + r.rank::int, updated_at = now()
+      FROM (
+        SELECT id, row_number() OVER (ORDER BY position ASC NULLS FIRST, created_at DESC, id DESC) AS rank
+        FROM study.study_sessions
+        WHERE user_id = ${userId} AND status IN ('active', 'paused') AND NOT (id = ANY(${listed}::uuid[]))
+      ) r
+      WHERE s.id = r.id
+    `);
+  });
+}
+
+/** Merges part of the workspace in: each autosave writes only the keys it owns. */
+export async function saveStudyWorkspace(userId: string, sessionId: string, input: unknown): Promise<void> {
+  const normalizedSessionId = studySessionIdSchema.parse(sessionId);
+  const patch = studyWorkspaceSchema.parse(input);
+  if (Object.keys(patch).length === 0) return;
+  await withUserTransaction(userId, async (tx) => {
+    const updated = await tx.update(studySessions)
+      .set({ workspace: sql`${studySessions.workspace} || ${JSON.stringify(patch)}::jsonb`, updatedAt: new Date() })
+      .where(and(eq(studySessions.id, normalizedSessionId), eq(studySessions.userId, userId), ne(studySessions.status, "abandoned")))
+      .returning({ id: studySessions.id });
+    if (updated.length === 0) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session is not available.", 404);
+  });
+}
+
+async function lockOpenSession(tx: Transaction, userId: string, sessionId: string): Promise<SessionRow> {
+  const session = await lockSession(tx, userId, sessionId);
+  if (session.status === "abandoned") throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session is not available.", 404);
+  return session;
 }

@@ -2,19 +2,14 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const STORAGE_KEY = "learnspace:chat-width";
 const MIN_WIDTH = 320;
 const STEP = 24;
 
 const clamp = (width: number) => Math.round(Math.min(Math.max(width, MIN_WIDTH), Math.max(MIN_WIDTH, window.innerWidth * 0.7)));
 const panelOf = (handle: HTMLElement | null) => handle?.parentElement ?? null;
 
-function save(width: number) {
-  try { localStorage.setItem(STORAGE_KEY, String(width)); } catch {}
-}
-
 /** The side panel's draggable left edge. It sets the width on the panel itself, so a drag re-renders only this handle. */
-export function PanelResizer({ label }: { label: string }) {
+export function PanelResizer({ label, storageKey }: { label: string; storageKey: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState<number>();
 
@@ -27,10 +22,16 @@ export function PanelResizer({ label }: { label: string }) {
 
   useEffect(() => {
     let saved = 0;
-    try { saved = Number(localStorage.getItem(STORAGE_KEY)); } catch {}
+    try { saved = Number(localStorage.getItem(storageKey)); } catch {}
     if (saved > 0) apply(saved);
-    else setWidth(Math.round(panelOf(ref.current)?.getBoundingClientRect().width ?? MIN_WIDTH));
-  }, [apply]);
+    // The panel is shared by every tool, so drop a width another tool's handle left on it.
+    else {
+      panelOf(ref.current)?.style.removeProperty("--panel-width");
+      setWidth(Math.round(panelOf(ref.current)?.getBoundingClientRect().width ?? MIN_WIDTH));
+    }
+  }, [apply, storageKey]);
+
+  const save = (value: number) => { try { localStorage.setItem(storageKey, String(value)); } catch {} };
 
   const current = () => panelOf(ref.current)?.getBoundingClientRect().width ?? MIN_WIDTH;
   return (

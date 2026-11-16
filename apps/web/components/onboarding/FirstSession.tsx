@@ -3,7 +3,7 @@
 import type { DiscoveryCard, DiscoveryHomeResponse } from "@learnspace/shared";
 import type { PreferredDuration } from "@learnspace/shared/onboarding";
 import { ArrowRight, Check, FileText } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
 
@@ -12,10 +12,9 @@ const defaultMinutes: Record<PreferredDuration, number> = { under_10_minutes: 15
 
 const length = (durationMs: number | null) => durationMs ? `${Math.max(1, Math.round(durationMs / 60_000))} min` : null;
 
-// Picks the learner's next video from their interests; it becomes their session and goes on the calendar.
+// Picks the learner's next video from their interests; it becomes a new session and goes on the calendar.
 export function FirstSession({ preferredDuration }: { preferredDuration: PreferredDuration }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [cards, setCards] = useState<DiscoveryCard[] | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [choice, setChoice] = useState<string | null>(null);
@@ -51,9 +50,9 @@ export function FirstSession({ preferredDuration }: { preferredDuration: Preferr
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            title: `${card.type === "video" ? "Watch" : "Read"} ${card.title}`.slice(0, 160),
+            // Linking the material lets the observer complete this exact item, and sets its title and type.
+            resourceId: card.resourceId,
             description: null,
-            kind: card.type === "video" ? "watch" : "read",
             startsAt: startsAt.toISOString(),
             endsAt: new Date(startsAt.getTime() + minutes * 60_000).toISOString(),
             allDay: false,
@@ -68,9 +67,8 @@ export function FirstSession({ preferredDuration }: { preferredDuration: Preferr
         body: JSON.stringify({ resourceId: card.resourceId, origin: "discover", recommendationRunId: card.runId || undefined, idempotencyKey: crypto.randomUUID(), correlationId: crypto.randomUUID() }),
       });
       if (!response.ok) throw new Error(`Study HTTP ${response.status}`);
-      // Sessions renders the new session in place, so on that page a refresh is enough.
-      if (pathname === "/app/sessions") router.refresh();
-      else router.replace("/app/sessions");
+      const { route } = await response.json() as { route: string };
+      router.replace(route);
     } catch {
       setError("We could not start that yet. Try again.");
       setBusy(false);

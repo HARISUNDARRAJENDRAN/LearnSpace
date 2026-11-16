@@ -81,12 +81,23 @@ export function getAuthDatabase(): Database {
   return getRuntime().authDb;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/**
+ * Whether `value` is a UUID, and so safe to write into a statement as a literal. A statement with bind parameters costs
+ * postgres.js two round trips (drizzle's queries are never prepared, so it describes each one first); one without, one.
+ */
+export const isUuid = (value: string): boolean => UUID.test(value);
+
 export async function withUserTransaction<T>(
   userId: string,
   operation: (tx: Transaction) => Promise<T>,
 ): Promise<T> {
   return getDatabase().transaction(async (tx) => {
-    await tx.execute(sql`select set_config('app.user_id', ${userId}, true)`);
+    // A user id that is a UUID, as every user id is, can only be its own literal, so it is sent without bind parameters, in
+    // one round trip (see isUuid). Anything else is still bound.
+    await tx.execute(isUuid(userId)
+      ? sql.raw(`select set_config('app.user_id', '${userId.toLowerCase()}', true)`)
+      : sql`select set_config('app.user_id', ${userId}, true)`);
     return operation(tx);
   });
 }

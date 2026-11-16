@@ -33,8 +33,11 @@ function mastery(instructions: string, user: string): unknown {
     const correct = /overshoot/i.test(user.split("<answer>")[1] ?? "");
     return { verdict: correct ? "correct" : "incorrect", feedback: correct ? "Right: big steps overshoot the minimum." : "Say what a big step does near the minimum." };
   }
-  const choice = (n: number) => ({ type: "choice", cite: [n], question: `Hard question ${n}: what does a much larger learning rate do?`, options: ["It overshoots the minimum", "It stops training", "It zeroes the gradient", "It removes momentum"], answer: 0, explanation: "Large steps jump past the minimum." });
-  const written = (n: number) => ({ type: "written", cite: [n], question: `Hard question ${n}: why can the loss grow?`, keyPoints: ["Steps overshoot the minimum"], modelAnswer: "Each step jumps past the minimum, so the loss can grow." });
+  if (instructions.startsWith("You write the learning analysis")) {
+    return { summary: "You traced how the step size drives overshooting.", strengths: ["Why a large learning rate overshoots"], mistakes: [], improvements: [], practice: [{ concept: "Learning rate", question: "What does a tiny learning rate cost?", answer: "Training crawls: many more steps to reach the minimum." }] };
+  }
+  const choice = (n: number) => ({ type: "choice", cite: [n], concept: "Learning rate", question: `Hard question ${n}: what does a much larger learning rate do?`, options: ["It overshoots the minimum", "It stops training", "It zeroes the gradient", "It removes momentum"], answer: 0, explanation: "Large steps jump past the minimum." });
+  const written = (n: number) => ({ type: "written", cite: [n], concept: "Loss growth", question: `Hard question ${n}: why can the loss grow?`, keyPoints: ["Steps overshoot the minimum"], modelAnswer: "Each step jumps past the minimum, so the loss can grow." });
   return { questions: [choice(1), choice(2), choice(3), written(3), written(4)] };
 }
 
@@ -55,16 +58,45 @@ const server = createServer((request, response) => {
     const instructions = Array.isArray(first) ? (first[0]?.text ?? "") : "";
     const content = input.find((item) => item.role === "user")?.content;
     const user = Array.isArray(content) ? content.map((part) => part.text ?? "").join("\n") : String(content ?? "");
-    const notes = () => {
-      const updating = /Actually change/.test(user.split("<learner>")[1] ?? "");
+    const developer = String(input.at(-1)?.role === "developer" ? input.at(-1)?.content ?? "" : "");
+    // The notes scribe: writes the first exchange up as a paragraph and a diagram, and rewrites it when asked to.
+    const scribe = () => {
+      const conversation = user.split("<conversation>")[1] ?? "";
       const fields = { after: null, done: null };
-      return { opener: "", say: "The learning rate controls the step size. I put the diagram in your notes.",
-        ops: updating ? [{ ...fields, action: "update", id: "p1", type: "paragraph", text: "Smaller steps can help avoid overshooting." }] : [
-          { ...fields, action: "insert", id: "p1", type: "paragraph", text: "The learning rate controls the step size." },
-          { ...fields, action: "insert", id: "d1", type: "diagram", text: JSON.stringify({ nodes: [{ id: "a", label: "Gradient", x: .15, y: .5 }, { id: "b", label: "Step", x: .85, y: .5 }], edges: [{ from: "a", to: "b", label: "learning rate" }] }) },
-        ], visual: { clear: false, seekMs: null, playback: null, marks: [{ id: "m1", kind: "arrow", points: [{ x: .2, y: .2 }, { x: .5, y: .5 }], text: "Learning rate", color: "cyan" }] } };
+      if (/Actually change/.test(conversation)) return { ops: [{ ...fields, action: "update", id: "p1", type: "paragraph", text: "Smaller steps can help avoid overshooting." }] };
+      if (user.includes("p1 |")) return { ops: [] };
+      return { ops: [
+        { ...fields, action: "insert", id: "p1", type: "paragraph", text: "The learning rate controls the step size [1:10]." },
+        { ...fields, action: "insert", id: "d1", type: "diagram", text: JSON.stringify({ nodes: [{ id: "a", label: "Gradient", x: .15, y: .5 }, { id: "b", label: "Step", x: .85, y: .5 }], edges: [{ from: "a", to: "b", label: "learning rate" }] }) },
+      ] };
     };
-    const text = JSON.stringify(instructions.startsWith("You are Luna") ? notes() : instructions.includes("mastery check") ? mastery(instructions, user) : { needsReasoning: false, ...(reply(user) as object) });
+    // The study guide: one of every kind of block the page renders, apart from a diagram (the scribe draws that one).
+    const guide = () => ({ blocks: [
+      { type: "heading", text: "Gradient descent [0:00]" },
+      { type: "paragraph", text: "**Gradient descent** minimises a loss by repeatedly stepping against its gradient, written $\\nabla L$." },
+      { type: "paragraph", text: "$$\\theta_{t+1} = \\theta_t - \\eta \\nabla L(\\theta_t)$$" },
+      { type: "eli5", text: "You are on a foggy hill and want the valley: feel which way is downhill and take a step." },
+      { type: "step", text: "Compute the gradient at the current weights." },
+      { type: "step", text: "Move the weights a small step the other way." },
+      { type: "example", text: "With $\\eta = 0.1$ and a gradient of 4, the weight moves by 0.4." },
+      { type: "table", text: "| Learning rate | Effect |\n|---|---|\n| Too small | Slow progress |\n| Too large | Overshoots [2:00] |" },
+      { type: "code", text: "python\nfor step in range(100):\n    w -= lr * grad(w)" },
+      { type: "takeaway", text: "The gradient gives the direction; the learning rate gives the size." },
+      { type: "aside", text: "Momentum and Adam are common refinements the video does not cover." },
+    ] });
+    // Luny out loud: plain text, with a drawing when asked for one; she listens to anything else.
+    const talker = () => {
+      const said = /\nLearner: (.*)$/.exec(user)?.[1] ?? null;
+      // The learner went quiet after words Luny let go by: she answers them now.
+      if (said === null && /they are waiting for you/.test(developer)) return "Right, so the step is the rate times the gradient.";
+      if (said === null) return "Hey! What are you working through right now?";
+      if (/power three/.test(said)) return "Two times two times two, so eight.";
+      if (/diagram/.test(said)) return "It sets the size of each step. [[seek 1:10]]";
+      if (/Actually change/.test(said)) return "Done, shorter now.";
+      if (/flaky server/.test(said)) return "It will, I keep it until it is saved.";
+      return "[[listen]]";
+    };
+    const text = instructions.startsWith("You are Luny") ? talker() : JSON.stringify(instructions.startsWith("You keep the shared notebook") ? scribe() : instructions.startsWith("You write the study guide") ? guide() : instructions.includes("mastery check") ? mastery(instructions, user) : { needsReasoning: false, ...(reply(user) as object) });
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const send = (event: Record<string, unknown>) => response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     send({ type: "response.created" });

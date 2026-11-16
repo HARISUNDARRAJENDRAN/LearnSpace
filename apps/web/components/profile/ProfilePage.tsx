@@ -1,4 +1,4 @@
-import { Check, CircleHelp, Clock3, Flame, Lock, MessageCircle, Settings, Target, Trophy } from "lucide-react";
+import { AlarmClock, Check, CircleHelp, Clock3, Flame, Lock, MessageCircle, Settings, Target, Trophy } from "lucide-react";
 import Link from "next/link";
 import { formatLearningDuration } from "../../lib/home/duration";
 import { LEVEL_XP, RANKS, STREAK_BONUS_XP, XP_RULES } from "../../lib/plan/levels";
@@ -17,6 +17,7 @@ const xpGroups = [
   { label: "Finish what you start", icon: Check, tone: "watch", activities: ["finish_video", "finish_paper"] as const },
   { label: "Stay curious", icon: MessageCircle, tone: "review", activities: ["question"] as const },
   { label: "Follow your plan", icon: Target, tone: "practice", activities: ["plan_watch", "plan_read", "plan_practice", "plan_review"] as const },
+  { label: "Keep to your schedule", icon: AlarmClock, tone: "watch", activities: ["on_time", "in_slot", "day_plan"] as const },
 ];
 
 export function ProfilePage({ user, profile }: { user: ProfileUser; profile: LearnerProfile }) {

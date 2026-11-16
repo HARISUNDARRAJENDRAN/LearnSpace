@@ -2,7 +2,7 @@
 
 import type { StudySessionResource } from "@learnspace/shared";
 import { type TutorDoubt, type TutorMessageView, tutorMessageViewSchema, type TutorStreamEvent, type TutorThreadView } from "@learnspace/shared/tutor";
-import { ArrowDown, ArrowUp, BookOpen, ChevronDown, Copy, CornerDownLeft, MessagesSquare, PencilLine, Play, RotateCcw, Search, SquarePen } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, Code, ChevronDown, Copy, CornerDownLeft, MessagesSquare, PencilLine, Play, RotateCcw, Search, SquarePen } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ChatComposer, SKILLS } from "./ChatComposer";
 import { type DoubtAnchor, type DoubtMark, DoubtPopup, DoubtThread, selectedAnchor, useDoubtHighlights } from "./Doubts";
@@ -10,6 +10,7 @@ import { LoadingState } from "./LoadingState";
 import { MathText } from "./MathText";
 import { SessionPanelHeader } from "./SessionPanelHeader";
 import { formatTime } from "./StudyWorkspace";
+import { codeLanguageLabels, type SessionCodeDraft } from "./tools";
 import { type TutorActions, TutorAnswer } from "./TutorBlocks";
 
 type Phase = "retrieving" | "thinking" | "reasoning" | "writing";
@@ -33,6 +34,11 @@ function whenLabel(iso: string): string {
 }
 
 type ChatSummary = { title: string; preview: string | null };
+
+function codeLabel(code: SessionCodeDraft): string {
+  const lines = code.code.trimEnd().split("\n").length;
+  return `${codeLanguageLabels[code.language]} · ${lines} ${lines === 1 ? "line" : "lines"}`;
+}
 
 /** Every conversation about this video, searchable; picking an earlier one makes it the current chat again. */
 function ChatList({ current, history, onOpenCurrent, onRestore }: { current: ChatSummary | null; history: TutorThreadView["history"]; onOpenCurrent: () => void; onRestore: (threadId: string) => void }) {
@@ -80,7 +86,13 @@ async function errorMessage(response: Response): Promise<string> {
   return `${body?.error?.message ?? "The tutor couldn't take that question right now."}${wait}`;
 }
 
-export function SessionChat({ sessionId, resource, currentMs, onSeek, onCollapse }: { sessionId: string; resource: StudySessionResource; currentMs: number; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
+/**
+ * The tutor for the session's video. The learner can share the session's code draft with a question; it is sent only while
+ * they keep sharing it on, and only for this session.
+ */
+export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCollapse }: { sessionId: string; resource: StudySessionResource; currentMs: number; code: SessionCodeDraft | null; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
+  const [shareCode, setShareCode] = useState(false);
+  const sharedCode = shareCode && code?.code.trim() ? code : null;
   const [thread, setThread] = useState<TutorThreadView | null>(null);
   const [messages, setMessages] = useState<Array<TutorMessageView | { id: string; invalid: true }>>([]);
   const [loadError, setLoadError] = useState(false);
@@ -172,7 +184,7 @@ export function SessionChat({ sessionId, resource, currentMs, onSeek, onCollapse
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, positionMs: currentMs, idempotencyKey: crypto.randomUUID(), ...(replyTo ? { replyTo: { messageId: replyTo.messageId, blockId: replyTo.blockId } } : {}), ...(doubt ? { doubt } : {}) }),
+        body: JSON.stringify({ question, positionMs: currentMs, idempotencyKey: crypto.randomUUID(), ...(replyTo ? { replyTo: { messageId: replyTo.messageId, blockId: replyTo.blockId } } : {}), ...(doubt ? { doubt } : {}), ...(sharedCode && !doubt ? { code: sharedCode } : {}) }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -423,6 +435,7 @@ export function SessionChat({ sessionId, resource, currentMs, onSeek, onCollapse
         {asking ? <DoubtPopup key={`${asking.anchor.messageId}:${asking.anchor.blockId}:${asking.anchor.quote}:${asking.anchor.occurrence}`} top={asking.top} left={asking.left} onClose={() => setAsking(null)} onAsk={(question) => { const doubt = { ...asking.anchor, id: crypto.randomUUID() }; setAsking(null); window.getSelection()?.removeAllRanges(); void send(question, null, doubt); }} /> : null}
         {atEnd || visible.length === 0 ? null : <div className="chat-jump-dock"><button className="chat-jump" type="button" aria-label="Jump to latest" title="Jump to latest" onClick={() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" })}><ArrowDown aria-hidden="true" /></button></div>}
       </div>
+      {code?.code.trim() ? <div className="chat-code-share"><button type="button" aria-pressed={shareCode} title={shareCode ? "The tutor sees your code with each question" : "Let the tutor see this session's code"} onClick={() => setShareCode(!shareCode)}><Code aria-hidden="true" /><span>{shareCode ? "Sharing your code" : "Share your code"}</span><small>{codeLabel(code)}</small></button></div> : null}
       <ChatComposer draft={draft} onDraft={setDraft} ready={ready} answering={reply?.prompt ?? null} onCancelAnswering={() => setReply(null)} pending={Boolean(pending)} reasoning={pending?.phase === "reasoning"} onSend={(text) => void send(text)} onStop={() => abortRef.current?.abort()} currentMs={currentMs} resourceTitle={resource.title} />
       </>}
     </div>

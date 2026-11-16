@@ -78,6 +78,45 @@ export async function loadActivityDays(tx: Transaction, userId: string, timezone
     FROM study.schedule_items
     WHERE user_id = ${userId} AND status IN ('planned', 'done') AND progress_pct > 0 AND starts_at <= now()
     GROUP BY 1, 2
+    UNION ALL
+    -- On time: a timed item planned in advance whose matching study (at least 5 min) began within 10 min of its start.
+    SELECT ${day(sql`item.starts_at`)}, 'on_time', count(*)::float8
+    FROM study.schedule_items AS item
+    WHERE item.user_id = ${userId} AND item.status IN ('planned', 'done') AND item.progress_pct > 0 AND NOT item.all_day
+      AND item.created_at <= item.starts_at AND item.starts_at <= now()
+      AND EXISTS (
+        SELECT 1 FROM study.focus_sessions AS focus
+        WHERE focus.user_id = item.user_id AND focus.duration_sec >= 300 AND focus.ended_at <= now()
+          AND focus.started_at BETWEEN item.starts_at - interval '10 minutes' AND item.starts_at + interval '10 minutes'
+          AND (item.resource_id IS NULL OR focus.resource_id = item.resource_id)
+      )
+    GROUP BY 1
+    UNION ALL
+    -- In slot: the share of a planned slot covered by matching study, capped by how much of the item the observer credited.
+    SELECT ${day(sql`slot.starts_at`)}, 'in_slot', sum(slot.share)::float8
+    FROM (
+      SELECT item.starts_at, least(1.0, item.progress_pct / 100.0, coalesce(sum(greatest(0, extract(epoch FROM least(focus.ended_at, item.ends_at) - greatest(focus.started_at, item.starts_at)))), 0)
+        / greatest(60, extract(epoch FROM item.ends_at - item.starts_at))) AS share
+      FROM study.schedule_items AS item
+      LEFT JOIN study.focus_sessions AS focus ON focus.user_id = item.user_id AND focus.ended_at <= now()
+        AND focus.started_at < item.ends_at AND focus.ended_at > item.starts_at
+        AND (item.resource_id IS NULL OR focus.resource_id = item.resource_id)
+      WHERE item.user_id = ${userId} AND item.status IN ('planned', 'done') AND item.progress_pct > 0 AND NOT item.all_day
+        AND item.ends_at IS NOT NULL AND item.created_at <= item.starts_at AND item.ends_at <= now()
+      GROUP BY item.id
+    ) AS slot
+    WHERE slot.share > 0
+    GROUP BY 1
+    UNION ALL
+    -- A day's whole plan: every item that day completed. Dismissed items do not count against it.
+    SELECT plan_day.day, 'day_plan', 1
+    FROM (
+      SELECT ${day(sql`starts_at`)} AS day, bool_and(status = 'done') AS all_done
+      FROM study.schedule_items
+      WHERE user_id = ${userId} AND status IN ('planned', 'done') AND starts_at <= now()
+      GROUP BY 1
+    ) AS plan_day
+    WHERE plan_day.all_done
   `);
   return [...rows].map((row) => ({ day: row.day, activity: row.activity, amount: Number(row.amount) }));
 }

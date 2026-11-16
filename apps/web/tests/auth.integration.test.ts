@@ -18,6 +18,7 @@ test(
       createEmailUser,
       createSession,
       findSessionByToken,
+      findSessionWithOnboarding,
       findUserById,
       resetPasswordWithChallenge,
       revokeSessionByToken,
@@ -85,6 +86,25 @@ test(
       const secondSession = await createSession(user.id, {}, "integration-secret");
       assert.equal((await findSessionByToken(session.token))?.user.id, user.id);
       assert.equal(await findSessionByToken("fake-session-cookie"), null);
+
+      // One statement reads the session, its user and onboarding; the session is touched only when last seen 5+ minutes ago.
+      const seen = async () => (await migrator<{ last_seen_at: Date | null }[]>`SELECT last_seen_at FROM identity.auth_sessions WHERE refresh_token_hash = ${hashToken(session.token)}`)[0]?.last_seen_at ?? null;
+      assert.deepEqual((await findSessionWithOnboarding(session.token))?.onboarding, { completedAt: null });
+      const touched = await seen();
+      assert.ok(touched);
+      await findSessionWithOnboarding(session.token);
+      assert.equal((await seen())?.getTime(), touched.getTime(), "a session seen moments ago is not written again");
+      await migrator`UPDATE identity.auth_sessions SET last_seen_at = now() - interval '10 minutes' WHERE refresh_token_hash = ${hashToken(session.token)}`;
+      await findSessionWithOnboarding(session.token);
+      assert.ok(((await seen())?.getTime() ?? 0) > touched.getTime() - 60_000, "a stale session is touched");
+      await migrator`UPDATE identity.user_settings SET onboarding_completed_at = now() WHERE user_id = ${user.id}`;
+      assert.ok((await findSessionWithOnboarding(session.token))?.onboarding?.completedAt instanceof Date);
+      await migrator`UPDATE identity.users SET status = 'suspended' WHERE id = ${user.id}`;
+      assert.equal(await findSessionWithOnboarding(session.token), null, "an inactive user has no session");
+      await migrator`UPDATE identity.users SET status = 'active' WHERE id = ${user.id}`;
+      await migrator`DELETE FROM identity.user_settings WHERE user_id = ${user.id}`;
+      assert.equal((await findSessionWithOnboarding(session.token))?.onboarding, null, "missing settings are told apart from unfinished onboarding");
+      await migrator`INSERT INTO identity.user_settings (user_id) VALUES (${user.id})`;
       await migrator`
         UPDATE identity.auth_sessions SET expires_at = now() - interval '1 minute'
         WHERE refresh_token_hash = ${hashToken(session.token)}

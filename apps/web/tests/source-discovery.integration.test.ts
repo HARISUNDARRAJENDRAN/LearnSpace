@@ -4,11 +4,6 @@ import test from "node:test";
 import postgres from "postgres";
 import { hashPassword } from "../lib/auth/crypto";
 
-/** Exa search results carrying the same videos a discovery batch fixture lists. */
-function exaResults(batch: { youtube: Record<string, unknown>[] } & Record<string, unknown>): Response {
-  return new Response(JSON.stringify({ results: batch.youtube.map((video) => ({ url: video.canonical_url, title: video.title, author: video.channel, highlights: video.evidence ?? [] })) }), { headers: { "content-type": "application/json" } });
-}
-
 const databaseAvailable = Boolean(
   process.env.DATABASE_URL && process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL,
 );
@@ -188,8 +183,144 @@ test(
   },
 );
 
+const videoId = (name: string) => name.padEnd(11, "x").slice(0, 11);
+
+/** Exa, the YouTube Data API, YouTube oEmbed and OpenAI, faked for the video agent; `calls` counts what each was asked. */
+function videoProviders(options: { exa: string[] | "fail"; youtube: string[]; picks: string[] }) {
+  const calls = { exa: 0, youtube: 0, openai: 0 };
+  const fake = (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    if (url.hostname === "api.exa.ai") {
+      calls.exa += 1;
+      if (options.exa === "fail") return new Response("{}", { status: 503 });
+      return Response.json({ results: options.exa.map((id) => ({ url: `https://www.youtube.com/watch?v=${id}`, title: `Exa ${id}`, author: "Exa Channel" })) });
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname.endsWith("/search")) {
+      calls.youtube += 1;
+      return Response.json({ items: options.youtube.map((id) => ({ id: { videoId: id }, snippet: { title: `Search ${id}`, channelTitle: "Search Channel" } })) });
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname.endsWith("/videos")) {
+      calls.youtube += 1;
+      const ids = url.searchParams.get("id")?.split(",") ?? [];
+      return Response.json({ items: ids.filter((id) => !id.startsWith("short")).map((id) => ({
+        id, snippet: { title: `Lesson ${id}`, channelTitle: `Channel ${id}`, description: "A clear lesson.", publishedAt: "2024-05-01T00:00:00Z", liveBroadcastContent: "none" },
+        contentDetails: { duration: "PT25M" }, statistics: { viewCount: "120000", likeCount: "4000" }, status: { embeddable: true, privacyStatus: "public" },
+      })).concat(ids.filter((id) => id.startsWith("short")).map((id) => ({
+        id, snippet: { title: `Short ${id}`, channelTitle: "Shorts", description: "", publishedAt: "2024-05-01T00:00:00Z", liveBroadcastContent: "none" },
+        contentDetails: { duration: "PT40S" }, statistics: { viewCount: "9", likeCount: "1" }, status: { embeddable: true, privacyStatus: "public" },
+      }))) });
+    }
+    if (url.hostname === "www.youtube.com" && url.pathname === "/oembed") {
+      return Response.json({ title: "Picked lesson", author_name: "Picked Channel", thumbnail_url: "https://i.ytimg.com/vi/x/hqdefault.jpg" });
+    }
+    if (url.hostname === "openai.test") {
+      calls.openai += 1;
+      const picks = options.picks.map((id, index) => ({ id, why: `Reason ${index + 1} for ${id}`, level: "beginner", format: "tutorial" }));
+      return Response.json({ choices: [{ message: { content: JSON.stringify({ picks }) } }] });
+    }
+    throw new Error(`unexpected fetch ${url.hostname}${url.pathname}`);
+  }) as typeof fetch;
+  return { calls, fake };
+}
+
+/** Points the agent at the fakes, and puts every key and the real fetch back afterwards. */
+async function withVideoProviders<T>(fake: typeof fetch, run: () => Promise<T>): Promise<T> {
+  const keys = ["EXA_API_KEY", "YOUTUBE_API_KEY", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const originalFetch = globalThis.fetch;
+  Object.assign(process.env, { EXA_API_KEY: "test-exa", YOUTUBE_API_KEY: " test-youtube", OPENAI_API_KEY: "test-openai", OPENAI_BASE_URL: "https://openai.test/v1" });
+  globalThis.fetch = fake;
+  try {
+    return await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
+}
+
 test(
-  "irrelevant catalog volume still queues refreshes and ranking intent creates a distinct run",
+  "the video agent answers with checked videos at once, then the model's ranked picks, which start Study and are shared",
+  { skip: databaseAvailable ? false : "database URLs are required" },
+  async () => {
+    const [{ createEmailUser }, { searchSources, getSourceDiscoveryRun, resolveSource }, { closeDb }] = await Promise.all([
+      import("../lib/auth/repository"),
+      import("../lib/source-discovery/service"),
+      import("@learnspace/db"),
+    ]);
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const learner = await createEmailUser({ email: `video-agent-${randomUUID()}@example.test`, displayName: "Video Agent Test", passwordHash: await hashPassword("video-agent-password-123") });
+    const other = await createEmailUser({ email: `video-agent-other-${randomUUID()}@example.test`, displayName: "Video Agent Other", passwordHash: await hashPassword("video-agent-password-123") });
+    const seed = randomUUID().replaceAll("-", "").slice(0, 6);
+    const shared = videoId(`a${seed}`);
+    const exaOnly = videoId(`b${seed}`);
+    const ytOnly = videoId(`c${seed}`);
+    const short = videoId(`short${seed}`);
+    const query = `Graph colouring ${seed}`;
+    const { calls, fake } = videoProviders({ exa: [exaOnly, shared, short], youtube: [shared, ytOnly], picks: [ytOnly, shared, videoId(`zz${seed}`), exaOnly] });
+    const createdResources: string[] = [];
+    try {
+      await withVideoProviders(fake, async () => {
+        const deferred: Array<() => Promise<void>> = [];
+        const first = await searchSources(learner.id, { mode: "learn", query, rankingIntent: "beginner_friendly", correlationId: randomUUID() }, (work) => { deferred.push(work); });
+        // Checked and ordered by agreement across searches; the short is gone, the model is still ranking.
+        assert.equal(first.status, "searching");
+        assert.equal(first.agent?.stage, "ranking");
+        assert.equal(first.agent?.checked, 3);
+        assert.deepEqual(first.candidates.map((candidate) => candidate.externalId), [shared, exaOnly, ytOnly]);
+        assert.equal(first.candidates[0]?.durationMs, 25 * 60_000);
+        assert.equal(first.candidates[0]?.viewCount, 120_000);
+        assert.equal(calls.openai, 0);
+
+        const [ranking] = deferred;
+        assert.equal(deferred.length, 1);
+        assert.ok(ranking && first.runId);
+        await ranking();
+        const ranked = await getSourceDiscoveryRun(learner.id, first.runId);
+        assert.equal(ranked.status, "completed");
+        assert.deepEqual(ranked.agent, { stage: "done", searches: 4, checked: 3, ranked: true });
+        // The model's order and reasons; an id it invented is dropped.
+        assert.deepEqual(ranked.candidates.map((candidate) => candidate.externalId), [ytOnly, shared, exaOnly]);
+        assert.equal(ranked.candidates[0]?.reason, `Reason 1 for ${ytOnly}`);
+        assert.equal(ranked.candidates[0]?.level, "beginner");
+        assert.equal(ranked.candidates[0]?.format, "tutorial");
+
+        // Picking one starts it the way any found video starts, linked to the run that recommended it.
+        const pickedUrl = ranked.candidates[0]?.canonicalUrl;
+        assert.ok(pickedUrl);
+        const preview = await resolveSource(learner.id, { mode: "learn", url: pickedUrl, correlationId: randomUUID(), recommendationRunId: first.runId });
+        createdResources.push(preview.resourceId);
+        const linked = await migrator<{ count: number }[]>`SELECT count(*)::int AS count FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${first.runId} AND resource_id = ${preview.resourceId}`;
+        assert.equal(linked[0]?.count, 1);
+
+        // The same search again reuses the run; another learner's gets the shared ranking without asking any provider.
+        const providerCalls = { ...calls };
+        const again = await searchSources(learner.id, { mode: "learn", query, rankingIntent: "beginner_friendly", correlationId: randomUUID() });
+        assert.equal(again.runId, first.runId);
+        const theirs = await searchSources(other.id, { mode: "learn", query, rankingIntent: "beginner_friendly", correlationId: randomUUID() }, () => assert.fail("a cached ranking has nothing left to do"));
+        assert.notEqual(theirs.runId, first.runId);
+        assert.equal(theirs.status, "completed");
+        assert.deepEqual(theirs.candidates.map((candidate) => candidate.externalId), [ytOnly, shared, exaOnly]);
+        assert.deepEqual(calls, providerCalls);
+      });
+    } finally {
+      for (const user of [learner, other]) {
+        await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
+        await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id = ${user.id})`;
+        await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
+      }
+      if (createdResources.length) await migrator`DELETE FROM catalog.resources WHERE id IN ${migrator(createdResources)}`;
+      await migrator`DELETE FROM identity.users WHERE id IN ${migrator([learner.id, other.id])}`;
+      await migrator.end({ timeout: 5 });
+      await closeDb();
+    }
+  },
+);
+
+test(
+  "a video search every provider fails is a terminal failed run, not one the picker polls forever",
   { skip: databaseAvailable ? false : "database URLs are required" },
   async () => {
     const [{ createEmailUser }, { searchSources }, { closeDb }] = await Promise.all([
@@ -198,410 +329,16 @@ test(
       import("@learnspace/db"),
     ]);
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
-    const user = await createEmailUser({ email: `source-ranking-${randomUUID()}@example.test`, displayName: "Source Ranking Test", passwordHash: await hashPassword("source-ranking-password-123") });
-    const resourceIds: string[] = [];
-    const runIds: string[] = [];
-    const originalFetch = globalThis.fetch;
-    const previousExaKey = process.env.EXA_API_KEY;
-    const query = `Variational autoencoders ${randomUUID().slice(0, 8)}`;
-    process.env.EXA_API_KEY = "test-exa-key";
-    globalThis.fetch = (async (input, init) => {
-      const requestUrl = String(input);
-      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
-      return exaResults({ youtube: [] });
-    }) as typeof fetch;
+    const user = await createEmailUser({ email: `video-agent-outage-${randomUUID()}@example.test`, displayName: "Video Agent Outage", passwordHash: await hashPassword("video-agent-password-123") });
+    const { fake } = videoProviders({ exa: "fail", youtube: [], picks: [] });
     try {
-      for (let index = 0; index < 6; index += 1) {
-        const resourceId = randomUUID();
-        const youtubeId = randomUUID().replaceAll("-", "").slice(0, 11);
-        resourceIds.push(resourceId);
-        await migrator`
-          INSERT INTO catalog.resources
-            (id, type, provider, external_id, canonical_url, title, description, visibility, status, quality_score, metadata)
-          VALUES
-            (${resourceId}, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${`Unrelated catalog lesson ${index}`}, 'A topic unrelated to the explicit source-picker query.', 'public', 'ready', 0.95, '{}'::jsonb)
-        `;
-        await migrator`
-          INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
-          VALUES (${resourceId}, ${youtubeId}, 'Unrelated Catalog Lab', 600000, now())
-        `;
-      }
-      const best = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-      const practical = await searchSources(user.id, { mode: "learn", query, rankingIntent: "practical", correlationId: randomUUID() });
-      runIds.push(best.runId ?? "", practical.runId ?? "");
-      assert.ok(best.runId);
-      assert.ok(practical.runId);
-      assert.notEqual(best.runId, practical.runId);
-      assert.equal(best.status, "searching");
-      assert.equal(practical.status, "searching");
-      const runs = await migrator<{ id: string; status: string; context_snapshot: Record<string, unknown> }[]>`
-        SELECT id, status, context_snapshot
-        FROM discovery.recommendation_runs
-        WHERE id IN ${migrator(runIds)}
-      `;
-      assert.ok(runs.every((run) => run.status === "running"));
-      assert.deepEqual(new Set(runs.map((run) => run.context_snapshot.rankingIntent)), new Set(["best_match", "practical"]));
-      const refreshes = await migrator<{ count: string }[]>`
-        SELECT count(*)::text AS count
-        FROM ops.outbox_events
-        WHERE user_id = ${user.id} AND event_type = 'discovery.refresh_requested'
-          AND payload->>'source' = 'source-picker'
-      `;
-      assert.equal(refreshes[0]?.count, "2");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExaKey;
-      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
-      if (runIds.some(Boolean)) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN ${migrator(runIds.filter(Boolean))}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
-      if (resourceIds.length > 0) {
-        await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(resourceIds)}`;
-        await migrator`DELETE FROM catalog.resources WHERE id IN ${migrator(resourceIds)}`;
-      }
-      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
-      await migrator.end({ timeout: 5 });
-      await closeDb();
-    }
-  },
-);
-
-test(
-  "python beginner regression keeps unrelated catalog rows out and returns qualified fast candidates",
-  { skip: databaseAvailable ? false : "database URLs are required" },
-  async () => {
-    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
-      import("../lib/auth/repository"),
-      import("../lib/source-discovery/service"),
-      import("@learnspace/db"),
-    ]);
-    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
-    const user = await createEmailUser({ email: `source-python-${randomUUID()}@example.test`, displayName: "Python Source Test", passwordHash: await hashPassword("source-python-password-123") });
-    const catalogResourceIds: string[] = [];
-    let runId = "";
-    const originalFetch = globalThis.fetch;
-    const previousExaKey = process.env.EXA_API_KEY;
-    const query = `python for beginners ${randomUUID().slice(0, 8)}`;
-    let seenQuery = "";
-    let seenLimit = 0;
-    process.env.EXA_API_KEY = "test-exa-key";
-    globalThis.fetch = (async (input, init) => {
-      const requestUrl = String(input);
-      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
-      const request = JSON.parse(String(init?.body ?? "{}")) as { query?: string; numResults?: number };
-      seenQuery = request.query ?? "";
-      seenLimit = request.numResults ?? 0;
-      return exaResults({
-        trace_id: "python-regression-test",
-        youtube: Array.from({ length: 30 }, (_, index) => {
-          const youtubeId = `A${index.toString(36).padStart(10, "0")}`;
-          return {
-            youtube_id: youtubeId,
-            canonical_url: `https://www.youtube.com/watch?v=${youtubeId}`,
-            title: `${query} - Lesson ${index + 1}`,
-            channel: "Fresh Python Lab",
-            confidence: 0.95 - index * 0.01,
-            learning_format: index % 2 === 0 ? "clear_explanations" : "hands_on",
-            estimated_level: "beginner",
-            has_implementation: index % 2 === 1,
-            evidence: ["beginner Python course"],
-          };
-        }),
-        arxiv: [],
+      await withVideoProviders(fake, async () => {
+        const result = await searchSources(user.id, { mode: "learn", query: `Topology ${randomUUID().slice(0, 6)}`, rankingIntent: "best_match", correlationId: randomUUID() }, () => assert.fail("nothing to rank"));
+        assert.equal(result.status, "failed");
+        assert.equal(result.candidates.length, 0);
+        assert.equal(result.refreshError?.code, "DISCOVERY_PROVIDER_UNAVAILABLE");
       });
-    }) as typeof fetch;
-    try {
-      const unrelatedTitles = [
-        "Meet Pi: The Minimalist, Self-Modifying Coding Agent",
-        "OpenAI Image Generation Tutorial",
-        "Kubernetes Networking Explained",
-        "React Component Patterns",
-        "Docker Containers for Developers",
-        "How to Add an Auto-Updater to ANY Python App",
-      ];
-      for (const [index, title] of unrelatedTitles.entries()) {
-        const resourceId = randomUUID();
-        const youtubeId = randomUUID().replaceAll("-", "").slice(0, 11);
-        catalogResourceIds.push(resourceId);
-        await migrator`
-          INSERT INTO catalog.resources
-            (id, type, provider, external_id, canonical_url, title, description, visibility, status, quality_score, metadata)
-          VALUES
-            (${resourceId}, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${title}, ${index === 5 ? "A production app walkthrough for experienced developers." : "A high quality lesson about a different subject."}, 'public', 'ready', 0.95, ${migrator.json(index === 5 ? {} : { estimatedLevel: "beginner" })})
-        `;
-        await migrator`
-          INSERT INTO catalog.video_details (resource_id, youtube_id, channel_title, duration_ms, published_at)
-          VALUES (${resourceId}, ${youtubeId}, 'Catalog Fixture Lab', 600000, now())
-        `;
-      }
-
-      let initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-      runId = initial.runId ?? "";
-      if (initial.candidates.length === 0) {
-        const deadline = Date.now() + 2_000;
-        while (!seenQuery && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-        runId = initial.runId ?? runId;
-      }
-      assert.equal(initial.status, "completed");
-      assert.equal(seenQuery, `videos on ${query}`);
-      assert.equal(seenLimit, 30);
-      assert.equal(initial.candidates.length, 30);
-      assert.ok(initial.candidates.every((candidate) => candidate.title.includes(query.slice(-8))));
-      assert.ok(initial.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
-      assert.ok(initial.candidates.every((candidate) => !candidate.resourceId));
-      const candidateOutbox = await migrator<{ id: string }[]>`
-        SELECT id
-        FROM ops.outbox_events
-        WHERE user_id = ${user.id} AND event_type = 'discovery.candidates_discovered'
-        ORDER BY created_at DESC
-        LIMIT 30
-      `;
-      assert.equal(candidateOutbox.length, 0);
-      const [pendingRun] = await migrator<{ status: string; context_snapshot: Record<string, unknown> }[]>`
-        SELECT status, context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
-      `;
-      assert.equal(pendingRun?.status, "completed");
-      assert.equal(pendingRun?.context_snapshot.qualifiedCatalogCandidateCount, 0);
-      const [persistedRun] = await migrator<{ status: string; refresh_status: string; diagnostics: Array<Record<string, unknown>> }[]>`
-        SELECT status, context_snapshot->>'refreshStatus' AS refresh_status, context_snapshot->'candidateDiagnostics' AS diagnostics
-        FROM discovery.recommendation_runs WHERE id = ${runId}
-      `;
-      assert.equal(persistedRun?.status, "completed");
-      assert.equal(persistedRun?.refresh_status, "not_needed");
-      assert.equal(persistedRun?.diagnostics.length, 30);
-      assert.ok(persistedRun?.diagnostics.every((diagnostic) => diagnostic.sourceOrigin === "external_refresh" && String(diagnostic.resourceId).startsWith("external:youtube:") && typeof diagnostic.queryRelevance === "number" && typeof diagnostic.qualificationReason === "string"));
-      const [polled] = await migrator<{ context_snapshot: Record<string, unknown> }[]>`
-        SELECT context_snapshot FROM discovery.recommendation_runs WHERE id = ${runId}
-      `;
-      const ephemeralCandidates = polled?.context_snapshot.ephemeralCandidates;
-      assert.ok(Array.isArray(ephemeralCandidates));
-      assert.equal(ephemeralCandidates.length, 30);
-      const polledResponse = await getSourceDiscoveryRun(user.id, runId);
-      assert.equal(polledResponse.status, "completed");
-      assert.equal(polledResponse.candidates.length, 30);
     } finally {
-      globalThis.fetch = originalFetch;
-      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExaKey;
-      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
-      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
-      if (catalogResourceIds.length > 0) {
-        await migrator`DELETE FROM catalog.video_details WHERE resource_id IN ${migrator(catalogResourceIds)}`;
-        await migrator`DELETE FROM catalog.resources WHERE id IN ${migrator(catalogResourceIds)}`;
-      }
-      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
-      await migrator.end({ timeout: 5 });
-      await closeDb();
-    }
-  },
-);
-
-test(
-  "interactive Rust discovery avoids false concept matches and returns qualified candidates without worker latency",
-  { skip: databaseAvailable ? false : "database URLs are required" },
-  async () => {
-    const [{ createEmailUser }, { searchSources, resolveSource }, { startOrResumeStudySession }, { closeDb }] = await Promise.all([
-      import("../lib/auth/repository"),
-      import("../lib/source-discovery/service"),
-      import("../lib/study/service"),
-      import("@learnspace/db"),
-    ]);
-    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
-    const user = await createEmailUser({ email: `source-fast-${randomUUID()}@example.test`, displayName: "Fast Source Test", passwordHash: await hashPassword("source-fast-password-123") });
-    const originalFetch = globalThis.fetch;
-    const previousExaKey = process.env.EXA_API_KEY;
-    const query = `Rust for beginners ${randomUUID().slice(0, 8)}`;
-    let seenQuery = "";
-    process.env.EXA_API_KEY = "test-exa-key";
-    globalThis.fetch = (async (input, init) => {
-      const requestUrl = String(input);
-      if (requestUrl.startsWith("https://www.youtube.com/oembed")) {
-        return new Response(JSON.stringify({ title: "Rust for Beginners - Full Course", thumbnail_url: "https://i.ytimg.com/vi/aB3dE5fG7hJ/hqdefault.jpg", author_name: "Fast Source Lab" }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
-      seenQuery = JSON.parse(String(init?.body ?? "{}")).query as string;
-      return exaResults({
-        trace_id: "instant-test",
-        youtube: [
-          { youtube_id: "aB3dE5fG7hJ", canonical_url: "https://www.youtube.com/watch?v=aB3dE5fG7hJ", title: `${query} - Full Course`, channel: "Fast Source Lab", confidence: 0.95, evidence: ["beginner Rust course"] },
-          { youtube_id: "bC4eF6gH8iK", canonical_url: "https://www.youtube.com/watch?v=bC4eF6gH8iK", title: `Learn ${query} step by step`, channel: "Fast Source Lab", confidence: 0.9, evidence: ["Rust fundamentals for beginners"] },
-          { youtube_id: "cD5fG7hI9jL", canonical_url: "https://www.youtube.com/watch?v=cD5fG7hI9jL", title: `Beginner projects — ${query}`, channel: "Fast Source Lab", confidence: 0.88, evidence: ["hands-on beginner Rust projects"] },
-        ],
-        arxiv: [],
-      });
-    }) as typeof fetch;
-    let runId = "";
-    let resourceId = "";
-    let sessionId = "";
-    try {
-      const result = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-      runId = result.runId ?? "";
-      assert.equal(result.status, "completed");
-      assert.equal(seenQuery, `videos on ${query}`);
-      assert.equal(result.candidates.length, 3);
-      assert.equal(result.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"), true);
-      assert.equal(result.candidates.every((candidate) => !candidate.resourceId), true);
-      const [run] = await migrator<{ canonical_concept_name: string | null }[]>`
-        SELECT context_snapshot->>'canonicalConceptName' AS canonical_concept_name
-        FROM discovery.recommendation_runs
-        WHERE id = ${runId}
-      `;
-      assert.equal(run?.canonical_concept_name, null);
-      const outbox = await migrator<{ event_type: string }[]>`
-        SELECT event_type FROM ops.outbox_events
-        WHERE user_id = ${user.id} AND aggregate_id = ${runId}
-      `;
-      assert.deepEqual(outbox.map((row) => row.event_type), []);
-      assert.equal(result.timings?.totalMs !== undefined, true);
-      const selected = result.candidates[0];
-      assert.ok(selected?.canonicalUrl);
-      const preview = await resolveSource(user.id, {
-        mode: "learn",
-        url: selected.canonicalUrl,
-        correlationId: randomUUID(),
-        recommendationRunId: result.runId ?? undefined,
-      });
-      resourceId = preview.resourceId;
-      const started = await startOrResumeStudySession(user.id, {
-        resourceId,
-        origin: "discover",
-        recommendationRunId: result.runId ?? undefined,
-        idempotencyKey: `source-fast-${randomUUID()}`,
-        correlationId: randomUUID(),
-      });
-      sessionId = started.sessionId;
-      assert.equal(started.route, `/app/study/video/${sessionId}`);
-      assert.equal(started.readiness, "preparing");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExaKey;
-      await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${user.id}`;
-      await migrator`DELETE FROM activity.activity_events WHERE user_id = ${user.id}`;
-      if (sessionId) {
-        await migrator`DELETE FROM study.session_resources WHERE study_session_id = ${sessionId}`;
-        await migrator`DELETE FROM study.study_sessions WHERE id = ${sessionId}`;
-      }
-      await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${user.id}`;
-      await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${user.id}`;
-      await migrator`DELETE FROM ops.idempotency_records WHERE user_id = ${user.id}`;
-      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
-      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
-      if (resourceId) {
-        await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${resourceId}`;
-        await migrator`DELETE FROM catalog.resources WHERE id = ${resourceId}`;
-      }
-      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
-      await migrator.end({ timeout: 5 });
-      await closeDb();
-    }
-  },
-);
-
-test(
-  "a provider result arriving after the response budget completes the existing partial run",
-  { skip: databaseAvailable ? false : "database URLs are required" },
-  async () => {
-    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
-      import("../lib/auth/repository"),
-      import("../lib/source-discovery/service"),
-      import("@learnspace/db"),
-    ]);
-    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
-    const user = await createEmailUser({ email: `source-late-${randomUUID()}@example.test`, displayName: "Late Source Test", passwordHash: await hashPassword("source-late-password-123") });
-    const originalFetch = globalThis.fetch;
-    const previousExaKey = process.env.EXA_API_KEY;
-    const query = `Rust ownership for beginners ${randomUUID().slice(0, 8)}`;
-    process.env.EXA_API_KEY = "test-exa-key";
-    globalThis.fetch = (async (input, init) => {
-      const requestUrl = String(input);
-      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
-      await new Promise((resolve) => setTimeout(resolve, 650));
-      return exaResults({
-        trace_id: "late-source-test",
-        youtube: [
-          { youtube_id: "dE7fG9hJ1kL", canonical_url: "https://www.youtube.com/watch?v=dE7fG9hJ1kL", title: `${query} — Full Course`, channel: "Late Source Lab", confidence: 0.95, evidence: ["Rust ownership for beginners"] },
-          { youtube_id: "eF8gH0iK2mN", canonical_url: "https://www.youtube.com/watch?v=eF8gH0iK2mN", title: `Learn ${query} step by step`, channel: "Late Source Lab", confidence: 0.92, evidence: ["beginner ownership lesson"] },
-          { youtube_id: "fG9hI1jK3nP", canonical_url: "https://www.youtube.com/watch?v=fG9hI1jK3nP", title: `Practical ${query} projects`, channel: "Late Source Lab", confidence: 0.9, evidence: ["hands-on Rust ownership"] },
-        ],
-        arxiv: [],
-      });
-    }) as typeof fetch;
-    let runId = "";
-    try {
-      const initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-      runId = initial.runId ?? "";
-      assert.equal(initial.status, "searching");
-      assert.equal(initial.candidates.length, 0);
-      const deadline = Date.now() + 3_000;
-      let completed: Awaited<ReturnType<typeof getSourceDiscoveryRun>> | null = null;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 75));
-        completed = await getSourceDiscoveryRun(user.id, runId);
-        if (completed.status === "completed") break;
-      }
-      assert.equal(completed?.status, "completed");
-      assert.equal(completed?.candidates.length, 3);
-      assert.ok(completed?.candidates.every((candidate) => candidate.sourceOrigin === "external_refresh"));
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExaKey;
-      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
-      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
-      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
-      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
-      await migrator.end({ timeout: 5 });
-      await closeDb();
-    }
-  },
-);
-
-test(
-  "a fast provider failure reaches a terminal run instead of polling forever",
-  { skip: databaseAvailable ? false : "database URLs are required" },
-  async () => {
-    const [{ createEmailUser }, { getSourceDiscoveryRun, searchSources }, { closeDb }] = await Promise.all([
-      import("../lib/auth/repository"),
-      import("../lib/source-discovery/service"),
-      import("@learnspace/db"),
-    ]);
-    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
-    const user = await createEmailUser({ email: `source-failure-${randomUUID()}@example.test`, displayName: "Provider Failure Test", passwordHash: await hashPassword("source-failure-password-123") });
-    const originalFetch = globalThis.fetch;
-    const previousExaKey = process.env.EXA_API_KEY;
-    const query = `Rust error handling ${randomUUID().slice(0, 8)}`;
-    process.env.EXA_API_KEY = "test-exa-key";
-    globalThis.fetch = (async (input, init) => {
-      const requestUrl = String(input);
-      if (requestUrl !== "https://api.exa.ai/search") return originalFetch(input, init);
-      assert.equal(JSON.parse(String(init?.body ?? "{}")).query, `videos on ${query}`);
-      return new Response("{}", { status: 503 });
-    }) as typeof fetch;
-    let runId = "";
-    try {
-      const initial = await searchSources(user.id, { mode: "learn", query, rankingIntent: "best_match", correlationId: randomUUID() });
-      runId = initial.runId ?? "";
-      assert.equal(initial.status, "searching");
-      const deadline = Date.now() + 2_000;
-      let terminal: Awaited<ReturnType<typeof getSourceDiscoveryRun>> | null = null;
-      while (Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 25));
-        terminal = await getSourceDiscoveryRun(user.id, runId);
-        if (terminal.status === "failed") break;
-      }
-      assert.equal(terminal?.status, "failed");
-      assert.equal(terminal?.refreshError?.code, "DISCOVERY_PROVIDER_UNAVAILABLE");
-    } finally {
-      globalThis.fetch = originalFetch;
-      if (previousExaKey === undefined) delete process.env.EXA_API_KEY;
-      else process.env.EXA_API_KEY = previousExaKey;
-      await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${user.id}`;
-      if (runId) await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id = ${runId}`;
       await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
       await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
       await migrator.end({ timeout: 5 });

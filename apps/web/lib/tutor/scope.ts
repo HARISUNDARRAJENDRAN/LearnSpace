@@ -2,12 +2,16 @@
 export type TutorScope =
   | { kind: "near" | "at"; fromMs: number; toMs: number; focusMs: number; key: string }
   | { kind: "watched"; fromMs: 0; toMs: number; focusMs: null; key: string }
-  | { kind: "whole" | "default"; fromMs: null; toMs: null; focusMs: number | null; key: string }
+  | { kind: "whole" | "course" | "default"; fromMs: null; toMs: null; focusMs: number | null; key: string }
   | { kind: "out_of_range"; requestedMs: number; key: string };
 
 const NEAR = /\b(just (?:said|says|now|explained|mentioned|showed|did|covered)|right now|this part|this bit|this section|this step|at this point|a (?:moment|second|minute) ago|currently)\b/i;
 const WATCHED = /\b(so far|until now|up to (?:here|now|this point)|i(?:'ve| have) (?:watched|seen)|what i(?:'ve)? (?:watched|seen))\b/i;
 const WHOLE = /\b(entire|whole|full|complete|overall)\b[^.?!]{0,30}\b(video|lecture|lesson|talk|course|episode)\b|\bsummar(?:y|ize|ise) (?:of )?(?:the|this) (?:video|lecture|lesson|talk)\b/i;
+// "What am I going to learn here?", "give me an overview", "how will this help me": the whole arc, not the current moment.
+const OVERVIEW = /\b(?:overview|big picture|road ?map|outline of|what (?:am i|will i|are we|do i|would i|should i)(?: going to| gonna)? (?:study|learn|cover|be (?:studying|learning))|what(?:'s| is) (?:this|the) (?:video|lecture|lesson|talk|course|playlist|series)(?: all)? about|how (?:can|will|would|does|is) (?:this|it) (?:benefit|help|useful))/i;
+// The course or playlist as a whole, asked from one of its videos.
+const COURSE = /\b(?:playlist|course|series|curriculum|syllabus|(?:all|rest of|the other|other|next|upcoming|later|remaining) (?:the )?(?:videos|lessons|lectures|episodes|parts))\b/i;
 const CLOCK = /\b(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\b/;
 const MINUTE = /\b(?:minute|min)\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:minutes?|mins?)\s+(?:in|mark)\b/i;
 // Captions may run a little past the reported length; asking far past it is a mistake to clarify.
@@ -23,7 +27,8 @@ export function requestedTimeMs(question: string): number | null {
   return minute ? Number(minute[1] ?? minute[2]) * 60_000 : null;
 }
 
-export function resolveScope(question: string, positionMs: number, durationMs: number | null): TutorScope {
+/** `inCourse`: the video is one lesson of a course or playlist, so a question about "the playlist" is about all of it. */
+export function resolveScope(question: string, positionMs: number, durationMs: number | null, inCourse = false): TutorScope {
   const requested = requestedTimeMs(question);
   if (requested !== null) {
     if (durationMs && requested > durationMs + RANGE_SLACK_MS) return { kind: "out_of_range", requestedMs: requested, key: "out_of_range" };
@@ -31,7 +36,8 @@ export function resolveScope(question: string, positionMs: number, durationMs: n
   }
   if (WATCHED.test(question)) return { kind: "watched", fromMs: 0, toMs: positionMs, focusMs: null, key: `watched:${Math.floor(positionMs / 60_000)}` };
   if (NEAR.test(question)) return { kind: "near", fromMs: Math.max(0, positionMs - 150_000), toMs: positionMs + 15_000, focusMs: positionMs, key: `near:${Math.floor(positionMs / 30_000)}` };
-  if (WHOLE.test(question)) return { kind: "whole", fromMs: null, toMs: null, focusMs: null, key: "whole" };
+  if (inCourse && COURSE.test(question)) return { kind: "course", fromMs: null, toMs: null, focusMs: null, key: "course" };
+  if (WHOLE.test(question) || OVERVIEW.test(question)) return { kind: "whole", fromMs: null, toMs: null, focusMs: null, key: "whole" };
   return { kind: "default", fromMs: null, toMs: null, focusMs: positionMs, key: `default:${Math.floor(positionMs / 120_000)}` };
 }
 

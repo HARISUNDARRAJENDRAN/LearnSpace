@@ -1,9 +1,9 @@
 import { type AutomaticSpeechRecognitionPipeline, ModelRegistry, pipeline } from "@huggingface/transformers";
-import { DICTATION_MODEL } from "./voice/models";
+import { LISTEN_MODEL, listenGeneration } from "./speech-model";
 
 // Moonshine Base (61M parameters) is the most accurate speech model of its size that transformers.js runs in the browser.
 // int8 weights keep the one-time download near 62 MB; transformers.js keeps them in the browser's Cache API after that, and audio never leaves the device.
-const { model: MODEL, options: OPTIONS } = DICTATION_MODEL;
+const { model: MODEL, options: OPTIONS } = LISTEN_MODEL;
 
 export type SpeechRequest = { type: "load" } | { type: "transcribe"; audio: Float32Array };
 /** `download` reports progress only for a real first-time download; reading the cached model is silent. */
@@ -26,7 +26,7 @@ self.onmessage = async (event: MessageEvent<SpeechRequest>) => {
     asr ??= create();
     const transcribe = await asr;
     if (event.data.type === "load") return reply({ type: "ready" });
-    const output = await transcribe(event.data.audio);
+    const output = await transcribe(event.data.audio, listenGeneration(event.data.audio.length));
     reply({ type: "text", text: (Array.isArray(output) ? output[0]?.text ?? "" : output.text).trim() });
   } catch (error) {
     // A failed download is retried on the next request instead of being cached as broken.

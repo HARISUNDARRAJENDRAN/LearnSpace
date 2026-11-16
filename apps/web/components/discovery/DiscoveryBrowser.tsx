@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ListVideo, Plus, Workflow } from "lucide-react";
+import { ArrowLeft, Check, Clock, ListVideo, Workflow } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { CurriculumCategory, CurriculumItem } from "../../lib/discovery/curriculum";
 import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
@@ -22,21 +22,22 @@ function TheatreCard({ item, step, selected, onSelect }: { item: CurriculumItem;
   );
 }
 
-function AddToLibraryButton({ slug }: { slug: string }) {
-  const router = useRouter();
-  const [state, setState] = useState<"idle" | "adding" | "error">("idle");
+/** Keeps the whole course in the Library's Watch later, to continue in Sessions whenever the learner is ready. */
+function WatchLaterButton({ slug, initiallySaved }: { slug: string; initiallySaved: boolean }) {
+  const [state, setState] = useState<"idle" | "adding" | "saved" | "error">(initiallySaved ? "saved" : "idle");
   async function add() {
     setState("adding");
     try {
       const response = await fetch("/api/v1/library/courses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug }) });
       if (!response.ok) throw new Error("Adding the course failed");
-      router.push("/app/library");
+      setState("saved");
     } catch {
       setState("error");
     }
   }
+  if (state === "saved") return <Link className="discover-theatre-add" href="/app/library"><Check aria-hidden="true" />In Watch later</Link>;
   return <>
-    <button type="button" className="discover-theatre-add" onClick={() => void add()} disabled={state === "adding"}><Plus aria-hidden="true" />{state === "adding" ? "Adding…" : "Add this to Library"}</button>
+    <button type="button" className="discover-theatre-add" onClick={() => void add()} disabled={state === "adding"}><Clock aria-hidden="true" />{state === "adding" ? "Adding…" : "Watch later"}</button>
     {state === "error" ? <p className="discover-theatre-error" role="alert">This course could not be added. Try again.</p> : null}
   </>;
 }
@@ -49,11 +50,9 @@ function ImportToSessionsButton({ slug }: { slug: string }) {
     setState("importing");
     try {
       const response = await fetch("/api/v1/study-sessions/import", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug }) });
-      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
-      if (!response.ok) throw new Error(body?.error?.message ?? "This course could not be imported. Try again.");
-      router.push("/app/sessions");
-      // Refresh the shell too: with a session in progress the header's add button steps aside.
-      router.refresh();
+      const body = await response.json().catch(() => null) as { route?: string; error?: { message?: string } } | null;
+      if (!response.ok || !body?.route) throw new Error(body?.error?.message ?? "This course could not be imported. Try again.");
+      router.push(body.route);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "This course could not be imported. Try again.");
       setState("error");
@@ -65,7 +64,7 @@ function ImportToSessionsButton({ slug }: { slug: string }) {
   </>;
 }
 
-export function DiscoveryBrowser({ category, initialStep, canImport }: { category: CurriculumCategory; initialStep: number; canImport: boolean }) {
+export function DiscoveryBrowser({ category, initialStep, canImport, inWatchLater }: { category: CurriculumCategory; initialStep: number; canImport: boolean; inWatchLater: boolean }) {
   const lessons = category.items.filter((item) => item.url);
   const [step, setStep] = useState(Math.min(Math.max(initialStep, 1), lessons.length));
   const hero = useRef<HTMLDivElement>(null);
@@ -100,7 +99,7 @@ export function DiscoveryBrowser({ category, initialStep, canImport }: { categor
           <h2>{item.title}</h2>
           <div className="discover-theatre-actions">
             {canImport ? <ImportToSessionsButton slug={category.slug} /> : null}
-            <AddToLibraryButton slug={category.slug} />
+            <WatchLaterButton slug={category.slug} initiallySaved={inWatchLater} />
           </div>
         </div>
       </div>

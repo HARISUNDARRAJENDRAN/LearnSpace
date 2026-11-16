@@ -22,8 +22,9 @@ export function normalizeQuestion(question: string): string {
  * Only a learner's first question in a thread, on a public video, is shared: later turns depend on their own
  * conversation and learner record. Short questions only, so an instruction smuggled into a long one is not shared.
  */
+/** An answer about a course draws on that course's lesson list, which another course holding the same video doesn't share. */
 export function cacheEligible(input: { firstTurn: boolean; replying: boolean; publicSource: boolean; question: string; scopeKind: string }): boolean {
-  return input.firstTurn && !input.replying && input.publicSource && input.question.length <= 200 && input.scopeKind !== "out_of_range";
+  return input.firstTurn && !input.replying && input.publicSource && input.question.length <= 200 && input.scopeKind !== "out_of_range" && input.scopeKind !== "course";
 }
 
 export async function findCachedAnswer(tx: Transaction, versionId: string, scopeKey: string, question: string, vector: number[] | null): Promise<CachedAnswer | null> {

@@ -14,7 +14,7 @@ export function openAiBaseUrl(): string {
 }
 
 // One chat completion whose reply must match `jsonSchema` (OpenAI strict structured output), then `parser`.
-export async function structuredCompletion<T>(input: { name: string; system: string; user: string; jsonSchema: Record<string, unknown>; parser: z.ZodType<T> }): Promise<T> {
+export async function structuredCompletion<T>(input: { name: string; system: string; user: string; jsonSchema: Record<string, unknown>; parser: z.ZodType<T>; reasoningEffort?: "minimal" | "low" | "medium"; timeoutMs?: number }): Promise<T> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
   const response = await fetch(`${openAiBaseUrl()}/chat/completions`, {
@@ -22,13 +22,14 @@ export async function structuredCompletion<T>(input: { name: string; system: str
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      reasoning_effort: "low",
+      reasoning_effort: input.reasoningEffort ?? "low",
       messages: [{ role: "system", content: input.system }, { role: "user", content: input.user }],
       response_format: { type: "json_schema", json_schema: { name: input.name, strict: true, schema: input.jsonSchema } },
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(input.timeoutMs ?? 45_000),
   });
-  if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}`);
+  // The error body names the bad parameter (never the key), which is what a 400 needs to be fixed.
+  if (!response.ok) throw new Error(`OpenAI HTTP ${response.status}: ${(await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 300)}`);
   const body = await response.json() as { choices?: Array<{ message?: { content?: string | null } }> };
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("OpenAI returned no content");

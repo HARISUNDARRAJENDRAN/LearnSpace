@@ -8,7 +8,7 @@ import { updateStudyProgress } from "../../../../../../lib/study/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Finishing a video writes its mastery check after the response, which takes as long as the mastery route.
+// Playing or finishing a video writes its mastery check after the response, which takes as long as the mastery route.
 export const maxDuration = 150;
 
 type Context = { params: Promise<{ sessionId: string }> };
@@ -19,9 +19,16 @@ export async function POST(request: Request, context: Context) {
     const { sessionId } = await context.params;
     const input = studyProgressRequestSchema.parse(await readJson(request));
     const progress = await updateStudyProgress(session.user.id, sessionId, input);
-    // Written while the learner is still on the last frame, so the check is usually ready when they open it. A
-    // paper, a passed lesson or a spent budget simply has nothing to write; the learner can still start it by hand.
-    if (input.event === "complete") after(() => startMastery(session.user.id, sessionId).then(() => undefined, () => undefined));
+    // The first set is written while the video plays (from the first play, or the first checkpoint after the transcript
+    // lands), locked until the video ends, so it is ready when the learner opens it; finishing writes it if it isn't yet.
+    // A paper, a passed lesson, a set already there or a spent budget simply has nothing to write.
+    if (input.event === "complete" || input.event === "play" || input.event === "checkpoint") {
+      after(async () => {
+        const rest: Promise<void>[] = [];
+        await startMastery(session.user.id, sessionId, { ahead: input.event !== "complete", keepAlive: (work) => rest.push(work) }).catch(() => undefined);
+        await Promise.all(rest);
+      });
+    }
     return NextResponse.json(progress);
   } catch (error) {
     return authErrorResponse(error);

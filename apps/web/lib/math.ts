@@ -1,6 +1,6 @@
 // The models write math as LaTeX: $…$ inline and $$…$$ on its own line (\(…\) and \[…\] also work). A single $ only
 // opens math before a non-space and closes after one, never before a digit, so "$5 and $10" stays money.
-const MATH = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?=[^\s$])[^$\n]*?[^\s$\\]\$(?!\d))/;
+export const MATH = /(\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)|\$(?=[^\s$])[^$\n]*?[^\s$\\]\$(?!\d))/;
 // Any opener left in plain text is a formula still being written. Formulas often start with a digit, so a price at the
 // very end of a streaming answer waits too, until the text runs on past it.
 const OPEN = /\$\$|\\\(|\\\[|\$(?=[^\s$])/g;

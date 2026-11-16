@@ -51,7 +51,7 @@ export async function submitTranscript(userId: string, resourceId: string, input
       .where(eq(transcriptRequests.resourceId, resourceId))
       .limit(1);
     // Only captions for a URL the signer handed out are accepted, in the language it chose.
-    if (!request || request.status !== "signed") throw new AuthError("TRANSCRIPT_NOT_REQUESTED", "This video is not waiting for captions.", 409);
+    if (request?.status !== "signed") throw new AuthError("TRANSCRIPT_NOT_REQUESTED", "This video is not waiting for captions.", 409);
     if (input.language !== request.language) throw new AuthError("TRANSCRIPT_LANGUAGE_MISMATCH", "Those captions are in a different language.", 422);
     // YouTube's caption events come in time order; a shuffled or rewound copy was not downloaded from it.
     if (segments.some(([startMs], index) => index > 0 && startMs < segments[index - 1]![0])) {

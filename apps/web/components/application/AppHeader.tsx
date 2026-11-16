@@ -27,15 +27,13 @@ function contextLabel(pathname: string): string {
 }
 
 type AppHeaderProps = {
-  /** Sessions holds one thing at a time, so adding a video waits until the current session is finished. */
-  canStartNew: boolean;
   onMenu: () => void;
   viewMode: ApplicationViewMode;
   onViewModeChange: (mode: ApplicationViewMode) => void;
   search: ReactNode;
 };
 
-export function AppHeader({ canStartNew, onMenu, viewMode, onViewModeChange, search }: AppHeaderProps) {
+export function AppHeader({ onMenu, viewMode, onViewModeChange, search }: AppHeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [sourceDiscoveryOpen, setSourceDiscoveryOpen] = useState(false);
@@ -53,11 +51,10 @@ export function AppHeader({ canStartNew, onMenu, viewMode, onViewModeChange, sea
           <button className="application-menu-button" type="button" onClick={onMenu} aria-label="Open navigation">
             <Menu aria-hidden="true" />
           </button>
-          {canStartNew ? (
-            <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
-              <span><Plus aria-hidden="true" /></span>
-            </button>
-          ) : null}
+          {/* Always here: with a session in progress, the search still runs and a pick says to finish that session first. */}
+          <button className="application-header-create" type="button" ref={sourceTriggerRef} onClick={() => setSourceDiscoveryOpen(true)} aria-label={mode === "research" ? "Start research" : "Start learning"} title={mode === "research" ? "Start research" : "Start learning"}>
+            <span><Plus aria-hidden="true" /></span>
+          </button>
           {isDiscover ? (
             <div className="discover-page-header">
               {pathname === "/app/discover" ? <h1>Discover</h1> : <span className="application-header-title">Discover</span>}

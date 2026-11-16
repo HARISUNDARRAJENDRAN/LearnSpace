@@ -4,7 +4,7 @@ import type { GlobalSearchResult } from "../../lib/search/service";
 import { BrainCircuit, Clock3, FileText, FolderOpen, History, LoaderCircle, PlayCircle, Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useState, type RefObject } from "react";
-import type { RecentSession } from "./AppSidebar";
+import { useSessions } from "./sessions";
 
 type Mode = "learn" | "research";
 type Option = { key: string; title: string; subtitle: string; kind: GlobalSearchResult["kind"] | "recent" | "session-recent"; thumbnailUrl?: string | null; activate: () => void };
@@ -41,7 +41,8 @@ function OptionIcon({ option }: { option: Option }) {
   return <span className="header-search-icon"><Icon aria-hidden="true" /></span>;
 }
 
-export function HeaderSearch({ inputRef, mode, recentSessions }: { inputRef: RefObject<HTMLInputElement | null>; mode: Mode; recentSessions: RecentSession[] }) {
+export function HeaderSearch({ inputRef, mode }: { inputRef: RefObject<HTMLInputElement | null>; mode: Mode }) {
+  const { sessions } = useSessions();
   const router = useRouter();
   const listId = useId();
   const [open, setOpen] = useState(false);
@@ -49,7 +50,6 @@ export function HeaderSearch({ inputRef, mode, recentSessions }: { inputRef: Ref
   const [results, setResults] = useState<GlobalSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
-  const [blocked, setBlocked] = useState(false);
   const [active, setActive] = useState(0);
   const [recent, setRecent] = useState<string[]>([]);
   const trimmed = query.trim();
@@ -95,8 +95,6 @@ export function HeaderSearch({ inputRef, mode, recentSessions }: { inputRef: Ref
   async function study(result: GlobalSearchResult) {
     if (trimmed.length >= 2) remember(trimmed);
     const response = await fetch("/api/v1/study-sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ resourceId: result.resourceId, origin: mode === "research" ? "research" : "discover", idempotencyKey: crypto.randomUUID(), correlationId: crypto.randomUUID() }) });
-    // Sessions holds one thing at a time, so a new start waits for the current session.
-    if (response.status === 409) return setBlocked(true);
     const body = response.ok ? await response.json() as { route?: unknown } : null;
     if (typeof body?.route !== "string") return setError(true);
     close();
@@ -118,7 +116,7 @@ export function HeaderSearch({ inputRef, mode, recentSessions }: { inputRef: Ref
     }))
     : [
       { label: "Recent searches", options: recent.map((item) => ({ key: `recent-${item}`, title: item, subtitle: "", kind: "recent" as const, activate: () => { setQuery(item); inputRef.current?.focus(); } })) },
-      { label: "Jump back in", options: recentSessions.filter((session) => session.route).slice(0, 3).map((session) => ({ key: `session-${session.id}`, title: session.title ?? "Untitled session", subtitle: "Study session", kind: "session-recent" as const, activate: () => go(session.route!) })) },
+      { label: "Jump back in", options: sessions.filter((session) => session.route).toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)).slice(0, 3).map((session) => ({ key: `session-${session.id}`, title: session.title ?? "Untitled session", subtitle: "Study session", kind: "session-recent" as const, activate: () => go(session.route!) })) },
     ];
   const visible = sections.filter((section) => section.options.length);
   const options = visible.flatMap((section) => section.options);
@@ -194,7 +192,6 @@ export function HeaderSearch({ inputRef, mode, recentSessions }: { inputRef: Ref
             ))}
           </div>
           <div aria-live="polite">
-            {blocked ? <p className="header-search-empty">Finish your current session first. It&apos;s waiting in <a href="/app/sessions">Sessions</a>.</p> : null}
             {trimmed.length >= 2 ? (
               error ? <p className="header-search-empty">Search is unavailable right now.</p>
                 : !loading && !results.length ? <p className="header-search-empty">No matches for “{trimmed}”. Try a topic, a unit or a channel name.</p> : null

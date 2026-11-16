@@ -53,3 +53,11 @@ export function layoutDay(items: { item: PlanItem; start: number; end: number }[
   if (cluster.length) flush();
   return out;
 }
+
+// Ticks the learner just made, shown before the plan refetches.
+export type Ticks = ReadonlyMap<string, boolean>;
+
+export function withTicks(items: PlanItem[], ticks: Ticks): PlanItem[] {
+  if (ticks.size === 0) return items;
+  return items.map((item) => ticks.has(item.id) ? { ...item, status: ticks.get(item.id) ? "done" : "planned" } : item);
+}

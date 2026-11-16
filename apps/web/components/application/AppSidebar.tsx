@@ -2,36 +2,25 @@
 
 import {
   Bookmark,
-  BrainCircuit,
-  CalendarDays,
+  Brain,
   Check,
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
-  FileText,
   FileSearch,
   House,
   Compass,
   LibraryBig,
-  MoreHorizontal,
   Plus,
   Search,
-  Video,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { SidebarSessions } from "./SidebarSessions";
 
 type NavigationMode = "learn" | "research";
 type IconComponent = typeof House;
-
-export type RecentSession = {
-  id: string;
-  title: string;
-  mode: string;
-  route: string | null;
-  activeResource: { type: "video" | "paper" } | null;
-};
 
 type ApplicationUser = {
   email: string;
@@ -40,7 +29,6 @@ type ApplicationUser = {
 
 type AppSidebarProps = {
   user: ApplicationUser;
-  recentSessions: RecentSession[];
   isOpen: boolean;
   isCollapsed: boolean;
   onClose: () => void;
@@ -59,29 +47,23 @@ const researchNavigation = [
   { label: "Saved Papers", href: "/app/library", icon: Bookmark, tone: "saved" },
 ] as const;
 
+// Sessions leads this list as its own expandable tree (SidebarSessions).
 const sharedNavigation = [
-  { label: "Sessions", href: "/app/sessions", icon: CalendarDays, tone: "sessions" },
   { label: "Library", href: "/app/library", icon: LibraryBig, tone: "library" },
-  { label: "Second Brain", href: "/app/second-brain", icon: BrainCircuit, tone: "brain" },
+  { label: "Second Brain", href: "/app/second-brain", icon: Brain, tone: "brain" },
 ] as const;
 
 function isActivePath(pathname: string, href: string): boolean {
   if (href === "/app") return pathname === href;
-  // Sessions opens the current study session, so it stays lit inside one.
-  return pathname.startsWith(href) || (href === "/app/sessions" && pathname.startsWith("/app/study/"));
+  return pathname.startsWith(href);
 }
 
 function modeFromPath(pathname: string): NavigationMode {
   return pathname.startsWith("/app/research") ? "research" : "learn";
 }
 
-function sessionIcon(session: RecentSession): IconComponent {
-  return session.activeResource?.type === "video" ? Video : FileText;
-}
-
 export function AppSidebar({
   user,
-  recentSessions,
   isOpen,
   isCollapsed,
   onClose,
@@ -92,13 +74,8 @@ export function AppSidebar({
   const router = useRouter();
   const [mode, setMode] = useState<NavigationMode>(() => modeFromPath(pathname));
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const [recentOpen, setRecentOpen] = useState(true);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
-  const visibleRecentSessions = useMemo(
-    () => recentSessions.filter((session) => (mode === "research" ? session.mode === "research" : session.mode !== "research")).slice(0, 5),
-    [mode, recentSessions],
-  );
 
   useEffect(() => {
     if (pathname.startsWith("/app/research")) setMode("research");
@@ -144,6 +121,22 @@ export function AppSidebar({
     return () => window.removeEventListener("keydown", handleShortcut);
   }, [onOpenSearch]);
 
+  // The sidebar is fixed beside the page; a wheel over it scrolls its own lists, never the page behind it.
+  const sidebarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const onWheel = (event: WheelEvent) => {
+      for (let node = event.target instanceof Element ? event.target : null; node && node !== sidebar; node = node.parentElement) {
+        const { overflowY } = getComputedStyle(node);
+        if ((overflowY === "auto" || overflowY === "scroll") && node.scrollHeight > node.clientHeight) return;
+      }
+      event.preventDefault();
+    };
+    sidebar.addEventListener("wheel", onWheel, { passive: false });
+    return () => sidebar.removeEventListener("wheel", onWheel);
+  }, []);
+
   function selectMode(nextMode: NavigationMode) {
     setMode(nextMode);
     setModeMenuOpen(false);
@@ -153,7 +146,7 @@ export function AppSidebar({
   return (
     <>
       <button className={`application-backdrop ${isOpen ? "is-open" : ""}`} type="button" aria-label="Close navigation" onClick={onClose} />
-      <aside className={`application-sidebar ${isOpen ? "is-open" : ""} ${isCollapsed ? "is-collapsed" : ""}`} aria-label="Application navigation">
+      <aside ref={sidebarRef} className={`application-sidebar ${isOpen ? "is-open" : ""} ${isCollapsed ? "is-collapsed" : ""}`} aria-label="Application navigation">
         <div className="application-workspace-row">
           <div className="application-workspace-identity">
             <span className="application-workspace-avatar" aria-hidden="true">{firstName.slice(0, 1).toUpperCase()}</span>
@@ -210,24 +203,11 @@ export function AppSidebar({
           </div>
           <div className="application-nav-section">
             <p className="application-nav-label">WORKSPACE</p>
+            <SidebarSessions mode={mode} onClose={onClose} />
             {sharedNavigation.map(({ label, href, icon: Icon, tone }) => {
               const active = isActivePath(pathname, href) && !(mode === "research" && label === "Library");
               return <NavLink key={href} href={href} label={label} Icon={Icon} tone={tone} active={active} onClose={onClose} />;
             })}
-          </div>
-          <div className={`application-recent-section ${recentOpen ? "is-open" : ""}`}>
-            <button className="application-nav-section-heading" type="button" aria-expanded={recentOpen} onClick={() => setRecentOpen((open) => !open)}>
-              <span>RECENT {mode === "research" ? "RESEARCH" : "CONTEXT"}</span>
-              <span className="application-nav-section-actions"><MoreHorizontal aria-hidden="true" /><ChevronDown aria-hidden="true" /></span>
-            </button>
-            {recentOpen ? (
-              <div className="application-recent-list">
-                {visibleRecentSessions.length > 0 ? visibleRecentSessions.map((session) => {
-                  const Icon = sessionIcon(session);
-                  return <Link className="application-recent-link" data-nav-tone={session.activeResource?.type ?? "session"} href={session.route ?? "/app/sessions"} key={session.id} onClick={onClose}><span className="application-nav-icon" aria-hidden="true"><Icon /></span><span>{session.title}</span></Link>;
-                }) : <p className="application-recent-empty">No recent {mode === "research" ? "research" : "sessions"} yet.</p>}
-              </div>
-            ) : null}
           </div>
         </nav>
 

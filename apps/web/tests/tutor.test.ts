@@ -178,3 +178,25 @@ test("a call billed on Fast processing costs twice the Standard rates", () => {
   assert.ok(Math.abs(standard - (1_000 * 0.10 + 1_000 * 0.01 + 100 * 0.50) / 1e6) < 1e-12);
   assert.ok(Math.abs(estimateCostUsd({ ...usage, fast: true }) - 2 * standard) < 1e-12);
 });
+
+test("an overview question is about the whole video, and one about the playlist is about the course", () => {
+  const question = "before starting this video, can you give me a quite an overview of what is this playlist is all about? like what am i going to study in this playlists, and how it can benefit me?";
+  assert.equal(resolveScope(question, 0, 3_600_000, true).kind, "course");
+  // Outside a course the same question is still about the whole video, not the moment the learner is at.
+  assert.equal(resolveScope(question, 0, 3_600_000, false).kind, "whole");
+  assert.equal(resolveScope("give me an overview", 0, 3_600_000).kind, "whole");
+  assert.equal(resolveScope("what am I going to learn in this lecture?", 0, 3_600_000).kind, "whole");
+  assert.equal(resolveScope("what do the other videos cover?", 0, 3_600_000, true).kind, "course");
+  assert.equal(resolveScope("what is a course correction in control theory?", 0, 3_600_000, false).kind, "default");
+});
+
+test("a summary of a very long lecture draws on every part of it", () => {
+  // 24 hours of 1-minute chunks, about 260 tokens each.
+  const candidates = Array.from({ length: 1_440 }, (_, index) => ({ chunkId: `c${index}`, ordinal: index, startMs: index * 60_000, endMs: index * 60_000 + 59_000, tokenCount: 260, lexical: 0, vector: null }));
+  const whole = resolveScope("give me an overview of the whole lecture", 0, 86_400_000);
+  const { chosen } = selectEvidence(rankCandidates(candidates, whole), whole);
+  const hours = new Set(chosen.map((item) => Math.floor((item.startMs ?? 0) / 3_600_000)));
+  assert.ok(chosen.length >= 30, `${chosen.length} passages`);
+  assert.ok(Math.max(...hours) >= 23 && Math.min(...hours) === 0, "from the first hour to the last");
+  assert.ok(hours.size >= 20, `${hours.size} of 24 hours heard from`);
+});

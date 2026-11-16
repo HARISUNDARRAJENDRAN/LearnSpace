@@ -291,6 +291,8 @@ test("the video tutor answers from the transcript, grades checks, persists the t
     await migrator`DELETE FROM discovery.user_concept_affinity WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id IN ${migrator(users)}`;
     await migrator`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN (${videoId}, ${bareVideoId})`;
+    // The local worker may have embedded the chunks while the test ran.
+    await migrator`DELETE FROM retrieval.chunk_embeddings WHERE chunk_id IN (SELECT id FROM retrieval.resource_chunks WHERE resource_version_id = ${versionId})`;
     await migrator`DELETE FROM retrieval.resource_chunks WHERE resource_version_id = ${versionId}`;
     await migrator`DELETE FROM catalog.resource_versions WHERE id = ${versionId}`;
     await migrator`DELETE FROM ops.transcript_requests WHERE resource_id IN (${videoId}, ${bareVideoId})`;

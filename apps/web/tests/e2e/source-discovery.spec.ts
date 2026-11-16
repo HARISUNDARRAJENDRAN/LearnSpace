@@ -71,10 +71,15 @@ test.afterAll(async () => {
     await db`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (SELECT id FROM discovery.recommendation_runs WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM discovery.recommendation_runs WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM study.schedule_items WHERE user_id IN ${db(userIds)}`;
+    // Opening a video writes its lesson guide into the learner's notes, whatever the video.
+    await db`DELETE FROM study.video_notes WHERE user_id IN ${db(userIds)}`;
+    await db`DELETE FROM study.mastery_checks WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM identity.users WHERE id IN ${db(userIds)}`;
   }
   await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(resourceIds)}`;
   await db`DELETE FROM catalog.paper_details WHERE resource_id IN ${db(resourceIds)}`;
+  await db`DELETE FROM study.mastery_checks WHERE resource_id IN ${db(resourceIds)}`;
+  await db`DELETE FROM study.video_notes WHERE resource_id IN ${db(resourceIds)}`;
   await db`DELETE FROM catalog.resources WHERE id IN ${db(resourceIds)}`;
   await db.end({ timeout: 5 });
   database = null;
@@ -100,8 +105,8 @@ async function completeOnboarding(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "I know the basics" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  // Onboarding is saved once the video picker shows; leaving it lands where the app sends a new learner.
-  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  // Onboarding is saved once the goal question shows; leaving it lands where the app sends a new learner.
+  await expect(page.getByRole("heading", { name: "What's your goal right now?" })).toBeVisible();
   await page.goto("/onboarding");
   await expect(page).toHaveURL(/\/app/);
 }

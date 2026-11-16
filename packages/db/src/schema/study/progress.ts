@@ -86,7 +86,7 @@ export const scheduleItems = studySchema.table(
     resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "set null" }),
     // The kind of study, which also colours the item on the calendar.
     kind: text("kind").notNull(),
-    // suggested (agent proposal) -> planned -> done, or dismissed. Only the observer marks items done.
+    // suggested (agent proposal) -> planned -> done, or dismissed. The observer marks items done from evidence; learners may tick their own.
     status: text("status").notNull().default("planned"),
     source: text("source").notNull().default("learner"),
     progressPct: real("progress_pct").notNull().default(0),

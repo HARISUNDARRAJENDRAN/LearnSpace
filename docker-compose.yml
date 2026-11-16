@@ -45,8 +45,11 @@ services:
       DB_STATEMENT_TIMEOUT_MS: "3000"
       DB_LOCK_TIMEOUT_MS: "500"
       APP_URL: "${APP_URL:-http://localhost:3000}"
-      # The source picker searches Exa directly for instant results.
+      # The source picker's video agent searches Exa and YouTube, and checks each hit with the YouTube Data API; it shares
+      # the worker's daily YouTube quota cap (ops.api_usage_daily).
       EXA_API_KEY: "${EXA_API_KEY:-}"
+      YOUTUBE_API_KEY: "${YOUTUBE_API_KEY:-}"
+      YOUTUBE_DAILY_QUOTA_CAP: "${YOUTUBE_DAILY_QUOTA_CAP:-9000}"
       # The study tutor (GPT-6 Luna) and its query embeddings.
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       AUTH_SECRET: "${AUTH_SECRET:-local-development-auth-secret-change-me-please}"
@@ -62,6 +65,9 @@ services:
       KV_REST_API_READ_ONLY_TOKEN: "${KV_REST_API_READ_ONLY_TOKEN:-}"
       RESEND_API_KEY: "${RESEND_API_KEY:-}"
       EMAIL_FROM: "${EMAIL_FROM:-LearnSpace <noreply@example.com>}"
+      # Coding practice: the runner executes and grades learner code; the app only sends it code and problem ids.
+      RUNNER_URL: http://runner:4100
+      RUNNER_TOKEN: "${RUNNER_TOKEN:-local-runner-token-change-me}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -90,6 +96,38 @@ services:
       timeout: 5s
       retries: 18
       start_period: 120s
+    restart: unless-stopped
+
+  # The sandbox image the runner starts a container from for every execution; this service only builds it.
+  sandbox:
+    image: learnspace-sandbox:1
+    build:
+      context: services/runner/sandbox
+    entrypoint: ["true"]
+    restart: "no"
+
+  # The code runner: executes learner code in sandbox containers and grades it against hidden tests only it can read.
+  runner:
+    mem_limit: ${RUNNER_MEMORY_LIMIT:-512m}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    environment:
+      RUNNER_TOKEN: "${RUNNER_TOKEN:-local-runner-token-change-me}"
+      DATABASE_RUNNER_URL: postgres://learnspace_runner:learnspace_runner@postgres:5432/learnspace
+      SANDBOX_IMAGE: learnspace-sandbox:1
+      # gVisor (runsc) isolates sandboxes further where the host has it installed.
+      SANDBOX_RUNTIME: "${SANDBOX_RUNTIME:-}"
+      RUNNER_CONCURRENCY: "${RUNNER_CONCURRENCY:-4}"
+    volumes:
+      # Sandboxes are sibling containers on the host's Docker.
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      postgres:
+        condition: service_healthy
+      sandbox:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Discovery worker: finds videos and papers through Exa and keeps YouTube metrics fresh.

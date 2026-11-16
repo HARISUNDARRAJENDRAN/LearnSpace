@@ -10,6 +10,8 @@ import { DISCOVERY_FEATURE_VERSION, DISCOVERY_STRATEGY_VERSION, type DiscoveryRe
 import { loadDiscoveryProfile, loadDiscoveryResources } from "../discovery/service";
 import { getSourceCandidatePool, setSourceCandidatePool } from "./cache";
 import { instantDiscovery } from "@learnspace/shared/exa-discovery";
+import { getRedisValue, setRedisValue } from "../discovery/cache";
+import { gatherVideos, type PickedVideo, pickVideos, provisionalPicks, type VideoIntent } from "./video-agent";
 
 const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
 const sourceCoverageMinimum = SOURCE_DISCOVERY_MIN_RESULTS;
@@ -180,6 +182,7 @@ async function findReusableRun(tx: Transaction, userId: string, mode: SourceDisc
 }
 
 async function responseForRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect, userId: string): Promise<SourceDiscoverySearchResponse> {
+  if (run.contextSnapshot.agent === VIDEO_AGENT) return videoAgentResponse(run);
   const candidateRows = await tx.select().from(recommendationCandidates).where(eq(recommendationCandidates.recommendationRunId, run.id)).orderBy(recommendationCandidates.finalRank, recommendationCandidates.candidateRank).limit(sourceResultLimit);
   const refreshedResourceIds = arrayValue(run.contextSnapshot.refreshedResourceIds).filter((id): id is string => typeof id === "string");
   const poolResourceIds = [...new Set([...candidateRows.map((row) => row.resourceId), ...refreshedResourceIds])];
@@ -704,6 +707,186 @@ async function searchSourcesFast(userId: string, input: SourceDiscoverySearchReq
   });
 }
 
+
+// The video agent (video-agent.ts) answers Learn-mode searches: it searches wide, checks every hit against YouTube, and a model
+// picks and explains the best dozen. Its runs keep the picks in their context snapshot, in the agent's order.
+const VIDEO_AGENT = "video-agent-v1";
+const videoPickTtlSeconds = 6 * 60 * 60;
+const videoPickMemory = new Map<string, { value: StoredVideoPicks; until: number }>();
+type StoredVideoPicks = { picks: PickedVideo[]; searches: number; checked: number };
+
+function videoPickKey(intent: VideoIntent, query: string): string {
+  return `ls:v1:video-agent:${createHash("sha256").update(`${intent}\n${query.toLowerCase()}`).digest("hex")}`;
+}
+
+/** Model-ranked picks are shared across learners for a few hours: the same search should not pay for the same ranking twice. */
+async function cachedVideoPicks(intent: VideoIntent, query: string): Promise<StoredVideoPicks | null> {
+  const key = videoPickKey(intent, query);
+  const memory = videoPickMemory.get(key);
+  if (memory && memory.until > Date.now()) return memory.value;
+  const stored = await getRedisValue(key).catch(() => null);
+  if (!stored) return null;
+  try {
+    const value = JSON.parse(stored) as StoredVideoPicks;
+    return Array.isArray(value.picks) && value.picks.length > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeVideoPicks(intent: VideoIntent, query: string, value: StoredVideoPicks): Promise<void> {
+  const key = videoPickKey(intent, query);
+  videoPickMemory.set(key, { value, until: Date.now() + videoPickTtlSeconds * 1_000 });
+  if (videoPickMemory.size > 256) videoPickMemory.delete(videoPickMemory.keys().next().value as string);
+  await setRedisValue(key, JSON.stringify(value), videoPickTtlSeconds).catch(() => undefined);
+}
+
+/** Spends today's YouTube quota (shared with the worker; YouTube resets at midnight Pacific); false once the cap is reached. */
+async function reserveYoutubeQuota(userId: string, units: number): Promise<boolean> {
+  const configured = Number(process.env.YOUTUBE_DAILY_QUOTA_CAP ?? 9_000);
+  const cap = Number.isFinite(configured) && configured > 0 ? configured : 9_000;
+  // The conflict clause caps a day already counted; a day's first spend is checked here.
+  if (units > cap) return false;
+  try {
+    return await withUserTransaction(userId, async (tx) => {
+      const rows = await tx.execute(sql`
+        INSERT INTO ops.api_usage_daily (provider, usage_date, units)
+        VALUES ('youtube', (now() AT TIME ZONE 'America/Los_Angeles')::date, ${units})
+        ON CONFLICT (provider, usage_date) DO UPDATE SET units = ops.api_usage_daily.units + EXCLUDED.units
+          WHERE ops.api_usage_daily.units + EXCLUDED.units <= ${cap}
+        RETURNING units`);
+      return rows.length > 0;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function videoCandidate(video: PickedVideo, index: number, runId: string): SourceDiscoveryCandidate {
+  return {
+    type: "video",
+    provider: "youtube",
+    externalId: video.youtubeId,
+    title: video.title,
+    description: video.description,
+    canonicalUrl: `https://www.youtube.com/watch?v=${video.youtubeId}`,
+    thumbnailUrl: video.thumbnailUrl,
+    author: video.channel,
+    durationMs: video.durationMs,
+    publishedAt: video.publishedAt,
+    reason: video.why,
+    reasonCodes: [video.level, video.format].filter((value): value is NonNullable<typeof value> => value !== null),
+    score: Number(video.prescore.toFixed(6)),
+    candidateRank: index + 1,
+    finalRank: index + 1,
+    recommendationRunId: runId,
+    sourceOrigin: "external_refresh",
+    viewCount: video.views === null ? null : Math.round(video.views),
+    level: video.level,
+    format: video.format,
+  };
+}
+
+/** What a run stores: the picks as candidates, and the synthetic ids resolveSource checks a chosen video against. */
+function videoAgentSnapshot(run: typeof recommendationRuns.$inferSelect, picks: PickedVideo[], stage: "ranking" | "done", ranked: boolean, searches: number, checked: number) {
+  return {
+    ...run.contextSnapshot,
+    agent: VIDEO_AGENT,
+    agentStage: stage,
+    agentRanked: ranked,
+    agentSearches: searches,
+    agentChecked: checked,
+    refreshStatus: stage === "done" ? "complete" : "running",
+    ephemeralCandidates: picks.map((video, index) => videoCandidate(video, index, run.id)),
+    candidateDiagnostics: picks.map((video) => ({ resourceId: `external:youtube:${video.youtubeId}`, sourceOrigin: "external_refresh", qualificationReason: "video_agent_pick" })),
+  };
+}
+
+function videoAgentResponse(run: typeof recommendationRuns.$inferSelect): SourceDiscoverySearchResponse {
+  const snapshot = run.contextSnapshot;
+  const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0);
+  const refreshError = runRefreshError(run, "learn");
+  return {
+    status: runStatus(run),
+    runId: run.id,
+    mode: "learn",
+    query: run.queryText ?? "",
+    candidates: ephemeralCandidates(run),
+    agent: { stage: snapshot.agentStage === "ranking" ? "ranking" : "done", searches: number(snapshot.agentSearches), checked: number(snapshot.agentChecked), ranked: snapshot.agentRanked === true },
+    ...(refreshError ? { refreshError } : {}),
+  };
+}
+
+async function createVideoAgentRun(userId: string, query: string, intent: VideoIntent, status: "running" | "completed" | "failed", build: (run: typeof recommendationRuns.$inferSelect) => Record<string, unknown>) {
+  return withUserTransaction(userId, async (tx) => {
+    const [created] = await tx.insert(recommendationRuns).values({
+      userId,
+      surface: "source_picker",
+      queryText: query,
+      strategyVersion: DISCOVERY_STRATEGY_VERSION,
+      featureVersion: DISCOVERY_FEATURE_VERSION,
+      contextSnapshot: { mode: "learn", rankingIntent: intent, interactive: true, agent: VIDEO_AGENT },
+      status,
+      completedAt: status === "running" ? null : new Date(),
+    }).returning();
+    if (!created) throw new Error("Source discovery run could not be created");
+    const [run] = await tx.update(recommendationRuns).set({ contextSnapshot: build(created) }).where(eq(recommendationRuns.id, created.id)).returning();
+    return run ?? created;
+  });
+}
+
+/**
+ * A Learn-mode search: a cached ranking answers at once; otherwise the agent gathers and checks videos (a couple of seconds),
+ * answers with them in a statistical order, and the model's ranking replaces that order when it lands (the picker polls the run).
+ */
+async function searchVideosWithAgent(userId: string, input: SourceDiscoverySearchRequest, scheduleDeferred: SourceDiscoveryDeferredWork): Promise<SourceDiscoverySearchResponse> {
+  const query = normalizeQuery(input.query);
+  const intent = input.rankingIntent as VideoIntent;
+  const reusable = await withUserTransaction(userId, async (tx) => {
+    const existing = await findReusableRun(tx, userId, "learn", query, input.rankingIntent);
+    return existing?.contextSnapshot.agent === VIDEO_AGENT ? videoAgentResponse(existing) : null;
+  });
+  if (reusable && reusable.candidates.length > 0) return reusable;
+
+  const cached = await cachedVideoPicks(intent, query);
+  if (cached) {
+    const run = await createVideoAgentRun(userId, query, intent, "completed", (created) => videoAgentSnapshot(created, cached.picks, "done", true, cached.searches, cached.checked));
+    return videoAgentResponse(run);
+  }
+
+  const youtubeApiKey = process.env.YOUTUBE_API_KEY?.trim() || null;
+  const exaApiKey = process.env.EXA_API_KEY?.trim() || null;
+  const gathered = await gatherVideos(query, intent, { exaApiKey, youtubeApiKey, reserveYoutubeQuota: (units) => reserveYoutubeQuota(userId, units) });
+  if (gathered.failures.length) console.warn("video_agent_lane_failures", { correlationId: input.correlationId, failures: gathered.failures });
+  if (gathered.videos.length === 0) {
+    // Nothing found while a search errored is an outage the learner can retry, not an honest "no videos for that".
+    const failed = gathered.failures.length > 0;
+    const run = await createVideoAgentRun(userId, query, intent, failed ? "failed" : "completed", (created) => ({
+      ...videoAgentSnapshot(created, [], "done", false, gathered.searches, 0),
+      ...(failed ? { refreshStatus: "failed", refreshError: { code: "DISCOVERY_PROVIDER_UNAVAILABLE", message: "We couldn't reach video search. Try again." } } : {}),
+    }));
+    return videoAgentResponse(run);
+  }
+
+  const provisional = provisionalPicks(gathered.videos);
+  const checked = gathered.videos.length;
+  const run = await createVideoAgentRun(userId, query, intent, "running", (created) => videoAgentSnapshot(created, provisional, "ranking", false, gathered.searches, checked));
+  scheduleDeferred(async () => {
+    const picks = await pickVideos(query, intent, gathered.videos);
+    await withUserTransaction(userId, async (tx) => {
+      const [current] = await tx.select().from(recommendationRuns).where(and(eq(recommendationRuns.id, run.id), eq(recommendationRuns.userId, userId))).limit(1);
+      if (current?.status !== "running") return;
+      await tx.update(recommendationRuns).set({
+        status: "completed",
+        completedAt: new Date(),
+        contextSnapshot: videoAgentSnapshot(current, picks ?? provisional, "done", picks !== null, gathered.searches, checked),
+      }).where(eq(recommendationRuns.id, run.id));
+    }).catch((error: unknown) => console.warn("video_agent_finish_failed", { runId: run.id, error: error instanceof Error ? error.message : "unknown" }));
+    if (picks) await storeVideoPicks(intent, query, { picks, searches: gathered.searches, checked });
+  });
+  return videoAgentResponse(run);
+}
+
 const interactiveSearches = new Map<string, Promise<SourceDiscoverySearchResponse>>();
 
 export async function searchSources(userId: string, input: SourceDiscoverySearchRequest, scheduleDeferred: SourceDiscoveryDeferredWork = (work) => { void work(); }): Promise<SourceDiscoverySearchResponse> {
@@ -711,7 +894,11 @@ export async function searchSources(userId: string, input: SourceDiscoverySearch
   const key = createHash("sha256").update(`${userId}\n${input.mode}\n${input.rankingIntent}\n${query}`).digest("hex");
   const existing = interactiveSearches.get(key);
   if (existing) return existing;
-  const search = searchSourcesFast(userId, { ...input, query }, scheduleDeferred).finally(() => interactiveSearches.delete(key));
+  // Videos go to the search agent whenever it has a provider to search; papers (and a server with no video search keys, such
+  // as CI and offline development) keep the catalog-and-Exa search above.
+  const agent = input.mode === "learn" && Boolean(process.env.YOUTUBE_API_KEY?.trim() || process.env.EXA_API_KEY?.trim());
+  const search = (agent ? searchVideosWithAgent(userId, { ...input, query }, scheduleDeferred) : searchSourcesFast(userId, { ...input, query }, scheduleDeferred))
+    .finally(() => interactiveSearches.delete(key));
   interactiveSearches.set(key, search);
   return search;
 }

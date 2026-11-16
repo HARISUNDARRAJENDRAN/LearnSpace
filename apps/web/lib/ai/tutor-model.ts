@@ -5,9 +5,17 @@ export const TUTOR_MODEL = {
   id: "gpt-6-luna",
   // Every turn is first asked without reasoning, so a direct answer streams within about a second. The model's first
   // output says whether the question needs working through; if so the turn is asked again with reasoning.
-  // quick: the visible answer is a few hundred tokens, the limit only stops a runaway; deep: most of it goes on reasoning.
-  depths: { quick: { effort: "none", maxOutputTokens: 4_000 }, deep: { effort: "medium", maxOutputTokens: 16_000 } },
-  timeoutMs: 110_000,
+  // quick: the visible answer is a few hundred tokens, the limit only stops a runaway; deep: most of it goes on reasoning;
+  // long: a long structured write in the background (a video's study guide, a check's analysis), within the 300 s such a route may run.
+  depths: {
+    quick: { effort: "none", maxOutputTokens: 4_000, timeoutMs: 110_000 },
+    deep: { effort: "medium", maxOutputTokens: 16_000, timeoutMs: 110_000 },
+    // edit: the notes scribe's small structured edits, which the learner watches land, so speed matters more than depth.
+    edit: { effort: "low", maxOutputTokens: 16_000, timeoutMs: 60_000 },
+    long: { effort: "low", maxOutputTokens: 40_000, timeoutMs: 270_000 },
+    // author: a coding problem with its tests, references and hints, which must hold together when run, so it is reasoned through.
+    author: { effort: "medium", maxOutputTokens: 40_000, timeoutMs: 240_000 },
+  },
   // USD per token, from developers.openai.com/api/docs/models/gpt-6-luna (Standard tier, prompts under 272K tokens).
   // Cache writes are 1.25x input for the default 30-minute lifetime (developers.openai.com/api/docs/guides/prompt-caching).
   price: { input: 0.10 / 1e6, cachedInput: 0.01 / 1e6, cacheWrite: 0.125 / 1e6, output: 0.50 / 1e6 },
@@ -18,7 +26,7 @@ export const TUTOR_MODEL = {
 /** `fast`: the call ran (and is billed) on Fast processing; a Fast request the provider downgraded is not. */
 export type TutorUsage = { inputTokens: number; cachedTokens: number; cacheWriteTokens: number; outputTokens: number; reasoningTokens: number; fast: boolean };
 export type TutorDepth = keyof typeof TUTOR_MODEL.depths;
-export type TutorModelRequest = { depth: TutorDepth; instructions: string; developer: string; user: string; schema: Record<string, unknown>; cacheKey: string; image?: string | null; fast?: boolean };
+export type TutorModelRequest = { depth: TutorDepth; instructions: string; developer: string; user: string; schema?: Record<string, unknown>; cacheKey: string; image?: string | null; fast?: boolean };
 export type TutorModelResult = { text: string; refusal: string | null; usage: TutorUsage; firstOutputMs: number | null; latencyMs: number };
 export type TutorModel = (request: TutorModelRequest, hooks: { signal: AbortSignal; onFirstOutput?: () => void; onText?: (text: string) => void }) => Promise<TutorModelResult>;
 
@@ -41,6 +49,8 @@ type ResponsesResponse = { usage?: ResponsesUsage; service_tier?: string; incomp
 type ResponsesEvent = {
   type?: string;
   delta?: string;
+  output_index?: number;
+  item?: { phase?: string };
   response?: ResponsesResponse;
   error?: { code?: string };
 };
@@ -57,7 +67,7 @@ function usageOf(response: ResponsesResponse | undefined): TutorUsage {
   };
 }
 
-/** One streamed Responses API call with strict structured output. Never retried here: a retry is a new, separately admitted turn. */
+/** One streamed Responses API call, with strict structured output when a schema is given. Never retried here: a retry is a new, separately admitted turn. */
 export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOutput, onText }) => {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new TutorModelError("provider_not_configured");
@@ -77,7 +87,8 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
           { role: "user", content: request.image ? [{ type: "input_text", text: request.user }, { type: "input_image", image_url: request.image, detail: "high" }] : request.user },
           { role: "developer", content: request.developer },
         ],
-        text: { format: { type: "json_schema", name: "tutor_turn", strict: true, schema: request.schema } },
+        // Without a schema the reply is plain text, as Luny's speech is.
+        ...(request.schema ? { text: { format: { type: "json_schema", name: "tutor_turn", strict: true, schema: request.schema } } } : {}),
         max_output_tokens: TUTOR_MODEL.depths[request.depth].maxOutputTokens,
         prompt_cache_key: request.cacheKey,
         prompt_cache_options: { mode: "explicit" },
@@ -86,7 +97,7 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
         stream: true,
         ...(request.fast ? { service_tier: "fast" } : {}),
       }),
-      signal: AbortSignal.any([signal, AbortSignal.timeout(TUTOR_MODEL.timeoutMs)]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(TUTOR_MODEL.depths[request.depth].timeoutMs)]),
     });
   } catch (error) {
     throw new TutorModelError(signal.aborted ? "cancelled" : error instanceof Error && error.name === "TimeoutError" ? "provider_timeout" : "provider_unreachable");
@@ -97,7 +108,12 @@ export const openAiTutorModel: TutorModel = async (request, { signal, onFirstOut
   let firstOutputMs: number | null = null;
   let buffer = "";
   const decoder = new TextDecoder();
+  // A reply can open with a short preamble message (phase "commentary") that the final answer then repeats; only the
+  // answer is the reply, or Luny would say it twice.
+  const preambles = new Set<number>();
   const handle = (event: ResponsesEvent): TutorModelResult | null => {
+    if (event.type === "response.output_item.added" && event.item?.phase === "commentary") preambles.add(event.output_index ?? -1);
+    if ((event.type === "response.output_text.delta" || event.type === "response.refusal.delta") && preambles.has(event.output_index ?? -1)) return null;
     if (event.type === "response.output_text.delta" || event.type === "response.refusal.delta") {
       if (firstOutputMs === null) { firstOutputMs = Math.round(performance.now() - started); onFirstOutput?.(); }
       if (event.type === "response.output_text.delta") {

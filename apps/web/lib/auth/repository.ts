@@ -2,6 +2,7 @@ import {
   authAccounts,
   authChallenges,
   authSessions,
+  userSettings,
   users,
 } from "@learnspace/db/schema";
 import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
@@ -357,45 +358,68 @@ export async function createSession(
   return { token, maxAge: sessionLifetimeSeconds };
 }
 
+export type SessionLookup = {
+  session: typeof authSessions.$inferSelect;
+  user: UserRecord;
+  /** The learner's settings row, null if there is none; `completedAt` is when they finished onboarding. */
+  onboarding: { completedAt: Date | null } | null;
+};
+
+/**
+ * The live session behind a cookie, its user, and whether they finished onboarding, in one statement. Every request
+ * starts here, so it is one round trip rather than one per table (and a separate transaction for the onboarding check).
+ * The token's hash and the time go in as literals, a hex digest and an ISO timestamp that can only be themselves, so the
+ * statement is sent as a simple query: one round trip, where a bound one takes two.
+ */
+export async function findSessionWithOnboarding(token: string): Promise<SessionLookup | null> {
+  const database = await getAuthDatabase();
+  const hash = hashToken(token);
+  const now = new Date();
+  const rows = await database
+    .select({ session: authSessions, user: users, settingsUserId: userSettings.userId, onboardingCompletedAt: userSettings.onboardingCompletedAt })
+    .from(authSessions)
+    .innerJoin(users, eq(users.id, authSessions.userId))
+    .leftJoin(userSettings, eq(userSettings.userId, authSessions.userId))
+    .where(
+      and(
+        sql`${authSessions.refreshTokenHash} = ${sql.raw(`'${hash}'`)}`,
+        isNull(authSessions.revokedAt),
+        sql`${authSessions.expiresAt} > ${sql.raw(`'${now.toISOString()}'::timestamptz`)}`,
+      ),
+    );
+  // No LIMIT: drizzle would bind it, and a bound statement takes two round trips. A token is 256 random bits, so its
+  // hash names one session at most.
+  const row = rows[0];
+  if (row?.user.status !== "active") {
+    return null;
+  }
+  const { session, user } = row;
+
+  // Seen at most every five minutes. A session seen in the last four is not asked about (a minute's margin for the
+  // database's clock, which the statement itself still checks against).
+  if (session.lastSeenAt === null || session.lastSeenAt.getTime() < now.getTime() - 4 * 60_000) {
+    await database
+      .update(authSessions)
+      .set({ lastSeenAt: new Date() })
+      .where(
+        and(
+          eq(authSessions.id, session.id),
+          or(
+            isNull(authSessions.lastSeenAt),
+            lt(authSessions.lastSeenAt, sql`now() - interval '5 minutes'`),
+          ),
+        ),
+      );
+  }
+
+  return { session, user, onboarding: row.settingsUserId === null ? null : { completedAt: row.onboardingCompletedAt } };
+}
+
 export async function findSessionByToken(
   token: string,
 ): Promise<{ session: typeof authSessions.$inferSelect; user: UserRecord } | null> {
-  const database = await getAuthDatabase();
-  const rows = await database
-    .select()
-    .from(authSessions)
-    .where(
-      and(
-        eq(authSessions.refreshTokenHash, hashToken(token)),
-        isNull(authSessions.revokedAt),
-        gt(authSessions.expiresAt, new Date()),
-      ),
-    )
-    .limit(1);
-  const session = rows[0];
-  if (!session) {
-    return null;
-  }
-
-  const user = await findUserById(session.userId);
-  if (user?.status !== "active") {
-    return null;
-  }
-
-  await database
-    .update(authSessions)
-    .set({ lastSeenAt: new Date() })
-    .where(
-      and(
-        eq(authSessions.id, session.id),
-        or(
-          isNull(authSessions.lastSeenAt),
-          lt(authSessions.lastSeenAt, sql`now() - interval '5 minutes'`),
-        ),
-      ),
-    );
-
-  return { session, user };
+  const found = await findSessionWithOnboarding(token);
+  return found && { session: found.session, user: found.user };
 }
 
 export async function revokeSessionByToken(token: string, reason: string): Promise<void> {

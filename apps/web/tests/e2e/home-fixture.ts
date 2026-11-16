@@ -148,6 +148,8 @@ export async function cleanupHomeFixture(database: Database, fixture: HomeFixtur
   await database`DELETE FROM catalog.resource_concepts WHERE resource_id IN ${database(resourceIds)}`;
   await database`DELETE FROM catalog.video_details WHERE resource_id IN ${database(resourceIds)}`;
   await database`DELETE FROM catalog.paper_details WHERE resource_id IN ${database(resourceIds)}`;
+  await database`DELETE FROM study.mastery_checks WHERE user_id = ${fixture.userId} OR resource_id IN ${database(resourceIds)}`;
+  await database`DELETE FROM study.video_notes WHERE user_id = ${fixture.userId} OR resource_id IN ${database(resourceIds)}`;
   await database`DELETE FROM catalog.resources WHERE id IN ${database(resourceIds)}`;
   await database`DELETE FROM identity.users WHERE id = ${fixture.userId}`;
 }

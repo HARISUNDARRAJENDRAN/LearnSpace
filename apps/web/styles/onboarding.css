@@ -648,3 +648,51 @@
 		transition: none !important;
 	}
 }
+
+/* Goal step: one free-text answer that becomes this week's to-dos. */
+.onboarding-goal {
+	display: grid;
+	gap: 16px;
+	margin-top: 32px;
+}
+
+.onboarding-goal-field textarea {
+	display: block;
+	width: 100%;
+	min-height: 104px;
+	padding: 12px 14px;
+	border: 0;
+	border-radius: 10px;
+	outline: 0;
+	background: var(--ls-muted);
+	color: var(--ls-ink);
+	font: inherit;
+	font-size: 16px;
+	line-height: 1.45;
+	resize: vertical;
+	transition: box-shadow 150ms;
+}
+
+.onboarding-goal-field textarea:focus,
+.onboarding-goal-field textarea:focus-visible {
+	outline: none;
+	box-shadow: inset 0 0 0 1px var(--ls-ink);
+}
+
+.onboarding-goal-field textarea::placeholder {
+	color: var(--ls-ink-subtle);
+}
+
+.onboarding-goal-examples {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.onboarding-back:disabled,
+.onboarding-primary:disabled {
+	cursor: default;
+}

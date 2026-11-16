@@ -44,7 +44,7 @@ import {
   type RankedResource,
 } from "./ranker";
 
-import { AFFINITY_HALF_LIFE_DAYS, LEARNER_MODEL_VERSION, behaviorSignal, observationFromActivity, observedAffinity, personalizationWeights, updateBehaviorAffinity, type BehaviorSignal, type LearnerObservation } from "./learner-model";
+import { AFFINITY_HALF_LIFE_DAYS, LEARNER_MODEL_VERSION, behaviorSignal, observationFromActivity, observedAffinity, personalizationWeights, updateBehaviorAffinity, type BehaviorSignal } from "./learner-model";
 
 export function adaptiveDiscoveryEnabled(): boolean { return process.env.LEARNSPACE_ADAPTIVE_DISCOVERY_ENABLED !== "false"; }
 
@@ -810,11 +810,6 @@ const activityEventByAction: Record<DiscoveryAction, string> = {
   start_session: "session.started",
   complete: "resource.completed",
 };
-
-function progressFraction(metadata: Record<string, unknown>): number | null {
-  const value = recordValue(metadata, "progressFraction");
-  return typeof value === "number" && Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : null;
-}
 
 async function loadResourceConcepts(
   tx: Transaction,

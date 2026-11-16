@@ -1,12 +1,14 @@
 "use client";
 
+import type { StudySessionSummary } from "@learnspace/shared";
 import type { ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
-import { AppSidebar, type RecentSession } from "./AppSidebar";
+import { AppSidebar } from "./AppSidebar";
 import { HeaderSearch } from "./HeaderSearch";
+import { SessionsProvider } from "./sessions";
 import { SmoothScroll } from "./SmoothScroll";
 
 // Lets workspaces that need the room (study sessions) fold the sidebar away.
@@ -17,7 +19,7 @@ type ApplicationUser = {
   displayName: string | null;
 };
 
-export function ApplicationShell({ user, recentSessions, hasCurrentSession, children }: { user: ApplicationUser; recentSessions: RecentSession[]; hasCurrentSession: boolean; children: ReactNode }) {
+export function ApplicationShell({ user, sessions, children }: { user: ApplicationUser; sessions: StudySessionSummary[]; children: ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -32,10 +34,10 @@ export function ApplicationShell({ user, recentSessions, hasCurrentSession, chil
   useEffect(prefetchSpeechModels, []);
 
   return (
+    <SessionsProvider initial={sessions}>
     <div className={`application-page${sidebarCollapsed ? " is-sidebar-collapsed" : ""}${pathname.startsWith("/app/discover") ? " application-page--discover" : ""}`} data-view={viewMode}>
       <AppSidebar
         user={user}
-        recentSessions={recentSessions}
         isOpen={sidebarOpen}
         isCollapsed={sidebarCollapsed}
         onClose={() => setSidebarOpen(false)}
@@ -43,10 +45,11 @@ export function ApplicationShell({ user, recentSessions, hasCurrentSession, chil
         onToggleCollapsed={() => setSidebarCollapsed((collapsed) => !collapsed)}
       />
       <div className="application-main">
-        <AppHeader canStartNew={!hasCurrentSession} onMenu={() => setSidebarOpen(true)} viewMode={viewMode} onViewModeChange={setViewMode} search={<HeaderSearch inputRef={searchRef} mode={searchMode} recentSessions={recentSessions} />} />
+        <AppHeader onMenu={() => setSidebarOpen(true)} viewMode={viewMode} onViewModeChange={setViewMode} search={<HeaderSearch inputRef={searchRef} mode={searchMode} />} />
         <div className="application-body"><CollapseSidebarContext value={collapseSidebar}>{children}</CollapseSidebarContext></div>
       </div>
       <SmoothScroll />
     </div>
+    </SessionsProvider>
   );
 }

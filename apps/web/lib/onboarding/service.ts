@@ -16,7 +16,7 @@ import {
   type OnboardingDraft,
   type OnboardingDraftRequest,
 } from "@learnspace/shared/onboarding";
-import { and, asc, eq, ilike, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 
 const conceptSearchLimit = 40;

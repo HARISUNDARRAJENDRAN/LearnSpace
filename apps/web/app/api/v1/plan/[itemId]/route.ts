@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { authErrorResponse } from "../../../../../lib/auth/errors";
 import { readJson } from "../../../../../lib/auth/request";
 import { requireCompletedSession } from "../../../../../lib/discovery/access";
-import { deletePlanItem, planItemPatchSchema, updatePlanItem } from "../../../../../lib/plan/service";
+import { tickPlanItem } from "../../../../../lib/plan/observer";
+import { deletePlanItem, getPlanItem, planItemPatchSchema, planTickSchema, updatePlanItem } from "../../../../../lib/plan/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +14,13 @@ export async function PATCH(request: Request, context: Context) {
   try {
     const session = await requireCompletedSession();
     const { itemId } = await context.params;
-    const patch = planItemPatchSchema.parse(await readJson(request));
-    return NextResponse.json({ item: await updatePlanItem(session.user.id, itemId, patch) });
+    const body = await readJson(request);
+    // A tick is a request to verify: the reply says whether recorded study backs it.
+    if (body && typeof body === "object" && "done" in body) {
+      const tick = await tickPlanItem(session.user.id, itemId, planTickSchema.parse(body).done);
+      return NextResponse.json({ item: await getPlanItem(session.user.id, itemId), tick });
+    }
+    return NextResponse.json({ item: await updatePlanItem(session.user.id, itemId, planItemPatchSchema.parse(body)) });
   } catch (error) {
     return authErrorResponse(error);
   }

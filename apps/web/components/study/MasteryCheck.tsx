@@ -5,6 +5,7 @@ import { Check, LoaderCircle, Mic, Play, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingState } from "./LoadingState";
+import { type MasteryNext, MasteryResults } from "./MasteryResults";
 import { MathText } from "./MathText";
 import { SessionPanelHeader } from "./SessionPanelHeader";
 import { formatTime } from "./StudyWorkspace";
@@ -25,7 +26,7 @@ const percent = (score: number) => `${Math.round(score * 100)}%`;
  * The hard questions a learner must pass, after watching a video, before the next one unlocks: one at a time, each
  * marked as it is answered, linking back to the moment it comes from. A failed set is replaced by a fresh one.
  */
-export function MasteryCheck({ sessionId, onSeek, onCollapse }: { sessionId: string; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
+export function MasteryCheck({ sessionId, resourceId, next, onSeek, onCollapse }: { sessionId: string; resourceId: string; next: MasteryNext; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
   const router = useRouter();
   const base = `/api/v1/study-sessions/${sessionId}/mastery`;
   const [view, setView] = useState<MasteryView | null>(null);
@@ -60,15 +61,51 @@ export function MasteryCheck({ sessionId, onSeek, onCollapse }: { sessionId: str
   }, []);
 
   useEffect(() => { void run(null, () => request(base)).then(open); }, [base, run, open]);
-  // The set is written in the background when the video ends; until it lands, check back every couple of seconds.
+  // The set is written in the background when the video ends; until its first question lands, check back every couple of seconds.
   const writing = view?.state === "writing";
   useEffect(() => {
     if (!writing) return;
     const timer = window.setInterval(() => void request(base).then((next) => { if (next.state !== "writing") { setView(next); open(next); } }, () => undefined), 2_000);
     return () => window.clearInterval(timer);
   }, [writing, base, open]);
+  // The learner answers the first questions while the rest are written into the set; each new one appears as it lands.
+  const filling = view?.check?.writing === true;
+  useEffect(() => {
+    if (!filling) return;
+    const timer = window.setInterval(() => void request(base).then(setView, () => undefined), 1_500);
+    return () => window.clearInterval(timer);
+  }, [filling, base]);
 
   const start = () => void run("writing", () => request(base, {})).then(open);
+
+  // A scored set is read by its id from here on: passing it moves the session to the next lesson, and its results (and the
+  // analysis written for them) stay on screen until the learner continues.
+  const scored = view && view.state !== "open" && view.check && view.check.status !== "open" ? view.check : null;
+  const scoredId = scored?.id ?? null;
+  const analysis = scored?.analysis?.status ?? null;
+  const analyse = useCallback(() => {
+    if (!scoredId) return;
+    void request(`${base}/analysis`, { checkId: scoredId }).then(setView, () => undefined);
+  }, [base, scoredId]);
+  useEffect(() => { if (scoredId && analysis === null) analyse(); }, [scoredId, analysis, analyse]);
+  useEffect(() => {
+    if (!scoredId || analysis !== "writing") return;
+    const timer = window.setInterval(() => void request(`${base}?check=${scoredId}`).then(setView, () => undefined), 2_500);
+    return () => window.clearInterval(timer);
+  }, [base, scoredId, analysis]);
+
+  // Continue completes the lesson (which already moved the session on when the pass was scored, so this is then refused as no
+  // longer active, harmlessly) and reloads the session on the next lesson; after the last one it goes back to Sessions.
+  const [moving, setMoving] = useState(false);
+  const proceed = async () => {
+    setMoving(true);
+    await fetch(`/api/v1/study-sessions/${sessionId}/progress`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resourceId, progressPct: 100, anchor: { kind: "video", positionMs: 0 }, event: "complete", idempotencyKey: `continue-${scoredId ?? resourceId}` }),
+    }).catch(() => null);
+    if (next.nextTitle) router.refresh();
+    else router.push("/app/sessions");
+  };
   const answer = (question: MasteryQuestionView, response: { choice: number } | { text: string }) =>
     void run(question.type === "written" ? "grading" : null, () => request(`${base}/answers`, { checkId: view?.check?.id, questionId: question.id, ...response }));
 
@@ -93,25 +130,22 @@ export function MasteryCheck({ sessionId, onSeek, onCollapse }: { sessionId: str
 
   const { questions } = check;
   const question = questions[index];
-  if (view.state !== "open" && (!question || index >= questions.length)) {
-    const passed = view.state === "passed";
-    const missed = questions.filter((item) => item.result && item.result.credit < 1);
-    return shell(<div className="session-quiz-result" role="status">
-      <p className="session-quiz-score">{percent(check.score ?? 0)}</p>
-      <p>{passed ? "Mastered. The next video is unlocked." : `You need ${pass} to move on. Review what you missed, then take a fresh set.`}</p>
-      {!passed && missed.length > 0 ? <ul className="mastery-review">{missed.map((item) => <li key={item.id}><span><MathText text={item.question} /></span>{item.positionMs === null ? null : <button className="session-link-button" type="button" onClick={() => onSeek(item.positionMs ?? 0)}><Play aria-hidden="true" />Watch at {formatTime(item.positionMs)}</button>}</li>)}</ul> : null}
-      <div className="session-quiz-actions">
-        <button className="session-secondary-button" type="button" onClick={() => setIndex(0)}>Review answers</button>
-        {passed ? <button className="session-primary-button" type="button" onClick={() => router.refresh()}>Continue</button> : <button className="session-primary-button" type="button" onClick={start}>New set of questions</button>}
-      </div>
+  if (scored && (!question || index >= questions.length)) {
+    return shell(<>
+      <MasteryResults check={scored} passScore={view.passScore} next={next} moving={moving} onSeek={onSeek} onReview={(at) => { setIndex(at); setText(""); }}
+        onContinue={() => void proceed()} onRetake={start} onAnalyse={analyse} />
       {alert}
-    </div>);
+    </>);
   }
-  if (!question) return shell(alert);
+  const count = `${Math.min(index + 1, questions.length + (check.writing ? 1 : 0))} / ${questions.length}${check.writing ? "+" : ""}`;
+  if (!question) return shell(check.writing || view.state === "open" ? <LoadingState label="Writing the next question" /> : alert, count);
 
   const result = question.result;
   const chosen = result && "choice" in result.response ? result.response.choice : null;
-  const last = index + 1 === questions.length;
+  const last = index + 1 === questions.length && !check.writing;
+  // Reviewing a scored set adds what the analysis made of this answer and where the notes cover it.
+  const mistake = scored?.analysis?.status === "ready" ? scored.analysis.mistakes.find((entry) => entry.questionId === question.id) : undefined;
+  const section = scored?.notesSections[question.id];
   return shell(<div className="session-quiz-question">
     <p className="session-quiz-prompt"><MathText text={question.question} /></p>
     {question.options ? (
@@ -143,9 +177,19 @@ export function MasteryCheck({ sessionId, onSeek, onCollapse }: { sessionId: str
         <strong>{VERDICT[result.verdict]}</strong>
         <p><MathText text={result.feedback} /></p>
         {result.modelAnswer ? <p><b>A full answer:</b> <MathText text={result.modelAnswer} /></p> : null}
+        {mistake ? <div className="mastery-mistake"><dl>
+          <dt>What happened</dt><dd><MathText text={mistake.observed} /></dd>
+          <dt>Likely why <span className="mastery-inferred" title="Inferred from your answer, not certain">inferred</span></dt><dd><MathText text={mistake.likelyCause} /></dd>
+          <dt>In plain words</dt><dd><MathText text={mistake.eli5} /></dd>
+          <dt>The right reasoning</dt><dd><MathText text={mistake.correctReasoning} /></dd>
+        </dl></div> : null}
+        {section ? <p className="mastery-notes-link">In your notes: <MathText text={section} /></p> : null}
         {question.positionMs === null ? null : <button className="session-link-button" type="button" onClick={() => onSeek(question.positionMs ?? 0)}><Play aria-hidden="true" />Watch at {formatTime(question.positionMs)}</button>}
-        <button className="session-primary-button" type="button" onClick={() => { setIndex(index + 1); setText(""); }}>{last ? "See results" : "Next question"}</button>
+        <div className="mastery-review-nav">
+          {scored ? <button className="session-secondary-button" type="button" onClick={() => setIndex(questions.length)}>Back to results</button> : null}
+          <button className="session-primary-button" type="button" onClick={() => { setIndex(index + 1); setText(""); }}>{last ? "See results" : "Next question"}</button>
+        </div>
       </div>
     ) : null}
-  </div>, `${Math.min(index + 1, questions.length)} / ${questions.length}`);
+  </div>, count);
 }

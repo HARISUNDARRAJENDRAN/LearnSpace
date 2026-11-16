@@ -162,6 +162,10 @@ export const sourceDiscoveryCandidateSchema = z.object({
   sourceOrigin: z.enum(["catalog", "external_refresh", "direct_url"]).optional(),
   queryRelevance: z.number().min(0).max(1).optional(),
   qualificationReason: z.string().optional(),
+  // The video agent's picks: the audience the video found, and the level and kind of lesson the model judged it to be.
+  viewCount: z.number().int().nonnegative().nullable().optional(),
+  level: z.enum(["beginner", "intermediate", "advanced"]).nullable().optional(),
+  format: z.enum(["course", "tutorial", "lecture", "explainer", "project", "talk"]).nullable().optional(),
 });
 
 export type SourceDiscoveryCandidate = z.infer<typeof sourceDiscoveryCandidateSchema>;
@@ -235,6 +239,8 @@ export const sourceDiscoverySearchResponseSchema = z.object({
   retrieval: z.enum(["memory", "redis", "catalog", "live_web", "blended"]).optional(),
   cacheState: z.enum(["fresh", "stale", "miss"]).optional(),
   refreshError: z.object({ code: z.string(), message: z.string() }).optional(),
+  /** The video agent's progress: how many searches it ran and videos it checked, and whether the model is still ranking. */
+  agent: z.object({ stage: z.enum(["ranking", "done"]), searches: z.number().int().nonnegative(), checked: z.number().int().nonnegative(), ranked: z.boolean() }).optional(),
   timings: z.object({
     cacheMs: z.number().nonnegative().optional(),
     catalogMs: z.number().nonnegative().optional(),

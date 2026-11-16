@@ -28,33 +28,10 @@ const ids = {
   privateChunkB: "00000000-0000-0000-0000-000000000403",
   sessionA: "00000000-0000-0000-0000-000000000501",
   sessionB: "00000000-0000-0000-0000-000000000502",
-  exercise: "00000000-0000-0000-0000-000000000601",
-  exerciseVersion: "00000000-0000-0000-0000-000000000602",
-  binding: "00000000-0000-0000-0000-000000000603",
-  attemptA: "00000000-0000-0000-0000-000000000604",
-  snapshotA: "00000000-0000-0000-0000-000000000605",
-  testBundle: "00000000-0000-0000-0000-000000000606",
-  executionRun: "00000000-0000-0000-0000-000000000607",
-  exerciseB: "00000000-0000-0000-0000-000000000608",
-  exerciseVersionB: "00000000-0000-0000-0000-000000000609",
-  testBundleB: "00000000-0000-0000-0000-000000000610",
   authAccountA: "00000000-0000-0000-0000-000000000801",
   authAccountB: "00000000-0000-0000-0000-000000000802",
   authSessionA: "00000000-0000-0000-0000-000000000803",
   authSessionB: "00000000-0000-0000-0000-000000000804",
-  hardeningBindingGlobal: "00000000-0000-0000-0000-000000000951",
-  hardeningBindingForeign: "00000000-0000-0000-0000-000000000952",
-  hardeningBindingOwn: "00000000-0000-0000-0000-000000000953",
-  hardeningBindingOutside: "00000000-0000-0000-0000-000000000954",
-  hardeningAttemptB: "00000000-0000-0000-0000-000000000955",
-  hardeningSnapshotB: "00000000-0000-0000-0000-000000000956",
-  hardeningExecutionB: "00000000-0000-0000-0000-000000000957",
-  hardeningDiagnosticA: "00000000-0000-0000-0000-000000000958",
-  hardeningDiagnosticB: "00000000-0000-0000-0000-000000000959",
-  hardeningDiagnosticSnapshot: "00000000-0000-0000-0000-000000000960",
-  hardeningDiagnosticExecution: "00000000-0000-0000-0000-000000000961",
-  hardeningHintA: "00000000-0000-0000-0000-000000000962",
-  hardeningHintDiagnostic: "00000000-0000-0000-0000-000000000963",
   hardeningProgress: "00000000-0000-0000-0000-000000000964",
   hardeningThreadA: "00000000-0000-0000-0000-000000000970",
   hardeningThreadB: "00000000-0000-0000-0000-000000000971",
@@ -69,8 +46,6 @@ const ids = {
   hardeningArtifactSourceRun: "00000000-0000-0000-0000-000000000980",
   hardeningCitationRun: "00000000-0000-0000-0000-000000000981",
   hardeningCitation: "00000000-0000-0000-0000-000000000982",
-  hardeningDiagnosticModel: "00000000-0000-0000-0000-000000000985",
-  hardeningHintModel: "00000000-0000-0000-0000-000000000986",
 };
 
 const seededVector = `[${Array.from({ length: 1536 }, (_, index) => index === 0 ? "1" : "0").join(",")}]`;
@@ -212,7 +187,8 @@ const tests: Array<[string, () => Promise<void>]> = [
       "study.study_sessions",
       "activity.activity_events",
       "retrieval.resource_chunks",
-      "practice.exercise_attempts",
+      "practice.coding_attempts",
+      "practice.coding_problem_secrets",
       "knowledge.concepts",
       "agent.agent_runs",
       "discovery.recommendation_runs",
@@ -277,94 +253,43 @@ const tests: Array<[string, () => Promise<void>]> = [
     assert.equal(privileges?.knowledge_select, true);
     assert.equal(privileges?.aliases_select, true);
   }],
-  ["restricted service access and execution authority", async () => {
-    await expectRejected(
-      () => app`SELECT solution_outline FROM practice.exercise_versions WHERE id = ${ids.exerciseVersion}`,
-      "application solution access",
-    );
-    await expectRejected(
-      () => app`SELECT object_key FROM practice.test_bundles WHERE id = ${ids.testBundle}`,
-      "application test bundle access",
-    );
-    await expectRejected(
-      () => ai`SELECT object_key FROM practice.test_bundles WHERE id = ${ids.testBundle}`,
-      "AI test bundle access",
-    );
+  ["restricted service access and grading authority", async () => {
+    const problemId = "00000000-0000-0000-0000-000000000821";
+    await migrator`DELETE FROM practice.coding_problems WHERE id = ${problemId}`;
+    const asLearner = <T>(work: (tx: postgres.TransactionSql) => Promise<T>) => app.begin(async (tx) => {
+      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
+      return work(tx);
+    });
     await expectRejected(
       () => ai`INSERT INTO study.study_sessions (id, user_id, mode) VALUES ('00000000-0000-0000-0000-000000000699', ${ids.userA}, 'practice')`,
       "AI session mutation",
     );
     await expectRejected(
-      () => app.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes, result)
-          VALUES ('00000000-0000-0000-0000-000000000822', ${ids.attemptA}, ${ids.snapshotA}, ${ids.testBundle}, '00000000-0000-0000-0000-000000000823', 'succeeded', 'app', 'sha256:seed-runtime', '7777777777777777777777777777777777777777777777777777777777777777', '8888888888888888888888888888888888888888888888888888888888888888', 1000, 2000, 134217728, '{"forged":true}'::jsonb)
-        `;
-      }),
-      "application forged execution result",
+      () => asLearner((tx) => tx`INSERT INTO practice.coding_problems (id, concept, difficulty, status, contract_version) VALUES (${problemId}, 'arrays', 'easy', 'verified', 'db-test')`),
+      "application publishing a verified problem",
     );
-    await expectRejected(
-      () => app`UPDATE practice.execution_runs SET result = '{"forged":true}'::jsonb, status = 'failed' WHERE id = ${ids.executionRun}`,
-      "application execution result update",
-    );
-    await expectRejected(
-      () => app.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          INSERT INTO practice.exercises (id, kind, canonical_concept_id, title, status, created_by, owner_user_id, metadata)
-          VALUES ('00000000-0000-0000-0000-000000000826', 'code', ${ids.concept}, 'User global publication', 'active', 'app', NULL, '{}'::jsonb)
-        `;
-      }),
-      "user publishing global exercise",
-    );
-    const enqueueRequestId = "00000000-0000-0000-0000-000000000825";
-    const enqueued = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ execution_id: string }[]>`
-        SELECT practice.enqueue_execution(${ids.attemptA}, ${ids.snapshotA}, ${enqueueRequestId}) AS execution_id
-      `;
+    // The app authors a problem: it may write its hidden half, never read it back.
+    await asLearner(async (tx) => {
+      await tx`INSERT INTO practice.coding_problems (id, concept, difficulty, status, title, spec, tutor, contract_version) VALUES (${problemId}, 'arrays', 'easy', 'generating', 'Sum', '{}'::jsonb, '{}'::jsonb, 'db-test')`;
+      await tx`INSERT INTO practice.coding_problem_secrets (problem_id, authored) VALUES (${problemId}, '{"optimal":"def solve(a): return sum(a)"}'::jsonb)`;
     });
-    const enqueueId = enqueued[0]?.execution_id;
-    assert.ok(enqueueId);
-    const queued = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ status: string; result: Record<string, unknown> }[]>`SELECT status, result FROM practice.execution_runs WHERE id = ${enqueueId}`;
-    });
-    assert.equal(queued[0]?.status, "queued");
-    await runner`UPDATE practice.execution_runs SET status = 'succeeded', result = '{"passed":true}', started_at = now(), completed_at = now() WHERE id = ${enqueueId}`;
-    await expectRejected(
-      () => runner`UPDATE practice.execution_runs SET runtime_image_digest = 'sha256:forged' WHERE id = ${enqueueId}`,
-      "runner changing trusted execution policy",
-    );
-    await expectRejected(
-      () => runner`
-        INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes)
-        VALUES ('00000000-0000-0000-0000-000000000824', ${ids.attemptA}, ${ids.snapshotA}, ${ids.testBundle}, '00000000-0000-0000-0000-000000000824', 'queued', 'runner', 'sha256:seed-runtime', '7777777777777777777777777777777777777777777777777777777777777777', '8888888888888888888888888888888888888888888888888888888888888888', 1000, 2000, 134217728)
-      `,
-      "runner inserting execution request",
-    );
-    const result = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ status: string; result: Record<string, unknown> }[]>`SELECT status, result FROM practice.execution_runs WHERE id = ${enqueueId}`;
-    });
-    assert.equal(result[0]?.status, "succeeded");
-    assert.equal(result[0]?.result.passed, true);
-    await migrator`DELETE FROM practice.execution_runs WHERE id = ${enqueueId}`;
-    const payload = await runner<{ execution_run_id: string; source_code: string; test_bundle_object_key: string }[]>`
-      SELECT execution_run_id, source_code, test_bundle_object_key
-      FROM practice.runner_execution_payload
-      WHERE execution_run_id = ${ids.executionRun}
-    `;
-    assert.equal(payload.length, 1);
-    assert.equal(payload[0]?.source_code.includes("enqueue"), true);
-    assert.equal(payload[0]?.test_bundle_object_key, "seed/test-bundles/queue.json");
-    const publishedExercise = "00000000-0000-0000-0000-000000000826";
-    await worker`
-      INSERT INTO practice.exercises (id, kind, canonical_concept_id, title, status, created_by, owner_user_id, metadata)
-      VALUES (${publishedExercise}, 'code', ${ids.concept}, 'Worker publication', 'active', 'worker', NULL, '{}'::jsonb)
-    `;
-    await migrator`DELETE FROM practice.exercises WHERE id = ${publishedExercise}`;
+    await expectRejected(() => asLearner((tx) => tx`SELECT authored FROM practice.coding_problem_secrets WHERE problem_id = ${problemId}`), "application reading hidden tests");
+    await expectRejected(() => ai`SELECT authored FROM practice.coding_problem_secrets WHERE problem_id = ${problemId}`, "AI reading hidden tests");
+    await expectRejected(() => asLearner((tx) => tx`UPDATE practice.coding_problem_secrets SET tests = '{"forged":true}'::jsonb WHERE problem_id = ${problemId}`), "application rewriting hidden tests");
+    await expectRejected(() => asLearner((tx) => tx`UPDATE practice.coding_problems SET status = 'verified', verified_at = now() WHERE id = ${problemId}`), "application marking a problem verified");
+    await asLearner((tx) => tx`UPDATE practice.coding_problems SET status = 'verifying' WHERE id = ${problemId}`);
+    // The runner verifies it: it reads the hidden half, stores the tests and publishes the problem.
+    const secrets = await runner<{ authored: Record<string, unknown> }[]>`SELECT authored FROM practice.coding_problem_secrets WHERE problem_id = ${problemId}`;
+    assert.equal(secrets[0]?.authored.optimal, "def solve(a): return sum(a)");
+    await expectRejected(() => runner`UPDATE practice.coding_problem_secrets SET authored = '{}'::jsonb WHERE problem_id = ${problemId}`, "runner rewriting authored references");
+    await expectRejected(() => runner`UPDATE practice.coding_problems SET spec = '{"forged":true}'::jsonb WHERE id = ${problemId}`, "runner rewriting a problem statement");
+    await runner`UPDATE practice.coding_problem_secrets SET tests = '{"small":[],"large":[]}'::jsonb, perf_limit_ms = 1000 WHERE problem_id = ${problemId}`;
+    await runner`UPDATE practice.coding_problems SET status = 'verified', verified_at = now() WHERE id = ${problemId}`;
+    // A verified problem is fixed: the app's update matches nothing.
+    await asLearner((tx) => tx`UPDATE practice.coding_problems SET status = 'rejected', title = 'Forged' WHERE id = ${problemId}`);
+    const published = await migrator<{ status: string; title: string }[]>`SELECT status, title FROM practice.coding_problems WHERE id = ${problemId}`;
+    assert.deepEqual(published[0], { status: "verified", title: "Sum" });
+    await migrator`DELETE FROM practice.coding_problems WHERE id = ${problemId}`;
   }],
   ["public catalog visibility and global write protection", async () => {
     const collectionId = "00000000-0000-0000-0000-000000000901";
@@ -372,8 +297,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     const itemId = "00000000-0000-0000-0000-000000000903";
     const videoResourceId = "00000000-0000-0000-0000-000000000904";
     const paperResourceId = "00000000-0000-0000-0000-000000000905";
-    const exampleId = "00000000-0000-0000-0000-000000000906";
-    await migrator`DELETE FROM practice.exercise_examples WHERE id = ${exampleId}`;
     await migrator`DELETE FROM catalog.collection_items WHERE id = ${itemId}`;
     await migrator`DELETE FROM catalog.collection_sections WHERE id = ${sectionId}`;
     await migrator`DELETE FROM catalog.collections WHERE id = ${collectionId}`;
@@ -406,32 +329,23 @@ const tests: Array<[string, () => Promise<void>]> = [
       INSERT INTO catalog.collection_items (id, section_id, resource_id, position)
       VALUES (${itemId}, ${sectionId}, ${ids.publicResource}, 0)
     `;
-    await worker`
-      INSERT INTO practice.exercise_examples (id, exercise_version_id, ordinal, input_text, expected_output_text, explanation)
-      VALUES (${exampleId}, ${ids.exerciseVersion}, 99, 'input', 'output', 'explanation')
-    `;
     const visible = await app.begin(async (tx) => {
       await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ collections: string; items: string; video: string; paper: string; example: string }[]>`
+      return tx<{ collections: string; items: string; video: string; paper: string }[]>`
         SELECT
           (SELECT count(*)::text FROM catalog.collections WHERE id = ${collectionId}) AS collections,
           (SELECT count(*)::text FROM catalog.collection_items WHERE id = ${itemId}) AS items,
           (SELECT count(*)::text FROM catalog.video_details WHERE resource_id = ${videoResourceId}) AS video,
-          (SELECT count(*)::text FROM catalog.paper_details WHERE resource_id = ${paperResourceId}) AS paper,
-          (SELECT count(*)::text FROM practice.exercise_examples WHERE id = ${exampleId}) AS example
+          (SELECT count(*)::text FROM catalog.paper_details WHERE resource_id = ${paperResourceId}) AS paper
       `;
     });
-    assert.deepEqual(visible[0], { collections: "1", items: "1", video: "1", paper: "1", example: "1" });
+    assert.deepEqual(visible[0], { collections: "1", items: "1", video: "1", paper: "1" });
     await app.begin(async (tx) => {
       await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
       await tx`UPDATE catalog.resources SET owner_user_id = ${ids.userA} WHERE id = ${ids.publicResource}`;
       await tx`UPDATE catalog.collections SET owner_user_id = ${ids.userA} WHERE id = ${collectionId}`;
-      await tx`UPDATE practice.exercises SET owner_user_id = ${ids.userA} WHERE id = ${ids.exercise}`;
-      await tx`UPDATE practice.exercise_examples SET explanation = 'forged' WHERE id = ${exampleId}`;
       await tx`DELETE FROM catalog.resources WHERE id = ${ids.publicResource}`;
       await tx`DELETE FROM catalog.collections WHERE id = ${collectionId}`;
-      await tx`DELETE FROM practice.exercises WHERE id = ${ids.exercise}`;
-      await tx`DELETE FROM practice.exercise_examples WHERE id = ${exampleId}`;
     });
     const unchanged = await migrator<{ owner_user_id: string | null; title: string }[]>`
       SELECT owner_user_id, title FROM catalog.resources WHERE id = ${ids.publicResource}
@@ -461,7 +375,6 @@ const tests: Array<[string, () => Promise<void>]> = [
       () => app`UPDATE catalog.paper_details SET abstract = 'forged' WHERE resource_id = ${paperResourceId}`,
       "user updating global paper metadata",
     );
-    await migrator`DELETE FROM practice.exercise_examples WHERE id = ${exampleId}`;
     await migrator`DELETE FROM catalog.collection_items WHERE id = ${itemId}`;
     await migrator`DELETE FROM catalog.collection_sections WHERE id = ${sectionId}`;
     await migrator`DELETE FROM catalog.collections WHERE id = ${collectionId}`;
@@ -673,47 +586,7 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${evidenceRun}`;
     await migrator`DELETE FROM activity.activity_events WHERE id = ${evidenceEvent}`;
   }],
-  ["practice provenance and tutor ownership", async () => {
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.exercise_attempts (id, user_id, study_session_id, exercise_binding_id, exercise_version_id, status, language, metadata)
-        VALUES ('00000000-0000-0000-0000-000000000837', ${ids.userA}, ${ids.sessionA}, ${ids.binding}, ${ids.exerciseVersionB}, 'started', 'typescript', '{}'::jsonb)
-      `,
-      "attempt using wrong exercise version",
-    );
-    const attemptB = "00000000-0000-0000-0000-000000000838";
-    const snapshotB = "00000000-0000-0000-0000-000000000839";
-    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${snapshotB}`;
-    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${attemptB}`;
-    await migrator`
-      INSERT INTO practice.exercise_attempts (id, user_id, study_session_id, exercise_binding_id, exercise_version_id, status, language, metadata)
-      VALUES (${attemptB}, ${ids.userA}, ${ids.sessionA}, ${ids.binding}, ${ids.exerciseVersion}, 'started', 'typescript', '{}'::jsonb)
-    `;
-    await migrator`
-      INSERT INTO practice.code_snapshots (id, attempt_id, sequence_no, kind, source_code, source_sha256)
-      VALUES (${snapshotB}, ${attemptB}, 0, 'edit', 'export const retry = true;', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
-    `;
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.code_snapshots (id, attempt_id, sequence_no, kind, source_code, source_sha256, parent_snapshot_id)
-        VALUES ('00000000-0000-0000-0000-000000000840', ${ids.attemptA}, 10, 'edit', 'invalid parent', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', ${snapshotB})
-      `,
-      "code snapshot from another attempt",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes)
-        VALUES ('00000000-0000-0000-0000-000000000841', ${ids.attemptA}, ${snapshotB}, ${ids.testBundle}, '00000000-0000-0000-0000-000000000842', 'queued', 'db-test', 'sha256:seed-runtime', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', '8888888888888888888888888888888888888888888888888888888888888888', 1000, 2000, 134217728)
-      `,
-      "execution using snapshot from another attempt",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes)
-        VALUES ('00000000-0000-0000-0000-000000000843', ${ids.attemptA}, ${ids.snapshotA}, ${ids.testBundleB}, '00000000-0000-0000-0000-000000000844', 'queued', 'db-test', 'sha256:seed-runtime', '7777777777777777777777777777777777777777777777777777777777777777', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', 1000, 2000, 134217728)
-      `,
-      "execution using test bundle from another exercise",
-    );
+  ["coding attempt and tutor ownership", async () => {
     await expectRejected(
       () => migrator`
         INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode, status, metadata)
@@ -721,8 +594,24 @@ const tests: Array<[string, () => Promise<void>]> = [
       `,
       "tutor thread user mismatch",
     );
-    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${snapshotB}`;
-    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${attemptB}`;
+    const problemId = "00000000-0000-0000-0000-000000000846";
+    await migrator`DELETE FROM practice.coding_problems WHERE id = ${problemId}`;
+    await migrator`INSERT INTO practice.coding_problems (id, concept, difficulty, status, contract_version) VALUES (${problemId}, 'arrays', 'easy', 'generating', 'db-test')`;
+    await expectRejected(
+      () => migrator`
+        INSERT INTO practice.coding_attempts (user_id, study_session_id, resource_id, problem_id, role, state, language)
+        VALUES (${ids.userB}, ${ids.sessionA}, ${ids.publicResource}, ${problemId}, 'primary', 'PROBLEM_INTRO', 'python')
+      `,
+      "coding attempt in another user's session",
+    );
+    await expectRejected(
+      () => app.begin(async (tx) => {
+        await tx`SELECT set_config('app.user_id', ${ids.userB}, true)`;
+        await tx`INSERT INTO practice.coding_attempts (user_id, study_session_id, resource_id, problem_id, role, state, language) VALUES (${ids.userA}, ${ids.sessionA}, ${ids.publicResource}, ${problemId}, 'primary', 'PROBLEM_INTRO', 'python')`;
+      }),
+      "coding attempt written for another learner",
+    );
+    await migrator`DELETE FROM practice.coding_problems WHERE id = ${problemId}`;
   }],
   ["composite provenance across progress and artifacts", async () => {
     const progressId = "00000000-0000-0000-0000-000000000914";
@@ -789,158 +678,8 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${artifactResourceId}`;
     await migrator`DELETE FROM catalog.resources WHERE id = ${artifactResourceId}`;
   }],
-  ["final binding and observer provenance hardening", async () => {
-    await migrator`DELETE FROM practice.hint_events WHERE id IN (${ids.hardeningHintA}, ${ids.hardeningHintDiagnostic}, ${ids.hardeningHintModel})`;
-    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticSnapshot}, ${ids.hardeningDiagnosticExecution}, ${ids.hardeningDiagnosticModel})`;
-    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
-    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
-    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
-    await migrator`DELETE FROM practice.exercise_bindings WHERE id IN (${ids.hardeningBindingGlobal}, ${ids.hardeningBindingForeign}, ${ids.hardeningBindingOwn}, ${ids.hardeningBindingOutside})`;
+  ["progress chunk provenance hardening", async () => {
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}`;
-
-    await worker`
-      INSERT INTO practice.exercise_bindings (id, exercise_version_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
-      VALUES (${ids.hardeningBindingGlobal}, ${ids.exerciseVersion}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'global-worker', 0.8)
-    `;
-    await worker`
-      INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
-      VALUES (${ids.hardeningBindingForeign}, ${ids.exerciseVersion}, ${ids.sessionB}, ${ids.privateResourceB}, ${ids.privateVersionB}, ${ids.privateChunkB}, ${ids.concept}, true, 'session-b-worker', 0.8)
-    `;
-    await worker`
-      UPDATE practice.exercise_bindings
-      SET trigger_reason = 'global-worker-updated'
-      WHERE id = ${ids.hardeningBindingGlobal}
-    `;
-    const globalBinding = await migrator<{ trigger_reason: string }[]>`
-      SELECT trigger_reason FROM practice.exercise_bindings WHERE id = ${ids.hardeningBindingGlobal}
-    `;
-    assert.equal(globalBinding[0]?.trigger_reason, "global-worker-updated");
-
-    await expectRejected(
-      () => app.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          INSERT INTO practice.exercise_bindings (id, exercise_version_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
-          VALUES (${ids.hardeningBindingOutside}, ${ids.exerciseVersion}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'app-global', 0.8)
-        `;
-      }),
-      "application creating global exercise binding",
-    );
-    const globalUpdate = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        UPDATE practice.exercise_bindings
-        SET trigger_reason = 'app-forged-global-update'
-        WHERE id = ${ids.hardeningBindingGlobal}
-        RETURNING id
-      `;
-    });
-    assert.equal(globalUpdate.length, 0);
-    const globalDelete = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        DELETE FROM practice.exercise_bindings
-        WHERE id = ${ids.hardeningBindingGlobal}
-        RETURNING id
-      `;
-    });
-    assert.equal(globalDelete.length, 0);
-
-    const ownBinding = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
-        VALUES (${ids.hardeningBindingOwn}, ${ids.exerciseVersion}, ${ids.sessionA}, ${ids.publicResource}, ${ids.publicVersion}, ${ids.publicChunk}, ${ids.concept}, true, 'own-session', 0.8)
-        RETURNING id
-      `;
-    });
-    assert.deepEqual(ownBinding.map((row) => row.id), [ids.hardeningBindingOwn]);
-    const ownBindingUpdate = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        UPDATE practice.exercise_bindings
-        SET trigger_reason = 'own-session-updated'
-        WHERE id = ${ids.hardeningBindingOwn}
-        RETURNING id
-      `;
-    });
-    assert.deepEqual(ownBindingUpdate.map((row) => row.id), [ids.hardeningBindingOwn]);
-    const foreignBindingUpdate = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        UPDATE practice.exercise_bindings
-        SET trigger_reason = 'cross-user-session-update'
-        WHERE id = ${ids.hardeningBindingForeign}
-        RETURNING id
-      `;
-    });
-    assert.equal(foreignBindingUpdate.length, 0);
-    const ownBindingDelete = await app.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      return tx<{ id: string }[]>`
-        DELETE FROM practice.exercise_bindings
-        WHERE id = ${ids.hardeningBindingOwn}
-        RETURNING id
-      `;
-    });
-    assert.deepEqual(ownBindingDelete.map((row) => row.id), [ids.hardeningBindingOwn]);
-    await expectRejected(
-      () => app.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, required, trigger_reason, confidence)
-          VALUES (${ids.hardeningBindingOutside}, ${ids.exerciseVersion}, ${ids.sessionA}, ${ids.privateResourceB}, ${ids.privateVersionB}, ${ids.privateChunkB}, ${ids.concept}, true, 'outside-session', 0.8)
-        `;
-      }),
-      "binding resource outside study session",
-    );
-
-    await migrator`
-      INSERT INTO practice.exercise_attempts (id, user_id, study_session_id, exercise_binding_id, exercise_version_id, status, language, metadata)
-      VALUES (${ids.hardeningAttemptB}, ${ids.userA}, ${ids.sessionA}, ${ids.binding}, ${ids.exerciseVersion}, 'started', 'typescript', '{}'::jsonb)
-    `;
-    await migrator`
-      INSERT INTO practice.code_snapshots (id, attempt_id, sequence_no, kind, source_code, source_sha256)
-      VALUES (${ids.hardeningSnapshotB}, ${ids.hardeningAttemptB}, 0, 'edit', 'export const hardening = true;', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
-    `;
-    await migrator`
-      INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes)
-      VALUES (${ids.hardeningExecutionB}, ${ids.hardeningAttemptB}, ${ids.hardeningSnapshotB}, ${ids.testBundle}, '00000000-0000-0000-0000-000000000987', 'queued', 'db-test', 'sha256:seed-runtime', 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', '8888888888888888888888888888888888888888888888888888888888888888', 1000, 2000, 134217728)
-    `;
-    await migrator`
-      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-      VALUES (${ids.hardeningDiagnosticA}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, 'logic', 'low', 0.8, '{}'::jsonb, 'same attempt diagnostic', 'db-test')
-    `;
-    await migrator`
-      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-      VALUES (${ids.hardeningDiagnosticB}, ${ids.hardeningAttemptB}, ${ids.hardeningExecutionB}, ${ids.hardeningSnapshotB}, 'logic', 'low', 0.8, '{}'::jsonb, 'second attempt diagnostic', 'db-test')
-    `;
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-        VALUES (${ids.hardeningDiagnosticSnapshot}, ${ids.attemptA}, ${ids.executionRun}, ${ids.hardeningSnapshotB}, 'logic', 'high', 0.8, '{}'::jsonb, 'wrong snapshot attempt', 'db-test')
-      `,
-      "observer diagnostic using another attempt snapshot",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-        VALUES (${ids.hardeningDiagnosticExecution}, ${ids.attemptA}, ${ids.hardeningExecutionB}, ${ids.snapshotA}, 'logic', 'high', 0.8, '{}'::jsonb, 'wrong execution attempt', 'db-test')
-      `,
-      "observer diagnostic using another attempt execution",
-    );
-    await migrator`
-      INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, hint_level, trigger_type, user_requested, content, policy_version)
-      VALUES (${ids.hardeningHintA}, ${ids.attemptA}, ${ids.hardeningDiagnosticA}, 1, 'observer', false, 'same attempt hint', 'db-test')
-    `;
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, hint_level, trigger_type, user_requested, content, policy_version)
-        VALUES (${ids.hardeningHintDiagnostic}, ${ids.attemptA}, ${ids.hardeningDiagnosticB}, 1, 'observer', false, 'wrong attempt hint', 'db-test')
-      `,
-      "hint using another attempt diagnostic",
-    );
-
     await migrator`
       INSERT INTO study.user_resource_progress (user_id, resource_id, last_session_id, status, last_chunk_id)
       VALUES (${ids.userA}, ${ids.publicResource}, ${ids.sessionA}, 'in_progress', ${ids.publicChunk})
@@ -959,7 +698,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     `;
     assert.equal(validProgress[0]?.last_chunk_id, ids.publicChunk);
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}`;
-    await migrator`DELETE FROM practice.exercise_bindings WHERE id IN (${ids.hardeningBindingGlobal}, ${ids.hardeningBindingForeign})`;
   }],
   ["final agent artifact and optional provenance hardening", async () => {
     await migrator`DELETE FROM retrieval.citations WHERE id = ${ids.hardeningCitation}`;
@@ -972,11 +710,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
     await migrator`DELETE FROM study.tutor_threads WHERE id IN (${ids.hardeningThreadA}, ${ids.hardeningThreadB})`;
-    await migrator`DELETE FROM practice.hint_events WHERE id IN (${ids.hardeningHintA}, ${ids.hardeningHintDiagnostic}, ${ids.hardeningHintModel})`;
-    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticSnapshot}, ${ids.hardeningDiagnosticExecution}, ${ids.hardeningDiagnosticModel})`;
-    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
-    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
-    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
 
     await migrator`
       INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode, status, metadata)
@@ -1016,30 +749,6 @@ const tests: Array<[string, () => Promise<void>]> = [
       `,
       "tutor message using another thread's source message",
     );
-
-    await migrator`
-      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-      VALUES (${ids.hardeningDiagnosticA}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, 'model', 'low', 0.8, '{}'::jsonb, 'diagnostic provenance anchor', 'db-test')
-    `;
-    await migrator`
-      INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, model_invocation_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-      VALUES (${ids.hardeningDiagnosticModel}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, ${ids.hardeningModelInvocationA}, 'model', 'low', 0.8, '{}'::jsonb, 'model A diagnostic', 'db-test')
-    `;
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.observer_diagnostics (id, attempt_id, execution_run_id, code_snapshot_id, model_invocation_id, category, severity, confidence, evidence, diagnostic_text, policy_version)
-        VALUES (${ids.hardeningDiagnosticSnapshot}, ${ids.attemptA}, ${ids.executionRun}, ${ids.snapshotA}, ${ids.hardeningModelInvocationB}, 'model', 'high', 0.8, '{}'::jsonb, 'model B diagnostic', 'db-test')
-      `,
-      "observer diagnostic using another user's model invocation",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO practice.hint_events (id, attempt_id, diagnostic_id, model_invocation_id, hint_level, trigger_type, user_requested, content, policy_version)
-        VALUES (${ids.hardeningHintModel}, ${ids.attemptA}, ${ids.hardeningDiagnosticA}, ${ids.hardeningModelInvocationB}, 1, 'model', false, 'model B hint', 'db-test')
-      `,
-      "hint using another user's model invocation",
-    );
-    await migrator`UPDATE practice.observer_diagnostics SET model_invocation_id = ${ids.hardeningModelInvocationA} WHERE id = ${ids.hardeningDiagnosticA}`;
 
     await migrator`
       INSERT INTO catalog.resources (id, owner_user_id, type, provider, external_id, title, visibility, status, metadata)
@@ -1121,11 +830,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
     await migrator`DELETE FROM study.tutor_threads WHERE id IN (${ids.hardeningThreadA}, ${ids.hardeningThreadB})`;
-    await migrator`DELETE FROM practice.hint_events WHERE id = ${ids.hardeningHintA}`;
-    await migrator`DELETE FROM practice.observer_diagnostics WHERE id IN (${ids.hardeningDiagnosticA}, ${ids.hardeningDiagnosticB}, ${ids.hardeningDiagnosticModel})`;
-    await migrator`DELETE FROM practice.execution_runs WHERE id = ${ids.hardeningExecutionB}`;
-    await migrator`DELETE FROM practice.code_snapshots WHERE id = ${ids.hardeningSnapshotB}`;
-    await migrator`DELETE FROM practice.exercise_attempts WHERE id = ${ids.hardeningAttemptB}`;
   }],
   ["agent and discovery provenance isolation", async () => {
     const threadA = "00000000-0000-0000-0000-000000000922";

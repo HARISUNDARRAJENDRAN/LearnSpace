@@ -3,6 +3,8 @@ packages:
   - services/*
   - packages/*
 allowBuilds:
+  cpu-features: false
+  ssh2: false
   esbuild: true
   onnxruntime-node: false
   protobufjs: false

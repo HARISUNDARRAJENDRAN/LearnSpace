@@ -57,6 +57,33 @@ USER node
 
 CMD ["node", "worker/dist/index.js", "--loop"]
 
+FROM base AS runner-build
+
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .npmrc ./
+COPY packages/shared/package.json packages/shared/package.json
+COPY services/runner/package.json services/runner/package.json
+RUN --mount=type=cache,id=learnspace-pnpm,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir /pnpm/store --filter @learnspace/runner... --filter learnspace
+COPY packages/shared ./packages/shared
+COPY services/runner ./services/runner
+
+RUN pnpm --filter "@learnspace/runner..." run build \
+    && pnpm --filter @learnspace/runner deploy --prod --legacy --config.allowUnusedPatches=true /runner-runtime
+
+# The code runner: the only service that runs learner code (each run in a fresh, network-less sandbox container) and the
+# only reader of problems' hidden tests. It drives the host's Docker, so it needs the Docker socket; give it a host of its
+# own, or gVisor (SANDBOX_RUNTIME=runsc), in production.
+FROM node:${NODE_VERSION}-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+
+WORKDIR /service
+COPY --from=runner-build /runner-runtime ./runner
+EXPOSE 4100
+HEALTHCHECK --interval=20s --timeout=5s --start-period=10s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "runner/dist/server.js"]
+
 # A production web image contains Next's traced runtime, public assets and nothing from the build toolchain.
 FROM source AS web-build
 

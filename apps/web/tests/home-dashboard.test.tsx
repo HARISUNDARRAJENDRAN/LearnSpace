@@ -8,7 +8,8 @@ import { HomeDashboard } from "../components/home/HomeDashboard";
 import { formatLearningDuration } from "../lib/home/duration";
 import type { HomeLesson, LearnHomeData } from "../lib/home/service";
 import { achievements, type ActivityDay, learnerStats, levelFor, progression } from "../lib/plan/levels";
-import { fallbackActions, reconcileDay, reconcileStudyItem, shouldReplan } from "../lib/plan/observer";
+import { kindFromWords } from "../lib/plan/kinds";
+import { fallbackActions, freeSlot, reconcileDay, reconcileStudyItem, shouldReplan } from "../lib/plan/observer";
 import type { PlanItem } from "../lib/plan/service";
 
 const router = { bfcacheId: "home-test", back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {} };
@@ -40,7 +41,7 @@ test("each activity earns its own points, questions are capped, and streak days 
   assert.equal(result.weekXp, 170);
   assert.equal(result.todayXp, 0);
   assert.equal(result.streak, 2);
-  assert.deepEqual(result.earned, { watch: 90, read: 20, finish_video: 50, finish_paper: 0, question: 50, plan_watch: 0, plan_read: 0, plan_practice: 40, plan_review: 0, streak: 10 });
+  assert.deepEqual(result.earned, { watch: 90, read: 20, finish_video: 50, finish_paper: 0, question: 50, plan_watch: 0, plan_read: 0, plan_practice: 40, plan_review: 0, on_time: 0, in_slot: 0, day_plan: 0, streak: 10 });
   // A half-done Read item earns half of its 30 points.
   assert.equal(progression([{ day: "2026-09-24", activity: "plan_read", amount: 0.5 }], "2026-09-24").xp, 15);
 });
@@ -92,6 +93,31 @@ test("without material, a day's study is shared among its items by kind", () => 
   assert.deepEqual([linked.get("first")?.progressPct, linked.get("later")?.progressPct], [3, 0]);
   const finished = reconcileDay([hour("first", "watch", 18), { ...hour("later", "watch", 19), resourceId: "video" }], [{ ...studied("video", 2), finished: true }]);
   assert.deepEqual([finished.get("first")?.progressPct, finished.get("later")?.done], [3, true]);
+});
+
+test("study from before an item was planned never counts toward it", () => {
+  const at = (hour: number, minute = 0) => new Date(`2026-09-24T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00Z`);
+  const todo = { id: "t", kind: "review" as const, resourceId: null, startsAt: at(0), endsAt: null, allDay: true, createdAt: at(15) };
+  const session = (start: Date, minutes: number) => ({ resourceId: "v", title: "Java", type: "video", seconds: minutes * 60, finished: false, at: start });
+  assert.equal(reconcileDay([todo], [session(at(10), 60)]).get("t")?.progressPct, 0);
+  // Pressing play a few minutes before planning it still counts.
+  assert.equal(reconcileDay([todo], [session(at(14, 50), 30)]).get("t")?.done, true);
+});
+
+test("free-text plans take their type from their words", () => {
+  assert.equal(kindFromWords("Solve 5 recursion problems"), "practice");
+  assert.equal(kindFromWords("Recap the practice set"), "review");
+  assert.equal(kindFromWords("Read the attention paper"), "read");
+  assert.equal(kindFromWords("Watch a lecture on graphs"), "watch");
+  assert.equal(kindFromWords("Learn polymorphism"), null);
+});
+
+test("planner items land in the first free slot", () => {
+  const hour = 3_600_000;
+  assert.equal(freeSlot(0, hour, []), 0);
+  assert.equal(freeSlot(0, hour, [{ start: 30 * 60_000, end: 2 * hour }]), 2 * hour);
+  assert.equal(freeSlot(0, hour, [{ start: 2 * hour, end: 3 * hour }, { start: hour / 2, end: 2 * hour }]), 3 * hour);
+  assert.equal(freeSlot(0, hour / 2, [{ start: hour, end: 2 * hour }]), 0);
 });
 
 test("dates read and write as dd/mm/yyyy and reject impossible days", () => {
@@ -149,8 +175,8 @@ test("Home renders recent study, the agent's next actions and the level card", (
     recentLessons: [lesson("Java inheritance", { openedDay: "2026-09-23" }), lesson("Attention paper", { type: "pdf", status: "completed" })],
     nextActions: [item({ status: "suggested", source: "agent", title: "Study polymorphism next", description: "It builds on inheritance." })],
   });
-  for (const text of ["Recent study", "Java inheritance", "Yesterday", "64% complete", "Last session", "5 min", "Resume", "Attention paper", "Done",
-    "Next actions", "Study polymorphism next", "It builds on inheritance.", "Add to plan",
+  for (const text of ["Recent study", "Java inheritance", "Yesterday", "64<small>%</small>", 'aria-valuenow="64"', "Last session", "5 min", "Resume", "Attention paper", "Done",
+    "Next actions", "Study polymorphism next", "It builds on inheritance.", "Remove from calendar",
     "Level &amp; rank", "Level 2", "Bronze", "150", "100 XP to Level 3", "2-day streak", "How every activity earns XP"]) assert.match(markup, new RegExp(text));
   assert.match(markup, /aria-label="Study plan" aria-busy="true"/);
 });

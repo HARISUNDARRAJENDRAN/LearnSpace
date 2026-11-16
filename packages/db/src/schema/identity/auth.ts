@@ -45,5 +45,7 @@ export const authSessions = identitySchema.table(
       .on(table.userId, table.expiresAt)
       .where(sql`${table.revokedAt} IS NULL`),
     unique("auth_sessions_user_id_uq").on(table.userId, table.id),
+    // Every request finds its session by the cookie's hash; without this the lookup reads the whole table.
+    index("auth_sessions_refresh_token_hash_idx").on(table.refreshTokenHash),
   ],
 );

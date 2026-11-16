@@ -78,6 +78,16 @@
       "types": "./src/tutor.ts",
       "import": "./dist/tutor.js",
       "default": "./dist/tutor.js"
+    },
+    "./coding": {
+      "types": "./src/coding.ts",
+      "import": "./dist/coding.js",
+      "default": "./dist/coding.js"
+    },
+    "./coding-code": {
+      "types": "./src/coding-code.ts",
+      "import": "./dist/coding-code.js",
+      "default": "./dist/coding-code.js"
     }
   },
   "scripts": {

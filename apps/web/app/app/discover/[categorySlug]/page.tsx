@@ -4,7 +4,8 @@ import { DiscoveryBrowser } from "../../../../components/discovery/DiscoveryBrow
 import { hasBrowsableResources } from "../../../../lib/discovery/browse";
 import { getCurriculum, getCurriculumCategoryBySlug, withPlaylistThumbnailFallbacks } from "../../../../lib/discovery/curriculum";
 import { requireCompletedSession } from "../../../../lib/discovery/access";
-import { findCurrentStudySession, isCourseImportable } from "../../../../lib/study/service";
+import { isInWatchLater } from "../../../../lib/library/watch-later";
+import { isCourseImportable } from "../../../../lib/study/service";
 
 export const dynamic = "force-dynamic";
 export const dynamicParams = false;
@@ -34,7 +35,6 @@ export default async function DiscoverCategoryPage({ params, searchParams }: Pro
 
   const { category } = resolved;
   const auth = await requireCompletedSession();
-  // Sessions holds one course at a time, so importing is offered only while it is empty.
-  const [current, importable, withThumbnails] = await Promise.all([findCurrentStudySession(auth.user.id), isCourseImportable(category.slug, auth.user.id), withPlaylistThumbnailFallbacks(category)]);
-  return <DiscoveryBrowser key={category.slug} initialStep={Number(step) || 1} category={withThumbnails} canImport={!current && importable} />;
+  const [importable, inWatchLater, withThumbnails] = await Promise.all([isCourseImportable(category.slug, auth.user.id), isInWatchLater(auth.user.id, category.slug), withPlaylistThumbnailFallbacks(category)]);
+  return <DiscoveryBrowser key={category.slug} initialStep={Number(step) || 1} category={withThumbnails} canImport={importable} inWatchLater={inWatchLater} />;
 }

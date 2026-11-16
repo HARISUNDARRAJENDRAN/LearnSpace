@@ -1,12 +1,21 @@
 import { z } from "zod";
 
 /** Bumped whenever the companion's prompt or output contract changes. */
-export const NOTES_CONTRACT_VERSION = "notes-v3";
-export const NOTES_MAX_BLOCKS = 200;
-export const NOTES_MAX_TEXT = 2_000;
+export const NOTES_CONTRACT_VERSION = "notes-v9";
+export const NOTES_MAX_BLOCKS = 3_000;
+// Room for a styled diagram's JSON; prose blocks are far shorter.
+export const NOTES_MAX_TEXT = 6_000;
 
-/** idea: a tentative thought; decision: something the learner settled on; question: still open. */
-export const noteBlockTypeSchema = z.enum(["heading", "paragraph", "bullet", "task", "idea", "decision", "question", "diagram", "image", "link"]);
+/**
+ * idea: a claim still under debate; decision: a conclusion the learner reached and can defend; question: a challenge still open.
+ * step: one numbered step of a process; eli5: the idea in plain words, by analogy; example: a worked example or real use;
+ * takeaway: a definition or point worth remembering; aside: context from beyond the video. code: a language name, a newline,
+ * then the code; table: a Markdown table.
+ */
+export const noteBlockTypeSchema = z.enum([
+  "heading", "subheading", "paragraph", "bullet", "step", "task", "idea", "decision", "question", "eli5", "example", "takeaway", "aside",
+  "diagram", "image", "link", "code", "table",
+]);
 export type NoteBlockType = z.infer<typeof noteBlockTypeSchema>;
 export type NoteActor = "you" | "luna";
 /** `rev` is the notes revision that last changed the block and `by` who changed it, so a stale edit never overwrites a newer one. */
@@ -26,62 +35,88 @@ export const noteOpSchema = z.object({
 }).strict();
 export type NoteOp = z.infer<typeof noteOpSchema>;
 
-/** Luna's first words, a reaction voiced ahead of time so she is heard the moment she starts answering; "" for none. */
-export const NOTES_OPENERS = [
-  "", "Hmm.", "Mm-hm.", "Oh, nice.", "Ooh.", "Oh!", "Wait, really?", "Right.", "Okay.", "Exactly.", "Interesting.", "Huh.",
-  "Hmm, not quite.", "Good question.", "Fair point.", "Yes!", "I see.",
-] as const;
-
-/** Coordinates use the unit square of the lesson, independent of zoom, screen size or device pixels. */
-export const tutorMarkSchema = z.object({
-  id: z.string().regex(/^[a-z0-9-]{1,24}$/),
-  kind: z.enum(["arrow", "circle", "box", "label", "stroke"]),
-  points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict()).min(1).max(100),
-  text: z.string().max(120),
-  color: z.enum(["cyan", "pink", "yellow", "white"]),
-}).strict();
-export type TutorMark = z.infer<typeof tutorMarkSchema>;
-export const tutorVisualSchema = z.object({
-  marks: z.array(tutorMarkSchema).max(16),
-  clear: z.boolean(),
+/** Luny moving the lesson: a seek, play or pause, written inline in her speech. */
+export const lessonControlSchema = z.object({
   seekMs: z.number().int().min(0).max(86_400_000).nullable(),
   playback: z.enum(["play", "pause"]).nullable(),
 }).strict();
-export type TutorVisual = z.infer<typeof tutorVisualSchema>;
+export type LessonControl = z.infer<typeof lessonControlSchema>;
+export const DIAGRAM_COLORS = ["mint", "blue", "violet", "rose", "amber", "slate"] as const;
+export const DIAGRAM_SHAPES = ["box", "pill", "circle"] as const;
+/**
+ * A diagram block's text. Node centres are fractions of the diagram, so the scribe can place them; the learner can then move,
+ * resize, recolour and reshape them (w and h in pixels), and set the diagram's height. Unset styling is the default.
+ */
 export const diagramSchema = z.object({
-  nodes: z.array(z.object({ id: z.string().max(24), label: z.string().max(100), x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict()).min(1).max(12),
-  edges: z.array(z.object({ from: z.string().max(24), to: z.string().max(24), label: z.string().max(60) }).strict()).max(20),
+  nodes: z.array(z.object({
+    id: z.string().max(24),
+    label: z.string().max(100),
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    w: z.number().int().min(48).max(480).optional(),
+    h: z.number().int().min(28).max(320).optional(),
+    color: z.enum(DIAGRAM_COLORS).optional(),
+    shape: z.enum(DIAGRAM_SHAPES).optional(),
+  }).strict()).min(1).max(30),
+  edges: z.array(z.object({ from: z.string().max(24), to: z.string().max(24), label: z.string().max(60) }).strict()).max(40),
+  height: z.number().int().min(160).max(800).optional(),
 }).strict();
 export type NoteDiagram = z.infer<typeof diagramSchema>;
-export const notesSpatialSchema = z.object({
-  pointer: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) }).strict().nullable(),
-  marks: z.array(tutorMarkSchema).max(32),
-  selectedText: z.string().max(2_000),
-  // A single explicitly shared frame; never stored in notes or conversation history.
-  frame: z.string().max(700_000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/]+=*$/).nullable(),
+/** The study guide written from the video before the learner arrives: the page's first blocks, in order. */
+export const NOTES_GUIDE_MAX_BLOCKS = 150;
+export const notesGuideOutputSchema = z.object({
+  blocks: z.array(z.object({ type: noteBlockTypeSchema, text: z.string().max(NOTES_MAX_TEXT) }).strict()).min(1).max(NOTES_GUIDE_MAX_BLOCKS),
 }).strict();
-export type NotesSpatial = z.infer<typeof notesSpatialSchema>;
+export type NotesGuideOutput = z.infer<typeof notesGuideOutputSchema>;
+/**
+ * Where the video's study guide stands. pending: not written yet, and it can be; writing: being written now; waiting: the
+ * transcript is still coming; unavailable: the video has no transcript to write from; failed: the last try did not finish.
+ */
+export type NotesGuideStatus = "pending" | "writing" | "ready" | "waiting" | "unavailable" | "failed";
 
-/** What the companion returns each turn: the spoken reply first, so speech can start while the edits are still being written. */
-export const notesModelOutputSchema = z.object({ opener: z.enum(NOTES_OPENERS), say: z.string().max(1_200), ops: z.array(noteOpSchema).max(24), visual: tutorVisualSchema }).strict();
-export type NotesModelOutput = z.infer<typeof notesModelOutputSchema>;
+/** What the scribe returns: the edits that bring the notebook up to date with the conversation; often none. */
+export const notesScribeOutputSchema = z.object({ ops: z.array(noteOpSchema).max(24) }).strict();
+export type NotesScribeOutput = z.infer<typeof notesScribeOutputSchema>;
 
-/** The reply as spoken: the opener, a sentence of its own so it is voiced on its own, then the rest. */
-export const spokenReply = (opener: string, say: string): string => [opener, say.trim()].filter(Boolean).join(" ");
+/** One spoken line of the session's conversation, kept for good. */
+export type NoteLine = { speaker: NoteActor; text: string };
+export type NotesView = { revision: number; blocks: NoteBlock[]; canUndo: boolean; guide: NotesGuideStatus };
 
-export type NoteTurn = { you: string; luna: string };
-export type NotesView = { revision: number; blocks: NoteBlock[]; turns: NoteTurn[]; canUndo: boolean };
-
-export const notesTurnRequestSchema = z.object({ utterance: z.string().trim().min(1).max(4_000), positionMs: z.number().int().min(0).nullable(), spatial: notesSpatialSchema.optional() }).strict();
-export type NotesTurnRequest = z.infer<typeof notesTurnRequestSchema>;
+/**
+ * One spoken turn with Luny. `utterance` is what the learner said since Luny last answered, or null when Luny opens the
+ * conversation; `frame` is a JPEG of the lesson as it is on their screen.
+ */
+export const voiceTurnRequestSchema = z.object({
+  utterance: z.string().trim().min(1).max(4_000).nullable(),
+  positionMs: z.number().int().min(0).max(86_400_000).nullable(),
+  playing: z.boolean(),
+  frame: z.string().max(2_000_000).regex(/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/).nullable(),
+  /** Set on a turn the learner did not start: they paused the video, silent, after watching from here, and Luny may chime in. */
+  watchedFromMs: z.number().int().min(0).max(86_400_000).nullable(),
+  /**
+   * Also set on a turn the learner did not start. `waiting`: Luny let their last words go by as unfinished, and they have
+   * since gone quiet, so she now answers them. `idle`: nobody has spoken for a while with the video paused, and she may
+   * pick the talk back up once.
+   */
+  cue: z.enum(["waiting", "idle"]).nullable().optional(),
+}).strict();
+export type VoiceTurnRequest = z.infer<typeof voiceTurnRequestSchema>;
+/**
+ * The turn as it streams back: what Luny says, a sentence fragment at a time, and any seek, play or pause, then the end.
+ * A `say` marked `final` (with no text) comes as soon as her reply is complete, so its last sentence is spoken while the
+ * exchange is saved; `done` once it is. It is a `say` so that a page loaded before it existed reads it as nothing new.
+ */
+export type VoiceTurnEvent = { type: "say"; text: string; final?: true } | { type: "control"; control: LessonControl } | { type: "done" } | { type: "error"; message: string };
+/**
+ * A scribe pass as it streams back: each edit as soon as the model has written it whole, made against the notes at
+ * revision `base`, for showing while the pass runs; then the saved notes, which are what the page keeps.
+ */
+export type ScribeEvent = { type: "op"; op: NoteOp; base: number } | { type: "notes"; notes: NotesView } | { type: "error"; message: string; status: number };
 export const notesEditRequestSchema = z.union([
   z.object({ ops: z.array(noteOpSchema).min(1).max(20) }).strict(),
   z.object({ action: z.literal("undo") }).strict(),
 ]);
 export type NotesEditRequest = z.infer<typeof notesEditRequestSchema>;
-
-/** `say` grows as the reply streams; `done` carries the notes after the turn's edits. */
-export type NotesStreamEvent = { type: "say"; text: string } | { type: "done"; say: string; notes: NotesView; visual: TutorVisual } | { type: "error"; message: string };
 
 /**
  * Applies edits made against `baseRevision`, as revision `revision`. An edit is skipped, never forced, when its target is
@@ -115,3 +150,8 @@ export function applyNoteOps(blocks: NoteBlock[], ops: NoteOp[], actor: NoteActo
   }
   return { blocks: next, applied };
 }
+
+/** The notebook as the models read it, one block per line with its id and type; read fresh for every turn. */
+export const notebookText = (blocks: NoteBlock[]): string => blocks.length
+  ? blocks.map((block) => `${block.id} | ${block.type}${block.type === "task" ? (block.done ? " [x]" : " [ ]") : ""}${block.by === "luna" ? "" : " | written by the learner"} | ${block.text.replace(/</g, "‹").replace(/>/g, "›").replace(/\n/g, "\\n")}`).join("\n")
+  : "(empty)";

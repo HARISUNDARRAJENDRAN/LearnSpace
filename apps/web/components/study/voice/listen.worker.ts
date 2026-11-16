@@ -1,176 +1,141 @@
-import { AutoModel, env, type AutomaticSpeechRecognitionPipeline, ModelRegistry, type PreTrainedModel, pipeline, Tensor } from "@huggingface/transformers";
-import { LISTEN_MODEL, VAD_MODEL } from "./models";
+import { AutoModel, env, InterruptableStoppingCriteria, ModelRegistry, pipeline } from "@huggingface/transformers";
+import { listenGeneration } from "../speech-model";
+import { type Listener, MOONSHINE, VAD_MODEL } from "./models";
+import { loadParakeet, type Transcriber, UnsuitableDevice } from "./parakeet";
+import type { Utterance } from "./vad";
 
-// One thread: Silero runs 31 times a second, and idle ONNX threads spin, taking the cores Luna's voice needs (it ran at
-// half speed beside a 4-thread listener). A few seconds of speech still transcribes in ~0.15 s.
-env.backends.onnx.wasm!.numThreads = 1;
-
-// Silero decides when the learner is speaking; Moonshine Tiny turns each stretch of speech into text. Both run here, on
-// the learner's CPU: a few seconds of speech transcribes in ~0.3 s (WebGPU on integrated GPUs was slower, and wrong).
+// Parakeet (on the GPU) or Moonshine (on the CPU) turns each stretch of speech into text; audio never leaves the device.
+// Silero, which finds those stretches, runs in its own worker (vad.worker.ts) and sends them here over a port of their
+// own. With the frame-by-frame work gone, this worker is idle between utterances, so for Moonshine ONNX Runtime keeps its
+// default thread pool: it writes a turn down faster, and the threads are asleep again by the time Luny speaks. Parakeet
+// runs on one thread, as it always has: its CPU part is many tiny decoder steps, and its speed check was set on one thread.
 const SAMPLE_RATE = 16_000;
-/** Silero reads 512-sample (32 ms) frames at 16 kHz. */
-export const FRAME = 512;
-const FRAME_MS = (FRAME / SAMPLE_RATE) * 1_000;
-// Speech starts above START and continues while above KEEP; while Luna talks, only clearly louder speech counts, so her
-// own voice leaking past echo cancellation never reads as the learner.
-const START = 0.5;
-const KEEP = 0.25;
-const START_WHILE_PLAYING = 0.85;
-// A turn ends after this much silence. Short, for speed: a pause mid-thought ends a turn too, but Luna stays silent on an
-// unfinished thought, and speech that resumes before she is heard cancels her turn and joins it to what comes next.
-const END_SILENCE_MS = 200;
-const MIN_SPEECH_MS = 200;
-// How long the learner must keep talking over Luna before she stops, so a cough or an "mm" never cuts her off.
-const BARGE_IN_MS = 320;
-const PAD_FRAMES = 6;
-const MAX_SPEECH_MS = 28_000;
 
-export type ListenRequest = { type: "load" } | { type: "frame"; frame: Float32Array } | { type: "playing"; playing: boolean } | { type: "reset" };
+/** From the page: load a listener, take the port Silero's utterances come in on, or forget everything before a reset. */
+export type ListenRequest = { type: "load"; listener: Listener } | { type: "connect"; vad: MessagePort } | { type: "reset"; epoch: number };
 /**
- * `speech` fires once per utterance, as soon as it is clearly the learner talking; `final` carries the utterance's text.
- * A `final` that was not `heard` was too short to interrupt Luna: an "mm-hm" while she talks, not a turn.
+ * `final` carries an utterance's text, with the epoch it was heard in; a `final` that was not `heard` was too short to
+ * interrupt Luny: an "mm-hm" while she talks, not a turn. `ready` names the listener that loaded; `unsuitable` means
+ * Parakeet can't run well on this device, so it should not be tried again.
  */
 export type ListenReply =
   | { type: "download"; progress: number }
-  | { type: "ready" }
-  | { type: "speech" }
-  | { type: "final"; text: string; heard: boolean; endedAt: number; transcribedAt: number }
+  | { type: "ready"; listener: Listener; unsuitable: boolean }
+  | { type: "final"; text: string; heard: boolean; endedAt: number; epoch: number }
   | { type: "error" };
 
 const reply = (message: ListenReply) => self.postMessage(message);
-let models: Promise<{ asr: AutomaticSpeechRecognitionPipeline; vad: PreTrainedModel }> | null = null;
+let model: Promise<Transcriber> | null = null;
 
-async function create() {
-  const { task, model, options } = LISTEN_MODEL;
-  const cached = await ModelRegistry.is_pipeline_cached(task, model, options).catch(() => false);
-  const [asr, vad] = await Promise.all([
-    pipeline(task, model, {
-      ...options,
-      ...(cached ? {} : { progress_callback: (info: { status: string; progress?: number }) => { if (info.status === "progress_total") reply({ type: "download", progress: info.progress ?? 0 }); } }),
-    }),
-    AutoModel.from_pretrained(VAD_MODEL.model, VAD_MODEL.options as never),
-  ]);
+async function loadMoonshine(): Promise<Transcriber> {
+  const { task, model: name, options } = MOONSHINE;
+  const cached = await ModelRegistry.is_pipeline_cached(task, name, options).catch(() => false);
+  const asr = await pipeline(task, name, {
+    ...options,
+    ...(cached ? {} : { progress_callback: (info: { status: string; progress?: number }) => { if (info.status === "progress_total") reply({ type: "download", progress: info.progress ?? 0 }); } }),
+  });
+  const transcribe: Transcriber = async (audio, stopped) => {
+    // A guess the learner talked past stops at its next token instead of being written to the end.
+    const stop = new InterruptableStoppingCriteria();
+    const watch = stopped ? setInterval(() => { if (stopped()) stop.interrupt(); }, 10) : undefined;
+    try {
+      const output = await asr(audio, { ...listenGeneration(audio.length), stopping_criteria: [stop] } as never);
+      return (Array.isArray(output) ? output[0]?.text ?? "" : output.text).trim();
+    } finally {
+      clearInterval(watch);
+    }
+  };
   // The first run sets the model up; doing it now keeps that cost out of the learner's first turn.
-  await asr(new Float32Array(SAMPLE_RATE));
-  ready = true;
-  return { asr, vad };
+  await transcribe(new Float32Array(SAMPLE_RATE));
+  return transcribe;
 }
 
-const sr = new Tensor("int64", [SAMPLE_RATE], []);
-let state = new Tensor("float32", new Float32Array(2 * 128), [2, 1, 128]);
-let epoch = 0;
-let ready = false;
-let playing = false;
-let speaking = false;
-let announced = false;
-let speechMs = 0;
-let silenceMs = 0;
-let sinceStart = 0;
-let speech: Float32Array[] = [];
-const pad: Float32Array[] = [];
-// Model calls run one at a time, in order, so frames are judged in sequence and each utterance's text arrives in order.
-let queue: Promise<unknown> = Promise.resolve();
-const serial = <T>(work: () => Promise<T>): Promise<T> => {
-  const next = queue.then(work);
-  queue = next.catch(() => undefined);
-  return next;
-};
-
-const join = (parts: Float32Array[]) => {
-  const audio = new Float32Array(parts.reduce((total, part) => total + part.length, 0));
-  let offset = 0;
-  for (const part of parts) {
-    audio.set(part, offset);
-    offset += part.length;
+async function create(prefer: Listener): Promise<Transcriber> {
+  if (prefer === "parakeet") {
+    const wasm = env.backends.onnx.wasm;
+    if (wasm) wasm.numThreads = 1;
+    // A transformers.js session first, which sets ONNX Runtime's WASM up the way transformers.js configures it (cached
+    // between visits); Parakeet's sessions then use that. Silero is the smallest model at hand, and is let go at once.
+    await (await AutoModel.from_pretrained(VAD_MODEL.model, VAD_MODEL.options as never)).dispose();
   }
-  return audio;
-};
-
-async function transcribe(audio: Float32Array): Promise<string> {
-  const { asr } = await models!;
-  const output = await asr(audio);
-  return (Array.isArray(output) ? output[0]?.text ?? "" : output.text).trim();
+  let listener: Listener = "moonshine";
+  let unsuitable = false;
+  let transcribe: Transcriber | null = null;
+  if (prefer === "parakeet") {
+    try {
+      transcribe = await loadParakeet((progress) => reply({ type: "download", progress }));
+      listener = "parakeet";
+    } catch (error) {
+      unsuitable = error instanceof UnsuitableDevice;
+      console.warn("Parakeet isn't available here; Luny listens with Moonshine.", error);
+    }
+  }
+  transcribe ??= await loadMoonshine();
+  reply({ type: "ready", listener, unsuitable });
+  return transcribe;
 }
 
-function finish() {
-  const turnEpoch = epoch;
-  const audio = join(speech);
-  const long = speechMs >= MIN_SPEECH_MS;
-  const endedAt = Date.now() - silenceMs;
-  const heard = announced;
-  speaking = false;
-  announced = false;
-  speech = [];
-  speechMs = 0;
-  silenceMs = 0;
-  sinceStart = 0;
-  if (!long) return;
-  void serial(async () => turnEpoch === epoch ? transcribe(audio) : "").then((text) => { if (turnEpoch === epoch) reply({ type: "final", text, heard, endedAt, transcribedAt: Date.now() }); }).catch((error: unknown) => { console.error(error); reply({ type: "error" }); });
+// Guesses are written down one at a time, in order, so each utterance's text arrives in order. A guess is kept until its
+// final (or drop) comes; Silero sends at most one guess per utterance that is not yet dropped or final.
+type Guess = { audio: Float32Array; epoch: number; dropped: boolean; text: Promise<string> | null };
+const guesses = new Map<number, Guess>();
+let queue: Promise<unknown> = Promise.resolve();
+let epoch = 0;
+
+function write(id: number, guess: Guess) {
+  guess.text = queue.then(async () => {
+    if (guess.dropped || guess.epoch !== epoch) return "";
+    return (await (model as Promise<Transcriber>))(guess.audio, () => guess.dropped || guess.epoch !== epoch);
+  });
+  queue = guess.text.catch(() => undefined);
+  guess.text.catch((error: unknown) => {
+    guesses.delete(id);
+    console.error(error);
+    reply({ type: "error" });
+  });
 }
 
-async function frame(input: Float32Array, frameEpoch: number) {
-  if (frameEpoch !== epoch) return;
-  const { vad } = await models!;
-  const { output, stateN } = await vad({ input: new Tensor("float32", input, [1, FRAME]), sr, state }) as { output: Tensor; stateN: Tensor };
-  if (frameEpoch !== epoch) { output.dispose(); stateN.dispose(); return; }
-  state.dispose();
-  state = stateN;
-  const probability = (output.data as Float32Array)[0] ?? 0;
-  output.dispose();
-  if (!speaking) {
-    pad.push(input);
-    if (pad.length > PAD_FRAMES) pad.shift();
-    if (probability < (playing ? START_WHILE_PLAYING : START)) return;
-    speaking = true;
-    speech = [...pad];
-    pad.length = 0;
+function onUtterance(event: MessageEvent<Utterance>) {
+  const message = event.data;
+  if (message.type === "guess") {
+    const guess: Guess = { audio: message.audio, epoch: message.epoch, dropped: false, text: null };
+    guesses.set(message.id, guess);
+    write(message.id, guess);
     return;
   }
-  speech.push(input);
-  sinceStart += FRAME_MS;
-  if (probability >= KEEP) {
-    speechMs += FRAME_MS + silenceMs;
-    silenceMs = 0;
-  } else silenceMs += FRAME_MS;
-  if (!announced && speechMs >= (playing ? BARGE_IN_MS : MIN_SPEECH_MS)) {
-    announced = true;
-    reply({ type: "speech" });
+  const guess = guesses.get(message.id);
+  if (!guess) return;
+  if (message.type === "drop") {
+    guess.dropped = true;
+    guesses.delete(message.id);
+    return;
   }
-  if (silenceMs >= END_SILENCE_MS || sinceStart >= MAX_SPEECH_MS) finish();
+  // The turn ended: its guess is the utterance. Once written (now, or when it finishes), the text goes to the page.
+  void guess.text?.then((text) => {
+    if (!guesses.has(message.id)) return;
+    guesses.delete(message.id);
+    if (message.epoch === epoch) reply({ type: "final", text, heard: message.heard, endedAt: message.endedAt, epoch: message.epoch });
+  }, () => undefined);
 }
 
 self.onmessage = async (event: MessageEvent<ListenRequest>) => {
   const message = event.data;
+  if (message.type === "connect") {
+    message.vad.onmessage = onUtterance;
+    return;
+  }
+  if (message.type === "reset") {
+    epoch = message.epoch;
+    for (const guess of guesses.values()) guess.dropped = true;
+    guesses.clear();
+    return;
+  }
   try {
-    models ??= create();
-    if (message.type === "load") {
-      await models;
-      return reply({ type: "ready" });
-    }
-    if (message.type === "playing") {
-      playing = message.playing;
-      return;
-    }
-    if (message.type === "reset") {
-      epoch += 1;
-      playing = false;
-      speaking = false;
-      announced = false;
-      speech = [];
-      pad.length = 0;
-      speechMs = 0;
-      silenceMs = 0;
-      sinceStart = 0;
-      state.dispose();
-      state = new Tensor("float32", new Float32Array(2 * 128), [2, 1, 128]);
-      return;
-    }
-    // Audio from before the models are ready is dropped, never queued: the learner sees Luna is not listening yet.
-    if (ready) { const frameEpoch = epoch; await serial(() => frame(message.frame, frameEpoch)); }
+    model ??= create(message.listener);
+    await model;
   } catch (error) {
     // A failed download is retried on the next start instead of being cached as broken.
-    models = null;
-    ready = false;
+    model = null;
     console.error(error);
     reply({ type: "error" });
   }

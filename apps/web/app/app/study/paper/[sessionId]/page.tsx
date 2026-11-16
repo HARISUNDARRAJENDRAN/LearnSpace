@@ -12,7 +12,7 @@ export default async function PaperStudyRoute({ params }: Props) {
   const auth = await requireCompletedSession();
   const { sessionId } = await params;
   try {
-    const session = await getStudySession(auth.user.id, sessionId);
+    const session = await getStudySession(auth.user.id, sessionId, { seen: true });
     if (session.activeResource?.type === "video") redirect(`/app/study/video/${sessionId}`);
     if (!session.activeResource) notFound();
     return <StudyWorkspace key={`${session.id}:${session.activeResourceId}`} session={session} />;

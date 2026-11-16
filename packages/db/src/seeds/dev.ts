@@ -29,16 +29,6 @@ export const seedIds = {
   privateChunkB: "00000000-0000-0000-0000-000000000403",
   sessionA: "00000000-0000-0000-0000-000000000501",
   sessionB: "00000000-0000-0000-0000-000000000502",
-  exercise: "00000000-0000-0000-0000-000000000601",
-  exerciseVersion: "00000000-0000-0000-0000-000000000602",
-  binding: "00000000-0000-0000-0000-000000000603",
-  attemptA: "00000000-0000-0000-0000-000000000604",
-  snapshotA: "00000000-0000-0000-0000-000000000605",
-  testBundle: "00000000-0000-0000-0000-000000000606",
-  executionRun: "00000000-0000-0000-0000-000000000607",
-  exerciseB: "00000000-0000-0000-0000-000000000608",
-  exerciseVersionB: "00000000-0000-0000-0000-000000000609",
-  testBundleB: "00000000-0000-0000-0000-000000000610",
   authAccountA: "00000000-0000-0000-0000-000000000801",
   authAccountB: "00000000-0000-0000-0000-000000000802",
   authSessionA: "00000000-0000-0000-0000-000000000803",
@@ -55,11 +45,6 @@ const hashes = {
   chunk: "5555555555555555555555555555555555555555555555555555555555555555",
   privateChunkA: "9999999999999999999999999999999999999999999999999999999999999999",
   privateChunkB: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  exercise: "6666666666666666666666666666666666666666666666666666666666666666",
-  exerciseB: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  source: "7777777777777777777777777777777777777777777777777777777777777777",
-  bundle: "8888888888888888888888888888888888888888888888888888888888888888",
-  bundleB: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 };
 
 const vectorLiteral = `[${Array.from({ length: 1536 }, (_, index) => index === 0 ? "1" : "0").join(",")}]`;
@@ -179,54 +164,6 @@ export async function seedDev(): Promise<void> {
         (${seedIds.sessionA}, ${seedIds.publicResource}, ${seedIds.publicVersion}, 'primary', 0, 'seed', '{"seed":true}'::jsonb, ${seededAt}),
         (${seedIds.sessionB}, ${seedIds.privateResourceB}, ${seedIds.privateVersionB}, 'primary', 0, 'seed', '{"seed":true}'::jsonb, ${seededAt})
       ON CONFLICT (study_session_id, resource_id) DO UPDATE SET resource_version_id = EXCLUDED.resource_version_id, role = EXCLUDED.role, position = EXCLUDED.position
-    `;
-
-    await tx`
-      INSERT INTO practice.exercises (id, kind, canonical_concept_id, title, status, created_by, owner_user_id, metadata, created_at, updated_at)
-      VALUES
-        (${seedIds.exercise}, 'code', ${seedIds.concept}, ${"Implement a message queue"}, 'active', 'seed', NULL, '{"seed":true}'::jsonb, ${seededAt}, ${seededAt}),
-        (${seedIds.exerciseB}, 'code', ${seedIds.concept}, ${"Implement a retry policy"}, 'active', 'seed', NULL, '{"seed":true}'::jsonb, ${seededAt}, ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET title = EXCLUDED.title, status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-    `;
-
-    await tx`
-      INSERT INTO practice.exercise_versions (id, exercise_id, version_no, language, runtime_family, difficulty, prompt_md, starter_code, function_signature, constraints, solution_outline, content_sha256, generator_model, generator_version, validation_status, created_at)
-      VALUES
-        (${seedIds.exerciseVersion}, ${seedIds.exercise}, 1, 'typescript', 'node', 'medium', ${"Implement a queue that preserves FIFO ordering."}, ${"export function enqueue(items: string[], value: string): string[] { return [...items, value]; }"}, 'enqueue(items, value)', '{"maxItems":100}'::jsonb, ${"Use an append-only representation and remove from the head."}, ${hashes.exercise}, 'seed-model', '1.0.0', 'validated', ${seededAt}),
-        (${seedIds.exerciseVersionB}, ${seedIds.exerciseB}, 1, 'typescript', 'node', 'medium', ${"Implement a retry policy."}, ${"export function retry(attempts: number): number { return attempts + 1; }"}, 'retry(attempts)', '{"maxAttempts":10}'::jsonb, ${"Increment attempts until the policy limit."}, ${hashes.exerciseB}, 'seed-model', '1.0.0', 'validated', ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET prompt_md = EXCLUDED.prompt_md, solution_outline = EXCLUDED.solution_outline, validation_status = EXCLUDED.validation_status
-    `;
-
-    await tx`
-      INSERT INTO practice.exercise_bindings (id, exercise_version_id, study_session_id, resource_id, resource_version_id, resource_chunk_id, concept_id, gate_position, required, trigger_reason, confidence, created_at)
-      VALUES (${seedIds.binding}, ${seedIds.exerciseVersion}, ${seedIds.sessionA}, ${seedIds.publicResource}, ${seedIds.publicVersion}, ${seedIds.publicChunk}, ${seedIds.concept}, 0, true, 'seed', 0.97, ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET study_session_id = EXCLUDED.study_session_id, resource_version_id = EXCLUDED.resource_version_id, confidence = EXCLUDED.confidence
-    `;
-
-    await tx`
-      INSERT INTO practice.exercise_attempts (id, user_id, study_session_id, exercise_binding_id, exercise_version_id, status, language, hint_count, submission_count, idempotency_key, metadata, started_at, created_at, updated_at)
-      VALUES (${seedIds.attemptA}, ${seedIds.userA}, ${seedIds.sessionA}, ${seedIds.binding}, ${seedIds.exerciseVersion}, 'started', 'typescript', 0, 0, 'seed-attempt-a', '{"seed":true}'::jsonb, ${seededAt}, ${seededAt}, ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-    `;
-
-    await tx`
-      INSERT INTO practice.code_snapshots (id, attempt_id, sequence_no, kind, source_code, source_sha256, created_at)
-      VALUES (${seedIds.snapshotA}, ${seedIds.attemptA}, 0, 'starter', ${"export function enqueue(items: string[], value: string): string[] { return [...items, value]; }"}, ${hashes.source}, ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET source_code = EXCLUDED.source_code
-    `;
-
-    await tx`
-      INSERT INTO practice.test_bundles (id, exercise_version_id, kind, object_key, sha256, case_count, runtime_image_digest, harness_version, resource_limits, key_reference, created_at)
-      VALUES
-        (${seedIds.testBundle}, ${seedIds.exerciseVersion}, 'hidden', 'seed/test-bundles/queue.json', ${hashes.bundle}, 3, 'sha256:seed-runtime', 'seed-harness-1', '{"cpuLimitMs":1000,"wallLimitMs":2000,"memoryLimitBytes":134217728}'::jsonb, 'seed-kms-key', ${seededAt}),
-        (${seedIds.testBundleB}, ${seedIds.exerciseVersionB}, 'hidden', 'seed/test-bundles/retry.json', ${hashes.bundleB}, 3, 'sha256:seed-runtime', 'seed-harness-1', '{"cpuLimitMs":1000,"wallLimitMs":2000,"memoryLimitBytes":134217728}'::jsonb, 'seed-kms-key', ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET resource_limits = EXCLUDED.resource_limits
-    `;
-
-    await tx`
-      INSERT INTO practice.execution_runs (id, attempt_id, code_snapshot_id, test_bundle_id, request_id, status, runner_pool, runtime_image_digest, source_sha256, test_bundle_sha256, cpu_limit_ms, wall_limit_ms, memory_limit_bytes, result, created_at)
-      VALUES (${seedIds.executionRun}, ${seedIds.attemptA}, ${seedIds.snapshotA}, ${seedIds.testBundle}, '00000000-0000-0000-0000-000000000608', 'queued', 'seed-runner', 'sha256:seed-runtime', ${hashes.source}, ${hashes.bundle}, 1000, 2000, 134217728, '{"seed":true}'::jsonb, ${seededAt})
-      ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, result = EXCLUDED.result
     `;
   });
 }
