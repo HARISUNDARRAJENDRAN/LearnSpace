@@ -1,6 +1,7 @@
 /**
- * Local-only repair and curriculum command: pnpm --filter @learnspace/worker research:catalog:backfill
- * Uses DATABASE_WORKER_URL, batches arXiv requests at its 3-second limit, and never touches production.
+ * Syncs the Research catalogue with the curriculum: pnpm --filter @learnspace/worker research:catalog:backfill
+ * Uses DATABASE_WORKER_URL and batches arXiv requests at its 3-second limit. Run it after each curriculum change, locally
+ * and against production; it upserts public papers and the Discover tracks and touches no learner data.
  */
 import postgres from "postgres";
 import { researchCurriculumSchema } from "@learnspace/shared";
@@ -10,10 +11,6 @@ import { curriculumPaperMetadata, curriculumTrackSections } from "./paper-catalo
 
 const databaseUrl = process.env.DATABASE_WORKER_URL;
 if (!databaseUrl) throw new Error("DATABASE_WORKER_URL is required");
-const databaseHost = new URL(databaseUrl).hostname;
-if (!new Set(["localhost", "127.0.0.1", "::1", "postgres"]).has(databaseHost)) {
-  throw new Error("Paper catalog backfill only runs against a local database");
-}
 
 const curriculum = researchCurriculumSchema.parse(curriculumData);
 const curriculumIds = curriculum.items.flatMap((item) => item.type === "paper" ? [item.arxivId] : []);

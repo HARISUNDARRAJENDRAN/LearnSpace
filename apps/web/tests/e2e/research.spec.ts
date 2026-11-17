@@ -98,7 +98,8 @@ async function fakeVoice(page: Page) {
     Object.assign(window, {
       Worker: new Proxy(NativeWorker, {
         construct(target, args) {
-          return /(vad|listen|speak)[._-]worker/i.test(String(args[0])) ? new FakeWorker() : Reflect.construct(target, args);
+          // Only pdf.js keeps a real worker; production builds serve the voice workers under hashed names.
+          return /pdf\.worker/i.test(String(args[0])) ? Reflect.construct(target, args) : new FakeWorker();
         },
       }),
       __voice: {

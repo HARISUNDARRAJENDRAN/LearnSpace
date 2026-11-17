@@ -255,7 +255,10 @@ for the next call.
    calls).
 4. Sync the curated catalog after each curriculum change, since the function
    has no file system: `pnpm --filter @learnspace/worker recommendations:backfill`
-   with `DATABASE_WORKER_URL` and `OPENAI_API_KEY` set.
+   with `DATABASE_WORKER_URL` and `OPENAI_API_KEY` set. Likewise, after a change
+   to `apps/web/lib/research/curriculum/data.json`, run
+   `pnpm --filter @learnspace/worker research:catalog:backfill` with
+   `DATABASE_WORKER_URL` to sync the Research papers and Discover tracks.
 
 ### Transcript signer on a home machine
 

@@ -126,11 +126,19 @@ test("a recursion lesson is classified as coding practice and offers the Code to
 
 test("a conceptual lesson is classified but does not offer the Code tool", async ({ page }) => {
   const sessionId = await startSession(page, videos.concept.id);
-  const profile = await settledProfile(page, sessionId);
-  expect(profile).toMatchObject({ eligible: false, category: "conceptual_cs", concepts: [] });
+  // An ineligible lesson has no coding state (403); the tool bar asks the eligibility endpoint instead.
+  const eligibility = `/api/v1/study-sessions/${sessionId}/coding/eligibility`;
+  await expect.poll(async () => {
+    const response = await page.request.get(eligibility);
+    expect(response.status()).toBe(200);
+    return ((await response.json()) as { status: string }).status;
+  }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe("ineligible");
+  const [row] = await (database as NonNullable<typeof database>)`SELECT status, category FROM practice.video_coding_profiles WHERE resource_version_id = ${videos.concept.versionId}`;
+  expect(row).toMatchObject({ status: "ready", category: "conceptual_cs" });
+  expect((await page.request.get(`/api/v1/study-sessions/${sessionId}/coding`)).status()).toBe(403);
 
   // The profile is already settled, so the tool bar's first answer is final.
-  const asked = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/study-sessions/${sessionId}/coding`);
+  const asked = page.waitForResponse((response) => new URL(response.url()).pathname === eligibility);
   await page.goto(`/app/study/video/${sessionId}`);
   expect((await asked).status()).toBe(200);
   await expect(studyTool(page, "AI")).toBeVisible();

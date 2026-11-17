@@ -82,23 +82,30 @@ jobs:
       - run: pnpm --filter @learnspace/runner run sandbox:build
       - run: docker image inspect learnspace-sandbox:1 > /dev/null
       - run: pnpm --filter @learnspace/runner test
-      - name: Web tests, with a real code runner for the coding integration test
+      # A real code runner stays up for the web tests and the e2e suite (paper exercises and guides run in its sandbox).
+      - name: Start the code runner
         env:
-          RUNNER_URL: http://127.0.0.1:4100
           RUNNER_TOKEN: ci-runner-token-not-a-secret
         run: |
-          HOST=127.0.0.1 node services/runner/dist/server.js > /tmp/learnspace-runner.log 2>&1 &
-          runner_pid=$!
-          trap 'kill "$runner_pid"; tail -n 50 /tmp/learnspace-runner.log' EXIT
+          HOST=127.0.0.1 nohup node services/runner/dist/server.js > /tmp/learnspace-runner.log 2>&1 &
           for _attempt in {1..30}; do
             if curl --fail --silent http://127.0.0.1:4100/health > /dev/null; then break; fi
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:4100/health
-          pnpm --filter @learnspace/web test
+      - run: pnpm --filter @learnspace/web test
+        env:
+          RUNNER_URL: http://127.0.0.1:4100
+          RUNNER_TOKEN: ci-runner-token-not-a-secret
       - run: pnpm run db:test
       - run: pnpm --filter @learnspace/web exec playwright install --with-deps chromium
       - run: pnpm --filter @learnspace/web run test:e2e:production
+        env:
+          RUNNER_URL: http://127.0.0.1:4100
+          RUNNER_TOKEN: ci-runner-token-not-a-secret
+      - name: Code runner log
+        if: always()
+        run: tail -n 50 /tmp/learnspace-runner.log || true
       - name: Verify auth layouts against production server
         run: |
           PORT=3200 pnpm --filter @learnspace/web run start:standalone > /tmp/learnspace-next.log 2>&1 &
