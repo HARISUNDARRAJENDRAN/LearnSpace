@@ -56,32 +56,38 @@ test.afterAll(async () => {
   if (!db) return;
   const ids = Object.values(videos).map((video) => video.id);
   const versionIds = Object.values(videos).map((video) => video.versionId);
-  // A recommended lesson has its first problem written ahead; those rows belong to the lesson, not the learner.
-  await db`DELETE FROM practice.coding_problems WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM practice.coding_mastery WHERE user_id = ${userId}`;
-  await db`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
-  await db`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
-  await db`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
-  await db`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
-  await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.focus_sessions WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
-  await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
-  await db`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${userId}`;
-  await db`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN ${db(ids)}`;
-  // The coding profiles go with their transcript versions (ON DELETE CASCADE).
-  await db`DELETE FROM retrieval.resource_chunks WHERE resource_version_id IN ${db(versionIds)}`;
-  await db`DELETE FROM catalog.resource_versions WHERE id IN ${db(versionIds)}`;
-  await db`DELETE FROM ops.transcript_requests WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM catalog.resources WHERE id IN ${db(ids)}`;
-  await db`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:%${userId}`}`;
-  await db`DELETE FROM identity.users WHERE id = ${userId}`;
+  // Background work from the page visits may still be writing. Locking the user and the lessons first makes any late
+  // insert wait for this transaction, then fail against the deleted rows, instead of racing the deletes.
+  await db.begin(async (tx) => {
+    await tx`SELECT id FROM identity.users WHERE id = ${userId} FOR UPDATE`;
+    await tx`SELECT id FROM catalog.resources WHERE id IN ${tx(ids)} FOR UPDATE`;
+    // A recommended lesson has its first problem written ahead; those rows belong to the lesson, not the learner.
+    await tx`DELETE FROM practice.coding_problems WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM practice.coding_mastery WHERE user_id = ${userId}`;
+    await tx`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
+    await tx`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
+    await tx`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.focus_sessions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
+    await tx`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${userId}`;
+    await tx`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN ${tx(ids)}`;
+    // The coding profiles go with their transcript versions (ON DELETE CASCADE).
+    await tx`DELETE FROM retrieval.resource_chunks WHERE resource_version_id IN ${tx(versionIds)}`;
+    await tx`DELETE FROM catalog.resource_versions WHERE id IN ${tx(versionIds)}`;
+    await tx`DELETE FROM ops.transcript_requests WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM catalog.video_details WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM catalog.resources WHERE id IN ${tx(ids)}`;
+    await tx`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:%${userId}`}`;
+    await tx`DELETE FROM identity.users WHERE id = ${userId}`;
+  });
   await db.end({ timeout: 5 });
 });
 
