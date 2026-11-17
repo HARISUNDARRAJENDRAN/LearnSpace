@@ -1,6 +1,6 @@
 # Research mode: final report
 
-Branch `feat/research-mode`, local commits only (3f359da … 86ee3e7). Nothing is pushed, deployed, or migrated in production. Production still needs migrations 0044–0048 after review.
+Shipped to production on 2026-11-17 as `6c134bd` on main (squash of `feat/research-mode`; CI green, 39 e2e passed). Production has migrations through 0048, the `discovery-worker` edge function v10, the code runner `1a8a016`, and the curriculum backfill (120 curriculum papers, 8 track collections). Papers are parsed on Vercel after the first open; a production smoke test parsed arXiv 1301.3781 in 26 s.
 
 Status key: **Done** means it works end to end with real data and passing tests. **Partial** means it works, but a stated target is missed or a step is unverified. The reason is given in the row.
 
@@ -33,5 +33,6 @@ Status key: **Done** means it works end to end with real data and passing tests.
 
 - **Stale visual baselines from main.** The `landing-hero`, `home-populated` and `login` baselines date from 2026-10-03 and predate main's redesign of those screens. This branch doesn't touch them, and CI excludes visual tests. Regenerate them on main after a review.
 - **Mock model and the plan observer.** The e2e mock model doesn't answer the plan observer's prompt, so the observer logs a ZodError and carries on. This was already the case before this branch.
-- **Open decisions:** the voice acknowledgement for first audio ≤1.5 s, PDF upload storage, and the order of the production migrations.
+- **Open decisions:** the voice acknowledgement for first audio ≤1.5 s, and PDF upload storage.
+- **Production data:** one pre-existing catalog row has a malformed arXiv ID (`1503.0806`) and was left unrepaired by the backfill.
 - **Local data:** the "How models reason" paper set (`5e7a0000-…0001`) remains in the local database as a demo collection. Removing it means deleting the test user's course sessions across about 20 history tables.
