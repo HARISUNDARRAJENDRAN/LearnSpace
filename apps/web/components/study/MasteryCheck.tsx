@@ -1,14 +1,15 @@
 "use client";
 
+import type { StudyAnchor } from "@learnspace/shared";
 import type { MasteryQuestionView, MasteryView } from "@learnspace/shared/mastery";
-import { Check, LoaderCircle, Mic, Play, X } from "lucide-react";
+import { Check, LoaderCircle, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { LoadingState } from "./LoadingState";
 import { type MasteryNext, MasteryResults } from "./MasteryResults";
 import { MathText } from "./MathText";
+import { PlaceLink, placeOf } from "./place";
 import { SessionPanelHeader } from "./SessionPanelHeader";
-import { formatTime } from "./StudyWorkspace";
 import { useSpeechInput } from "./useSpeechInput";
 
 const VERDICT = { correct: "Correct", partial: "Partly right", incorrect: "Not quite" } as const;
@@ -26,7 +27,8 @@ const percent = (score: number) => `${Math.round(score * 100)}%`;
  * The hard questions a learner must pass, after watching a video, before the next one unlocks: one at a time, each
  * marked as it is answered, linking back to the moment it comes from. A failed set is replaced by a fresh one.
  */
-export function MasteryCheck({ sessionId, resourceId, next, onSeek, onCollapse }: { sessionId: string; resourceId: string; next: MasteryNext; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
+/** `place` is where the learner is, saved as the resume point when they finish the lesson from here. */
+export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onCollapse }: { sessionId: string; resourceId: string; next: MasteryNext; place: StudyAnchor; onGo: (place: StudyAnchor) => void; onCollapse: () => void }) {
   const router = useRouter();
   const base = `/api/v1/study-sessions/${sessionId}/mastery`;
   const [view, setView] = useState<MasteryView | null>(null);
@@ -101,7 +103,7 @@ export function MasteryCheck({ sessionId, resourceId, next, onSeek, onCollapse }
     setMoving(true);
     await fetch(`/api/v1/study-sessions/${sessionId}/progress`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resourceId, progressPct: 100, anchor: { kind: "video", positionMs: 0 }, event: "complete", idempotencyKey: `continue-${scoredId ?? resourceId}` }),
+      body: JSON.stringify({ resourceId, progressPct: 100, anchor: place, event: "complete", idempotencyKey: `continue-${scoredId ?? resourceId}` }),
     }).catch(() => null);
     if (next.nextTitle) router.refresh();
     else router.push("/app/sessions");
@@ -132,7 +134,7 @@ export function MasteryCheck({ sessionId, resourceId, next, onSeek, onCollapse }
   const question = questions[index];
   if (scored && (!question || index >= questions.length)) {
     return shell(<>
-      <MasteryResults check={scored} passScore={view.passScore} next={next} moving={moving} onSeek={onSeek} onReview={(at) => { setIndex(at); setText(""); }}
+      <MasteryResults check={scored} passScore={view.passScore} next={next} moving={moving} onGo={onGo} onReview={(at) => { setIndex(at); setText(""); }}
         onContinue={() => void proceed()} onRetake={start} onAnalyse={analyse} />
       {alert}
     </>);
@@ -184,7 +186,7 @@ export function MasteryCheck({ sessionId, resourceId, next, onSeek, onCollapse }
           <dt>The right reasoning</dt><dd><MathText text={mistake.correctReasoning} /></dd>
         </dl></div> : null}
         {section ? <p className="mastery-notes-link">In your notes: <MathText text={section} /></p> : null}
-        {question.positionMs === null ? null : <button className="session-link-button" type="button" onClick={() => onSeek(question.positionMs ?? 0)}><Play aria-hidden="true" />Watch at {formatTime(question.positionMs)}</button>}
+        <PlaceLink place={placeOf(question.positionMs, question.anchor)} onGo={onGo} />
         <div className="mastery-review-nav">
           {scored ? <button className="session-secondary-button" type="button" onClick={() => setIndex(questions.length)}>Back to results</button> : null}
           <button className="session-primary-button" type="button" onClick={() => { setIndex(index + 1); setText(""); }}>{last ? "See results" : "Next question"}</button>

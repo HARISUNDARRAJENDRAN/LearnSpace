@@ -6,12 +6,14 @@
  *   DATABASE_MIGRATOR_URL=… DATABASE_URL=… DATABASE_AUTH_URL=… \
  *     pnpm exec tsx --tsconfig tsconfig.test.json scripts/benchmark-notes-latency.ts [--rtt 2,20,60] [--turns 12] [--pool 10] [--out file.json]
  *
+ * Add --paper <local ready resource UUID> to exercise paper retrieval and anchored voice turns.
  * Measured per voice turn, from the call: until the model is asked (`toModelMs`), until Luny's whole reply can be spoken
  * (`toLastWordsMs`: the event that releases her last sentence to the voice: the final say, or done before it existed), and until the turn is done (`toDoneMs`).
  * Per scribe pass: until the first edit can be shown (`toFirstEditMs`) and until the notebook is saved (`toSavedMs`).
  * Before each, the check every request passes first (`gateMs`: the signed-in session and finished onboarding, as
  * requireCompletedSession makes it, from the session token); `requestToModelMs` is that plus `toModelMs`.
  */
+import assert from "node:assert/strict";
 import { writeFileSync } from "node:fs";
 import postgres from "postgres";
 import type { NoteOp, VoiceTurnEvent } from "@learnspace/shared/notes";
@@ -22,6 +24,7 @@ const arg = (name: string, fallback: string) => { const at = process.argv.indexO
 const RTTS = arg("rtt", "2,20,60").split(",").map(Number);
 const TURNS = Number(arg("turns", "12"));
 const OUT = arg("out", "");
+const PAPER = arg("paper", "");
 // The app's connection pool (DB_POOL_MAX), 10 by default as in production. Drizzle's queries are never prepared, so
 // postgres.js describes each bound query before running it: two round trips per query, one query at a time per connection.
 const POOL = arg("pool", "10");
@@ -36,8 +39,11 @@ const usage = { inputTokens: 6_000, cachedTokens: 5_000, cacheWriteTokens: 0, ou
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const REPLY = ["Right", " —", " a", " big", " step", " jumps", " past", " the", " minimum", ".", " What", " do", " you", " think", " happens", " to", " the", " loss", " then", "?"];
 
-const percentile = (values: number[], p: number) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * p))] ?? NaN; };
-const summary = (values: number[]) => ({ p50: Math.round(percentile(values, 0.5)), p90: Math.round(percentile(values, 0.9)), mean: Math.round(values.reduce((a, b) => a + b, 0) / values.length) });
+const percentile = (values: number[], p: number) => { const sorted = [...values].sort((a, b) => a - b); return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * p) - 1)] ?? NaN; };
+const summary = (values: number[]) => ({ n: values.length, p50: Math.round(percentile(values, 0.5)), p90: Math.round(percentile(values, 0.9)), p95: Math.round(percentile(values, 0.95)), p99: values.length >= 100 ? Math.round(percentile(values, 0.99)) : null, mean: Math.round(values.reduce((a, b) => a + b, 0) / values.length) });
+
+assert.equal(percentile([1, 2, 3, 4], 0.95), 4);
+assert(Number.isInteger(TURNS) && TURNS > 0 && RTTS.length > 0 && RTTS.every((rtt) => Number.isFinite(rtt) && rtt >= 0));
 
 async function main() {
   const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
@@ -45,13 +51,19 @@ async function main() {
   const authUrl = process.env.DATABASE_AUTH_URL;
   if (!migratorUrl || !appUrl || !authUrl) throw new Error("DATABASE_MIGRATOR_URL, DATABASE_URL and DATABASE_AUTH_URL are required (the local database)");
   const target = new URL(appUrl);
-  if (!/^(localhost|127\.0\.0\.1)$/.test(target.hostname)) throw new Error("Benchmarks run against the local database only.");
+  if (![appUrl, authUrl, migratorUrl].every((url) => ["localhost", "127.0.0.1"].includes(new URL(url).hostname))) throw new Error("Benchmarks run against the local database only.");
   const results: Record<string, unknown> = { measuredAt: new Date().toISOString(), turns: TURNS, pool: Number(POOL), model: { firstOutputMs: MODEL_FIRST_MS, tokenMs: TOKEN_MS, scribeFirstMs: SCRIBE_FIRST_MS, scribeChunkMs: SCRIBE_CHUNK_MS }, byRtt: {} };
   const migrator = postgres(migratorUrl, { max: 1, prepare: false, connect_timeout: 10 });
-  const lesson = await createLesson(migrator);
+  const [paper] = PAPER ? await migrator<{ id: string; version_id: string }[]>`SELECT r.id, r.current_version_id AS version_id FROM catalog.resources r JOIN catalog.resource_versions v ON v.id = r.current_version_id WHERE r.id = ${PAPER} AND r.type = 'paper' AND v.processing_status = 'ready'` : [];
+  if (PAPER && !paper) throw new Error("--paper must name a local, ready paper");
   const users: string[] = [];
   const [{ closeDb }, notes, modules] = await Promise.all([import("@learnspace/db"), import("../lib/notes/service"), appModules()]);
   const gate = gateOf(modules);
+  const fixture = await createLesson(migrator);
+  const lesson = paper ? { videoId: paper.id, versionId: paper.version_id } : fixture;
+  results.resourceType = PAPER ? "paper" : "video";
+  results.resourceId = lesson.videoId;
+  results.method = "Fixed stand-in model; first turn is connection-cold, remaining turns warm. DB and OS caches retained. No model latency improvement claimed.";
   try {
     // A learner and session per round trip, made directly, so each run starts with fresh rate-limit counters.
     const learners: { userId: string; sessionId: string; token: string }[] = [];
@@ -69,6 +81,8 @@ async function main() {
       const { sessionId, token } = learners[index] as { userId: string; sessionId: string; token: string };
       const user = { id: (learners[index] as { userId: string }).userId };
 
+      const coldVoice: Record<string, number> = {};
+      const coldScribe: Record<string, number> = {};
       const voice = { gateMs: [] as number[], requestToModelMs: [] as number[], toModelMs: [] as number[], toFirstWordsMs: [] as number[], toLastWordsMs: [] as number[], toDoneMs: [] as number[] };
       for (let turn = -1; turn < TURNS; turn++) {
         let calledAt = 0;
@@ -92,10 +106,13 @@ async function main() {
           // Her last sentence goes to the voice once the reply is known to be over: on the final say if the server sends one, else on done.
           if ((event.type === "say" && event.final) || (event.type === "done" && !lastWords)) lastWords = now;
         };
-        await notes.runVoiceTurn(user.id, sessionId, { utterance: `Why does a large learning rate overshoot? (${turn})`, positionMs: 600_000 + turn * 5_000, playing: false, frame: null, watchedFromMs: null }, { signal: new AbortController().signal, emit, model });
+        await notes.runVoiceTurn(user.id, sessionId, PAPER ? { utterance: `What does the paper say about the learning rate and energy? (${turn})`, anchor: { kind: "paper", page: 1 }, selection: null } : { utterance: `Why does a large learning rate overshoot? (${turn})`, positionMs: 600_000 + turn * 5_000, playing: false, frame: null, watchedFromMs: null }, { signal: new AbortController().signal, emit, model });
         const done = performance.now();
         if (!said.includes("minimum")) throw new Error("the reply was not streamed");
-        if (turn < 0) continue; // The first turn warms the connections.
+        if (turn < 0) {
+          Object.assign(coldVoice, { gateMs: started - gated, requestToModelMs: calledAt - gated, toModelMs: calledAt - started, toFirstWordsMs: firstWords - started, toLastWordsMs: lastWords - started, toDoneMs: done - started });
+          continue;
+        }
         voice.gateMs.push(started - gated);
         voice.requestToModelMs.push(calledAt - gated);
         voice.toModelMs.push(calledAt - started);
@@ -108,7 +125,7 @@ async function main() {
       const SCRIBE_PASSES = Math.max(4, Math.round(TURNS / 2));
       for (let pass = -1; pass < SCRIBE_PASSES; pass++) {
         const ops: NoteOp[] = Array.from({ length: 4 }, (_, index) => ({ action: "insert", id: `p${pass + 1}o${index}`, after: null, type: index ? "bullet" : "heading", text: `Pass ${pass} note ${index}: a learning rate that is too large overshoots the minimum, so the loss can grow.`, done: null }));
-        const json = JSON.stringify({ ops });
+        const json = JSON.stringify({ ops: ops.map((op) => ({ ...op, cite: PAPER ? [1] : null })) });
         let calledAt = 0;
         const model: TutorModel = async (_request, { onText, onFirstOutput }) => {
           calledAt = performance.now();
@@ -125,7 +142,10 @@ async function main() {
         const view = await notes.runScribe(user.id, sessionId, { signal: new AbortController().signal, model, onOp: () => { if (!firstEdit) firstEdit = performance.now(); } } as never);
         const saved = performance.now();
         if (!view.blocks.some((block) => block.id === `p${pass + 1}o3`)) throw new Error("the scribe's edits were not saved");
-        if (pass < 0) continue;
+        if (pass < 0) {
+          Object.assign(coldScribe, { gateMs: started - gated, requestToModelMs: calledAt - gated, toModelMs: calledAt - started, toFirstEditMs: (firstEdit || saved) - started, toSavedMs: saved - started });
+          continue;
+        }
         scribe.gateMs.push(started - gated);
         scribe.requestToModelMs.push(calledAt - gated);
         scribe.toModelMs.push(calledAt - started);
@@ -133,15 +153,17 @@ async function main() {
         scribe.toSavedMs.push(saved - started);
       }
       (results.byRtt as Record<string, unknown>)[`${rtt}ms`] = {
+        coldVoice, coldScribe, raw: { voice, scribe },
+        retrieval: PAPER ? await migrator`SELECT latency_ms FROM retrieval.retrieval_runs WHERE study_session_id = ${sessionId} ORDER BY created_at` : [],
         voice: Object.fromEntries(Object.entries(voice).map(([key, values]) => [key, summary(values)])),
         scribe: Object.fromEntries(Object.entries(scribe).map(([key, values]) => [key, summary(values)])),
       };
-      console.log(`rtt ${rtt} ms`, JSON.stringify((results.byRtt as Record<string, unknown>)[`${rtt}ms`]));
+      console.log(`rtt ${rtt} ms`, JSON.stringify({ voice: Object.fromEntries(Object.entries(voice).map(([key, values]) => [key, summary(values)])), scribe: Object.fromEntries(Object.entries(scribe).map(([key, values]) => [key, summary(values)])) }));
       await closeDb();
       app.close(); auth.close();
     }
   } finally {
-    await removeFixture(migrator, lesson, users);
+    await removeFixture(migrator, fixture, users);
     await migrator.end({ timeout: 5 });
   }
   if (OUT) writeFileSync(OUT, `${JSON.stringify(results, null, 2)}\n`);

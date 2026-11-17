@@ -1,9 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attemptOutcome, creditCap, emptyTracker, hintAvailability, independentSolve, masteryStatus, nextDifficulty, recordActivity, recordDecline, recordExecution, recordHint, recordOffer, shouldOffer, stallReason, startingDifficulty, transition, TransitionError, updateMastery, type Tracker, COACH_RULES, coachMoment, coachSpoke, recordCoach } from "../lib/coding/policy";
+import { attemptOutcome, COACH_RULES, coachMoment, coachSpoke, codingEligible, creditCap, emptyTracker, hintAvailability, independentSolve, masteryStatus, nextDifficulty, recordActivity, recordCoach, recordDecline, recordExecution, recordHint, recordOffer, shouldOffer, stallReason, startingDifficulty, type Tracker, TransitionError, transition, updateMastery } from "../lib/coding/policy";
 
 const fail = (tracker: Tracker, hash: string, failure = "case2:wrong", verdict: "ran" | "wrong_answer" | "compile_error" = "ran") =>
   recordExecution(tracker, { codeHash: hash, verdict, passed: 1, total: 3, failure: verdict === "compile_error" ? null : failure });
+
+test("coding eligibility requires paper feasibility plus a verified exercise and keeps video policy fixed", () => {
+  const profile = { category: "programming_tutorial", practiceFit: 0.6, concepts: [{ concept: "arrays" }] };
+  assert.equal(codingEligible("video", profile), true);
+  assert.equal(codingEligible("video", { ...profile, practiceFit: 0.59 }), false);
+  assert.equal(codingEligible("video", { ...profile, category: "software_engineering" }), false);
+  assert.equal(codingEligible("video", { ...profile, concepts: [] }), false);
+  assert.equal(codingEligible("video", null), false);
+  assert.equal(codingEligible("paper", { concepts: [{ component: "attention" }], feasibleComponents: [{ feasible: true }], verifiedExercises: 1 }), true);
+  assert.equal(codingEligible("paper", { concepts: [{ component: "attention" }], feasibleComponents: [{ feasible: true }], verifiedExercises: 0 }), false);
+  assert.equal(codingEligible("paper", { concepts: [], feasibleComponents: [], verifiedExercises: 2 }), false);
+  assert.equal(codingEligible("paper", null), false);
+});
 
 test("the state machine moves through a guided solve and an optimization stage, and refuses skipped steps", () => {
   let state = transition("PROBLEM_INTRO", "begin", { guided: false });

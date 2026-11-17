@@ -1,14 +1,15 @@
 "use client";
 
-import type { TutorBlockView, TutorMessageView, TutorSource } from "@learnspace/shared/tutor";
-import { BookOpen, Check, CornerDownRight, Lightbulb, Play, Quote, Repeat, X } from "lucide-react";
+import type { StudyAnchor } from "@learnspace/shared";
+import type { ClaimBasis, TutorBlockView, TutorMessageView, TutorSource } from "@learnspace/shared/tutor";
+import { BookOpen, Check, CornerDownRight, Library, Lightbulb, type LucideIcon, Quote, Repeat, Sparkles, X } from "lucide-react";
 import { createContext, Fragment, type ReactNode, useContext, useLayoutEffect, useRef } from "react";
 import { MathText } from "./MathText";
-import { formatTime } from "./StudyWorkspace";
+import { PlaceIcon, placeLabel, placeOf } from "./place";
 
 /** Everything a block may do. Each action is an app-owned request the server authorizes; blocks carry no URLs or code. */
 export type TutorActions = {
-  seek: (positionMs: number) => void;
+  go: (place: StudyAnchor) => void;
   answer: (messageId: string, blockId: string, choice: number) => void;
   hint: (messageId: string, blockId: string) => void;
   reply: (messageId: string, blockId: string, prompt: string) => void;
@@ -21,15 +22,18 @@ type BlockProps<T extends TutorBlockView["type"]> = { block: Extract<TutorBlockV
 
 function Cites({ src, message, actions }: { src: number[]; message: TutorMessageView; actions: TutorActions }) {
   // A transcript without timestamps has no moment to jump to, so its passages get no pill.
-  const sources = src.flatMap((index) => message.sources[index]?.startMs != null ? [message.sources[index]] : []);
+  const sources = src.flatMap((index) => message.sources[index] && placeOf(message.sources[index].startMs, message.sources[index].anchor) ? [message.sources[index]] : [])
+    // Passages on one page read as one pill.
+    .filter((source, at, all) => !source.anchor || all.findIndex((other) => other.anchor?.page === source.anchor?.page) === at);
   if (sources.length === 0) return null;
   return <span className="tutor-cites">{sources.map((source) => <Cite key={source.chunkId} source={source} actions={actions} />)}</span>;
 }
 
 function Cite({ source, actions }: { source: TutorSource; actions: TutorActions }) {
-  if (source.startMs === null) return null;
-  const at = formatTime(source.startMs);
-  return <button className="tutor-cite" type="button" title={source.excerpt} aria-label={`Play the video from ${at}`} onClick={() => actions.seek(source.startMs!)}><Play aria-hidden="true" />{at}</button>;
+  const place = placeOf(source.startMs, source.anchor);
+  if (!place) return null;
+  const at = placeLabel(place);
+  return <button className="tutor-cite" type="button" title={source.excerpt} aria-label={place.kind === "video" ? `Play the video from ${at}` : `Go to ${at} of the paper`} onClick={() => actions.go(place)}><PlaceIcon place={place} />{at}</button>;
 }
 
 const WORD_MS = 55;
@@ -218,13 +222,23 @@ const registry: { [T in TutorBlockView["type"]]: (props: BlockProps<T>) => React
  * `revealing` plays a just-arrived answer in word by word, then calls `onRevealed`; `streaming` resolves each word as it
  * arrives in a draft that is still being written; stored answers render at once.
  */
-/** Whether a block cites the video; one that doesn't is the tutor's own general knowledge. */
-function fromVideo(block: TutorBlockView): boolean {
+/** Whether a block cites the source; one that doesn't is the tutor's own general knowledge. */
+function fromSource(block: TutorBlockView): boolean {
   if (block.type === "steps" || block.type === "outline") return block.items.some((item) => item.src.length > 0);
   if (block.type === "flow") return block.nodes.some((node) => node.src.length > 0);
   if (block.type === "timeline" || block.type === "evidence") return true;
   return block.src.length > 0;
 }
+
+/** What a block rests on; answers saved before blocks carried a basis are read from their citations. */
+const basisOf = (block: TutorBlockView): ClaimBasis => block.basis ?? (fromSource(block) ? "source" : "background");
+
+const BASIS_NOTE: Record<Exclude<ClaimBasis, "source">, { icon: LucideIcon; label: string }> = {
+  cited_work: { icon: Library, label: "From other papers" },
+  background: { icon: BookOpen, label: "Background knowledge" },
+  interpretation: { icon: Lightbulb, label: "Luny's interpretation" },
+  speculation: { icon: Sparkles, label: "Speculation, not established" },
+};
 
 export function TutorAnswer({ message, actions, revealing = false, streaming = false, onRevealed, after }: { message: TutorMessageView; actions: TutorActions; revealing?: boolean; streaming?: boolean; onRevealed?: () => void; after?: (blockId: string) => ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -249,10 +263,11 @@ export function TutorAnswer({ message, actions, revealing = false, streaming = f
         {message.blocks.map((block, index) => {
           const Render = registry[block.type] as (props: BlockProps<typeof block.type>) => ReactNode;
           const previous = message.blocks[index - 1];
-          // In an answer from the video, a run of blocks from general knowledge is labelled where it starts.
-          const beyond = message.outcome === "answer" && !fromVideo(block) && (!previous || fromVideo(previous));
+          // A run of blocks resting on something other than the source is labelled where it starts; a "general" answer already says it is background.
+          const basis = basisOf(block);
+          const note = (message.outcome !== "answer" && message.outcome !== "general") || basis === "source" || (basis === "background" && message.outcome === "general") || (previous && basisOf(previous) === basis) ? null : BASIS_NOTE[basis];
           // Doubts about a block follow it, outside its wrapper, so the block's text is only its own.
-          return <Fragment key={block.id}>{beyond ? <p className="chat-general-note"><BookOpen aria-hidden="true" />Beyond this video</p> : null}<div className="tutor-block" data-block-id={block.id}><Render block={block} message={message} actions={actions} /></div>{after?.(block.id)}</Fragment>;
+          return <Fragment key={block.id}>{note ? <p className="chat-general-note" data-basis={basis}><note.icon aria-hidden="true" />{note.label}</p> : null}<div className="tutor-block" data-block-id={block.id}><Render block={block} message={message} actions={actions} /></div>{after?.(block.id)}</Fragment>;
         })}
       </div>
     </Streaming>

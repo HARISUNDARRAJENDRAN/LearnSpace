@@ -47,7 +47,7 @@ function Editor() {
       blocks: () => document.querySelectorAll(".notes-page > *").length,
     };
   }, []);
-  return <NotesEditor blocks={page.blocks} revision={page.revision} onOps={() => undefined} onSeek={() => undefined} />;
+  return <NotesEditor blocks={page.blocks} revision={page.revision} onOps={() => undefined} onGo={() => undefined} />;
 }
 
 createRoot(document.getElementById("root") as HTMLElement).render(bench.scenario === "editor" ? <Editor /> : <Voice />);

@@ -1,0 +1,752 @@
+{
+  "benchmark": "LearnSpace PDF parser fork comparison",
+  "upstream": {
+    "ref": "6bafce1bb7f195d13083d647c6a5899991745169",
+    "sha": "6bafce1bb7f195d13083d647c6a5899991745169"
+  },
+  "fork": {
+    "sha": "6845225193200a7779e69b2021e15fb1293b0adc"
+  },
+  "dependency_lock_sha256": {
+    "fork": "ea4eedb89e2763c759c042aebf65cad8e0de8a14a69198efeb3d1aaf8a1dc281",
+    "upstream": "1532df004b4734b97fddabc86b3883d3b320a03267d951ea22fe873b81167ea3"
+  },
+  "method": {
+    "warmups": 3,
+    "runs_per_document": 24,
+    "throughput_repetitions": 5,
+    "resource_measurement": "Python resource.getrusage(RUSAGE_CHILDREN), isolated helper per parser process; parser latency includes process startup; corpus inputs from fetch-corpus.py"
+  },
+  "environment": {
+    "platform": "Linux-7.2.15-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "processor": "",
+    "cpu_count": 8,
+    "python": "3.14.10",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)"
+  },
+  "documents": {
+    "fork-normal": {
+      "1706.03762v7": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 108.92178500216687,
+          "p95": 125.85232499986887,
+          "p99": 208.7725609962945
+        },
+        "pages_per_second_at_p50": 137.7134978067206,
+        "cpu_ms_median": 182.05049999999997,
+        "peak_rss_kb_median": 40346.0,
+        "peak_rss_kb_max": 41352,
+        "page_count": 15,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "16223290637241134174",
+        "markdown_bytes": 40711
+      },
+      "1810.04805v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 115.05336999834981,
+          "p95": 154.28517699911026,
+          "p99": 154.8667809984181
+        },
+        "pages_per_second_at_p50": 139.06589611611972,
+        "cpu_ms_median": 132.65249999999997,
+        "peak_rss_kb_median": 25704.0,
+        "peak_rss_kb_max": 26084,
+        "page_count": 16,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "3111230535220274909",
+        "markdown_bytes": 66011
+      },
+      "2005.14165v4": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 234.38061500201002,
+          "p95": 315.9187470009783,
+          "p99": 374.40069500007667
+        },
+        "pages_per_second_at_p50": 319.99233383424996,
+        "cpu_ms_median": 266.226,
+        "peak_rss_kb_median": 39230.0,
+        "peak_rss_kb_max": 40704,
+        "page_count": 75,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "4183264826753320871",
+        "markdown_bytes": 247009
+      },
+      "2010.11929v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 142.37199399940437,
+          "p95": 182.98159400001168,
+          "p99": 187.8801540005952
+        },
+        "pages_per_second_at_p50": 154.52477261849714,
+        "cpu_ms_median": 169.98949999999996,
+        "peak_rss_kb_median": 35294.0,
+        "peak_rss_kb_max": 35880,
+        "page_count": 22,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "5501260424077954744",
+        "markdown_bytes": 67772
+      },
+      "2006.11239v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 134.2911934989388,
+          "p95": 199.3718270023237,
+          "p99": 212.2987330003525
+        },
+        "pages_per_second_at_p50": 186.16261683754828,
+        "cpu_ms_median": 162.803,
+        "peak_rss_kb_median": 56844.0,
+        "peak_rss_kb_max": 57312,
+        "page_count": 25,
+        "classification": "Mixed",
+        "ocr_pages": 7,
+        "signature": "11310402365222741161",
+        "markdown_bytes": 58576
+      },
+      "2401.02954v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 201.20070000120904,
+          "p95": 284.65899499860825,
+          "p99": 316.41390699951444
+        },
+        "pages_per_second_at_p50": 238.56775846063937,
+        "cpu_ms_median": 236.01049999999998,
+        "peak_rss_kb_median": 38918.0,
+        "peak_rss_kb_max": 40084,
+        "page_count": 48,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "18119030666750342498",
+        "markdown_bytes": 120847
+      },
+      "2307.09288v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 660.5383249989245,
+          "p95": 966.4760489977198,
+          "p99": 1286.0989779946976
+        },
+        "pages_per_second_at_p50": 115.05766906125204,
+        "cpu_ms_median": 697.0215,
+        "peak_rss_kb_median": 95482.0,
+        "peak_rss_kb_max": 96404,
+        "page_count": 76,
+        "classification": "TextBased",
+        "ocr_pages": 1,
+        "signature": "17486261570908058729",
+        "markdown_bytes": 269445
+      },
+      "image-only-scan": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 2.1642650026478805,
+          "p95": 3.3174560012412257,
+          "p99": 3.8079660007497296
+        },
+        "pages_per_second_at_p50": 462.05062632189,
+        "cpu_ms_median": 3.1529999999999996,
+        "peak_rss_kb_median": 24764.0,
+        "peak_rss_kb_max": 24888,
+        "page_count": 1,
+        "classification": "ImageBased",
+        "ocr_pages": 1,
+        "signature": "14695981039346656037",
+        "markdown_bytes": 0
+      },
+      "two-column-fixture": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 14.78736100034439,
+          "p95": 21.055023004009854,
+          "p99": 23.88438399793813
+        },
+        "pages_per_second_at_p50": 67.62531867428613,
+        "cpu_ms_median": 16.0305,
+        "peak_rss_kb_median": 24770.0,
+        "peak_rss_kb_max": 24908,
+        "page_count": 1,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "3086879845853582949",
+        "markdown_bytes": 2134
+      },
+      "truncated": {
+        "samples": 24,
+        "errors": [
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure"
+        ]
+      }
+    },
+    "research-fast": {
+      "1706.03762v7": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 102.12524900271092,
+          "p95": 141.03393299592426,
+          "p99": 269.362662002095
+        },
+        "pages_per_second_at_p50": 146.8784668481134,
+        "cpu_ms_median": 172.534,
+        "peak_rss_kb_median": 40078.0,
+        "peak_rss_kb_max": 41160,
+        "page_count": 15,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "16223290637241134174",
+        "markdown_bytes": 40711
+      },
+      "1810.04805v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 108.41420499855303,
+          "p95": 150.5283220030833,
+          "p99": 321.67919800122036
+        },
+        "pages_per_second_at_p50": 147.5821364941388,
+        "cpu_ms_median": 126.21099999999998,
+        "peak_rss_kb_median": 25482.0,
+        "peak_rss_kb_max": 26032,
+        "page_count": 16,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "3111230535220274909",
+        "markdown_bytes": 66011
+      },
+      "2005.14165v4": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 227.37518850408378,
+          "p95": 322.18698199721985,
+          "p99": 563.4375000008731
+        },
+        "pages_per_second_at_p50": 329.8512933334103,
+        "cpu_ms_median": 257.9545,
+        "peak_rss_kb_median": 39296.0,
+        "peak_rss_kb_max": 40132,
+        "page_count": 75,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "4183264826753320871",
+        "markdown_bytes": 247009
+      },
+      "2010.11929v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 138.05387299726135,
+          "p95": 168.06967800221173,
+          "p99": 269.6283510013018
+        },
+        "pages_per_second_at_p50": 159.35807900468265,
+        "cpu_ms_median": 169.437,
+        "peak_rss_kb_median": 35398.0,
+        "peak_rss_kb_max": 36200,
+        "page_count": 22,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "5501260424077954744",
+        "markdown_bytes": 67772
+      },
+      "2006.11239v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 131.40272050077328,
+          "p95": 166.26692799763987,
+          "p99": 572.8101709973998
+        },
+        "pages_per_second_at_p50": 190.2548128739304,
+        "cpu_ms_median": 156.8745,
+        "peak_rss_kb_median": 56656.0,
+        "peak_rss_kb_max": 57336,
+        "page_count": 25,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "11310402365222741161",
+        "markdown_bytes": 58576
+      },
+      "2401.02954v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 198.82010050059762,
+          "p95": 260.4119099996751,
+          "p99": 345.34278500359505
+        },
+        "pages_per_second_at_p50": 241.4242819470646,
+        "cpu_ms_median": 229.4305,
+        "peak_rss_kb_median": 39048.0,
+        "peak_rss_kb_max": 39884,
+        "page_count": 48,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "18119030666750342498",
+        "markdown_bytes": 120847
+      },
+      "2307.09288v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 625.9215550016961,
+          "p95": 828.6161669966532,
+          "p99": 883.8690249976935
+        },
+        "pages_per_second_at_p50": 121.42096624199826,
+        "cpu_ms_median": 674.3015,
+        "peak_rss_kb_median": 95648.0,
+        "peak_rss_kb_max": 96596,
+        "page_count": 76,
+        "classification": "TextBased",
+        "ocr_pages": 1,
+        "signature": "17486261570908058729",
+        "markdown_bytes": 269445
+      },
+      "image-only-scan": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 9.63699249768979,
+          "p95": 14.462218001426663,
+          "p99": 15.501248002692591
+        },
+        "pages_per_second_at_p50": 103.76681316704597,
+        "cpu_ms_median": 10.588999999999999,
+        "peak_rss_kb_median": 24782.0,
+        "peak_rss_kb_max": 24852,
+        "page_count": 1,
+        "classification": "TextBased",
+        "ocr_pages": 1,
+        "signature": "5903063859836352226",
+        "markdown_bytes": 34
+      },
+      "two-column-fixture": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 13.824397003190825,
+          "p95": 16.4915720015415,
+          "p99": 16.66005700099049
+        },
+        "pages_per_second_at_p50": 72.33588559191325,
+        "cpu_ms_median": 14.9105,
+        "peak_rss_kb_median": 24770.0,
+        "peak_rss_kb_max": 24932,
+        "page_count": 1,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "3086879845853582949",
+        "markdown_bytes": 2134
+      },
+      "truncated": {
+        "samples": 24,
+        "errors": [
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure"
+        ]
+      }
+    },
+    "upstream-release": {
+      "1706.03762v7": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 152.1826454991242,
+          "p95": 181.89599300239934,
+          "p99": 182.3721900000237
+        },
+        "pages_per_second_at_p50": 98.56577240330813,
+        "cpu_ms_median": 224.0795,
+        "peak_rss_kb_median": 41720.0,
+        "peak_rss_kb_max": 43060,
+        "page_count": 15,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "7688600531884775700",
+        "markdown_bytes": 41735
+      },
+      "1810.04805v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 149.45634550167597,
+          "p95": 190.59866699535633,
+          "p99": 194.9610939991544
+        },
+        "pages_per_second_at_p50": 107.05467169221383,
+        "cpu_ms_median": 167.4975,
+        "peak_rss_kb_median": 28064.0,
+        "peak_rss_kb_max": 28488,
+        "page_count": 16,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "4919795717938625221",
+        "markdown_bytes": 66422
+      },
+      "2005.14165v4": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 304.2890114993497,
+          "p95": 383.41535000654403,
+          "p99": 392.8744529985124
+        },
+        "pages_per_second_at_p50": 246.47620244466265,
+        "cpu_ms_median": 331.98249999999996,
+        "peak_rss_kb_median": 41760.0,
+        "peak_rss_kb_max": 42312,
+        "page_count": 75,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "5000426843700485405",
+        "markdown_bytes": 249745
+      },
+      "2010.11929v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 180.43304749880917,
+          "p95": 237.3193439998431,
+          "p99": 380.9088510024594
+        },
+        "pages_per_second_at_p50": 121.92888334463893,
+        "cpu_ms_median": 213.435,
+        "peak_rss_kb_median": 37854.0,
+        "peak_rss_kb_max": 38504,
+        "page_count": 22,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "14596170355753490758",
+        "markdown_bytes": 68514
+      },
+      "2006.11239v2": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 178.24974049653974,
+          "p95": 291.8208139963099,
+          "p99": 341.5267939999467
+        },
+        "pages_per_second_at_p50": 140.25265860336728,
+        "cpu_ms_median": 203.8245,
+        "peak_rss_kb_median": 59270.0,
+        "peak_rss_kb_max": 59776,
+        "page_count": 25,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "12731064416647466291",
+        "markdown_bytes": 62412
+      },
+      "2401.02954v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 268.777562003379,
+          "p95": 357.91429299570154,
+          "p99": 489.5539799981634
+        },
+        "pages_per_second_at_p50": 178.5863360104314,
+        "cpu_ms_median": 295.08799999999997,
+        "peak_rss_kb_median": 41198.0,
+        "peak_rss_kb_max": 41992,
+        "page_count": 48,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "16671872752832563231",
+        "markdown_bytes": 121031
+      },
+      "2307.09288v1": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 910.5885739991209,
+          "p95": 1418.5789830007707,
+          "p99": 1673.4080979949795
+        },
+        "pages_per_second_at_p50": 83.46250125479104,
+        "cpu_ms_median": 955.2079999999999,
+        "peak_rss_kb_median": 98350.0,
+        "peak_rss_kb_max": 99700,
+        "page_count": 76,
+        "classification": "TextBased",
+        "ocr_pages": 1,
+        "signature": "18404628517301912764",
+        "markdown_bytes": 269353
+      },
+      "image-only-scan": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 2.0487544970819727,
+          "p95": 5.00015100260498,
+          "p99": 6.7941430024802685
+        },
+        "pages_per_second_at_p50": 488.1014301246408,
+        "cpu_ms_median": 3.0904999999999996,
+        "peak_rss_kb_median": 24776.0,
+        "peak_rss_kb_max": 24872,
+        "page_count": 1,
+        "classification": "ImageBased",
+        "ocr_pages": 1,
+        "signature": "14695981039346656037",
+        "markdown_bytes": 0
+      },
+      "two-column-fixture": {
+        "runs": 24,
+        "latency_ms": {
+          "p50": 15.426469501107931,
+          "p95": 24.43547399889212,
+          "p99": 92.68887800135417
+        },
+        "pages_per_second_at_p50": 64.82364613161683,
+        "cpu_ms_median": 16.662,
+        "peak_rss_kb_median": 24772.0,
+        "peak_rss_kb_max": 24864,
+        "page_count": 1,
+        "classification": "TextBased",
+        "ocr_pages": 0,
+        "signature": "3086879845853582949",
+        "markdown_bytes": 2134
+      },
+      "truncated": {
+        "samples": 24,
+        "errors": [
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure",
+          "Invalid PDF structure"
+        ]
+      }
+    }
+  },
+  "five_paper_corpus_summary": {
+    "fork-normal": {
+      "runs": 24,
+      "errors": 0,
+      "latency_ms": {
+        "p50": 740.6408069982717,
+        "p95": 938.8324950050446,
+        "p99": 970.4536039862433
+      },
+      "pages_per_second_at_p50": 206.5778695344787,
+      "cpu_ms_median": 914.124,
+      "peak_rss_kb_median": 56844.0,
+      "peak_rss_kb_max": 57312
+    },
+    "research-fast": {
+      "runs": 24,
+      "errors": 0,
+      "latency_ms": {
+        "p50": 709.6561119979015,
+        "p95": 849.6990649946383,
+        "p99": 1996.91788200289
+      },
+      "pages_per_second_at_p50": 215.5973821873494,
+      "cpu_ms_median": 881.357,
+      "peak_rss_kb_median": 56656.0,
+      "peak_rss_kb_max": 57336
+    },
+    "upstream-release": {
+      "runs": 24,
+      "errors": 0,
+      "latency_ms": {
+        "p50": 984.9915095001052,
+        "p95": 1173.6698019958567,
+        "p99": 1331.0092269966844
+      },
+      "pages_per_second_at_p50": 155.3312881627267,
+      "cpu_ms_median": 1147.3629999999998,
+      "peak_rss_kb_median": 59270.0,
+      "peak_rss_kb_max": 59776
+    }
+  },
+  "output_equivalence": {
+    "1706.03762v7": {
+      "signatures": {
+        "fork-normal": "16223290637241134174",
+        "research-fast": "16223290637241134174",
+        "upstream-release": "7688600531884775700"
+      },
+      "byte_identical": false,
+      "research_matches_fork_normal": true,
+      "fork_matches_upstream": false,
+      "all_equal": false
+    },
+    "1810.04805v2": {
+      "signatures": {
+        "fork-normal": "3111230535220274909",
+        "research-fast": "3111230535220274909",
+        "upstream-release": "4919795717938625221"
+      },
+      "byte_identical": false,
+      "research_matches_fork_normal": true,
+      "fork_matches_upstream": false,
+      "all_equal": false
+    },
+    "2005.14165v4": {
+      "signatures": {
+        "fork-normal": "4183264826753320871",
+        "research-fast": "4183264826753320871",
+        "upstream-release": "5000426843700485405"
+      },
+      "byte_identical": false,
+      "research_matches_fork_normal": true,
+      "fork_matches_upstream": false,
+      "all_equal": false
+    },
+    "2010.11929v2": {
+      "signatures": {
+        "fork-normal": "5501260424077954744",
+        "research-fast": "5501260424077954744",
+        "upstream-release": "14596170355753490758"
+      },
+      "byte_identical": false,
+      "research_matches_fork_normal": true,
+      "fork_matches_upstream": false,
+      "all_equal": false
+    },
+    "2006.11239v2": {
+      "signatures": {
+        "fork-normal": "11310402365222741161",
+        "research-fast": "11310402365222741161",
+        "upstream-release": "12731064416647466291"
+      },
+      "byte_identical": false,
+      "research_matches_fork_normal": true,
+      "fork_matches_upstream": false,
+      "all_equal": false
+    }
+  },
+  "throughput": {
+    "fork-normal": {
+      "1": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 3.351897225002176,
+        "documents_per_second": 7.458462572635642,
+        "pages_per_second": 228.22895472265066
+      },
+      "4": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 1.5328964759974042,
+        "documents_per_second": 16.30899437206504,
+        "pages_per_second": 499.05522778519025
+      },
+      "8": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 1.709921089001,
+        "documents_per_second": 14.620557732641299,
+        "pages_per_second": 447.38906661882373
+      }
+    },
+    "research-fast": {
+      "1": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 3.3217330719999154,
+        "documents_per_second": 7.526191737299425,
+        "pages_per_second": 230.3014671613624
+      },
+      "4": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 1.5044416279997677,
+        "documents_per_second": 16.617460946782483,
+        "pages_per_second": 508.494304971544
+      },
+      "8": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 1.5020067330042366,
+        "documents_per_second": 16.64439942289492,
+        "pages_per_second": 509.31862234058457
+      }
+    },
+    "upstream-release": {
+      "1": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 4.693397808994632,
+        "documents_per_second": 5.32663136972726,
+        "pages_per_second": 162.99491991365417
+      },
+      "4": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 2.0045796150006936,
+        "documents_per_second": 12.47144279674387,
+        "pages_per_second": 381.62614958036244
+      },
+      "8": {
+        "documents": 25,
+        "errors": 0,
+        "elapsed_s": 2.0716517379987636,
+        "documents_per_second": 12.06766540024254,
+        "pages_per_second": 369.2705612474217
+      }
+    }
+  }
+}

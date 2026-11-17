@@ -1,0 +1,10 @@
+[package]
+name = "pdf-parser-bench"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+research = []
+
+[dependencies]
+pdf-inspector = { path = "../../../../vendor/pdf-inspector-researchpapers" }

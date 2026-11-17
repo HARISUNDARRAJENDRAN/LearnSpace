@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CodingLanguage, Signature } from "@learnspace/shared/coding";
-import { starterCode } from "@learnspace/shared/coding-code";
+import { sameValue, starterCode } from "@learnspace/shared/coding-code";
 import { testExecute } from "../test-sandbox.js";
 import { executeCases, gradeSubmission, gradeSuite, type TestCase } from "./grade.js";
 import { referenceAsSolution } from "./harness.js";
+import type { Execute } from "../executor.js";
 
 // These run real code in real sandbox containers: Docker and the sandbox image must be available.
 const { execute: runnerSandbox, skip } = await testExecute();
@@ -39,6 +40,17 @@ const mixedSolutions: Record<CodingLanguage, string> = {
 };
 
 const LANGUAGES: CodingLanguage[] = ["python", "javascript", "typescript", "java", "cpp"];
+
+test("declared numeric tolerance grades close floats and rejects outside values and NaN; exact integer grading is unchanged", async () => {
+  const executeReturning = (value: unknown): Execute => async () => ({ compile: null, runs: [{ status: "ok", stdout: "", stderr: "", result: JSON.stringify({ i: 0, ok: true, v: value, ms: 1 }), wallMs: 1, cpuMs: 1, maxRssKb: 100, exitCode: 0, signal: null }] });
+  const signature: Signature = { functionName: "score", params: [{ name: "x", type: "double" }], returns: "double" };
+  const input = { signature, compare: "exact" as const, numericTolerance: { absolute: 0.01, relative: 0 }, language: "python" as const, code: "def score(x): return x", cases: [{ args: [1], expected: 1 }], timeoutMs: 1000 };
+  assert.equal((await gradeSuite(executeReturning(1.005), input)).verdict, "accepted");
+  assert.equal((await gradeSuite(executeReturning(1.02), input)).verdict, "wrong_answer");
+  assert.equal(sameValue("double", 1, Number.NaN, "exact", input.numericTolerance), false);
+  const integer = await gradeSuite(executeReturning(1.005), { ...input, signature: { ...signature, returns: "int" }, numericTolerance: undefined });
+  assert.equal(integer.verdict, "wrong_answer");
+});
 
 test("every language's starter code compiles and every value type crosses the harness both ways", { skip }, async () => {
   await Promise.all(LANGUAGES.map(async (language) => {

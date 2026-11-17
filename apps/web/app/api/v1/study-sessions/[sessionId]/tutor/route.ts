@@ -4,13 +4,15 @@ import { NextResponse } from "next/server";
 import { embedText } from "../../../../../../lib/ai/openai";
 import { AuthError, authErrorResponse } from "../../../../../../lib/auth/errors";
 import { requireCompletedSession } from "../../../../../../lib/discovery/access";
+import { requestPaperIngestion } from "../../../../../../lib/research/ingestion";
 import { admitTutorRequest } from "../../../../../../lib/tutor/limits";
 import { admitTutorTurn, endTutorThread, getTutorThread, resolveTutorDoubt, restoreTutorThread, runTutorTurn } from "../../../../../../lib/tutor/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// A question that needs reasoning can think for a minute or more; the model call itself times out first.
-export const maxDuration = 150;
+// A question that needs reasoning can think for a minute or more; the model call itself times out first. A paper still
+// being read in is parsed in the background while the chat polls, which takes under a minute.
+export const maxDuration = 300;
 
 type Context = { params: Promise<{ sessionId: string }> };
 const MAX_BODY_BYTES = 8_192;
@@ -19,7 +21,10 @@ export async function GET(_request: Request, context: Context) {
   try {
     const session = await requireCompletedSession();
     const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
-    return NextResponse.json(await getTutorThread(session.user.id, sessionId), { headers: { "Cache-Control": "no-store" } });
+    const thread = await getTutorThread(session.user.id, sessionId);
+    // A failed attempt is retried by the chat's own polling once the request window has passed.
+    if (thread.resourceType === "paper" && thread.transcript.status === "preparing") requestPaperIngestion(thread.resourceId);
+    return NextResponse.json(thread, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return authErrorResponse(error);
   }
@@ -43,7 +48,7 @@ export async function POST(request: Request, context: Context) {
     }
     const input = tutorTurnRequestSchema.parse(json);
     // The question is embedded while the turn is admitted; a reply or a doubt is embedded with its context, so it waits.
-    embedding = input.replyTo || input.doubt ? null : embedText(input.question, request.signal);
+    embedding = "positionMs" in input && !input.replyTo && !input.doubt ? embedText(input.question, request.signal) : null;
     turn = await admitTutorTurn(session.user.id, sessionId, input);
   } catch (error) {
     return authErrorResponse(error);

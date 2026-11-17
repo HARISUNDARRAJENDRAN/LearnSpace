@@ -1,15 +1,15 @@
 "use client";
 
-import type { StudySessionResource } from "@learnspace/shared";
+import type { StudyAnchor, StudySessionResource } from "@learnspace/shared";
 import { type TutorDoubt, type TutorMessageView, tutorMessageViewSchema, type TutorStreamEvent, type TutorThreadView } from "@learnspace/shared/tutor";
-import { ArrowDown, ArrowUp, BookOpen, Code, ChevronDown, Copy, CornerDownLeft, MessagesSquare, PencilLine, Play, RotateCcw, Search, SquarePen } from "lucide-react";
+import { ArrowDown, ArrowUp, BookOpen, Code, ChevronDown, Copy, CornerDownLeft, MessagesSquare, PencilLine, RotateCcw, Search, SquarePen } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ChatComposer, SKILLS } from "./ChatComposer";
 import { type DoubtAnchor, type DoubtMark, DoubtPopup, DoubtThread, selectedAnchor, useDoubtHighlights } from "./Doubts";
 import { LoadingState } from "./LoadingState";
 import { MathText } from "./MathText";
 import { SessionPanelHeader } from "./SessionPanelHeader";
-import { formatTime } from "./StudyWorkspace";
+import { PlaceIcon, placeLabel, placeOf } from "./place";
 import { codeLanguageLabels, type SessionCodeDraft } from "./tools";
 import { type TutorActions, TutorAnswer } from "./TutorBlocks";
 
@@ -22,9 +22,16 @@ type Asking = { anchor: DoubtAnchor; top: number; left: number };
 
 const phaseLabel: Record<Phase, string> = { retrieving: "Finding the moment in the transcript", thinking: "Thinking it through", reasoning: "Working through it step by step", writing: "Writing" };
 const transcriptNotice = {
-  preparing: "The transcript for this video is still being prepared. The tutor answers only from the transcript, so questions open once it's ready.",
-  unavailable: "This video has no captions LearnSpace can use, so the tutor can't answer questions about it.",
-  failed: "LearnSpace couldn't get this video's transcript, so the tutor can't answer questions about it.",
+  video: {
+    preparing: "The transcript for this video is still being prepared. The tutor answers only from the transcript, so questions open once it's ready.",
+    unavailable: "This video has no captions LearnSpace can use, so the tutor can't answer questions about it.",
+    failed: "LearnSpace couldn't get this video's transcript, so the tutor can't answer questions about it.",
+  },
+  paper: {
+    preparing: "This paper is still being read in. The tutor answers only from the paper, so questions open once it's ready.",
+    unavailable: "LearnSpace has no text for this paper, so the tutor can't answer questions about it.",
+    failed: "LearnSpace couldn't read this paper's text, so the tutor can't answer questions about it.",
+  },
 } as const;
 
 function whenLabel(iso: string): string {
@@ -40,8 +47,8 @@ function codeLabel(code: SessionCodeDraft): string {
   return `${codeLanguageLabels[code.language]} · ${lines} ${lines === 1 ? "line" : "lines"}`;
 }
 
-/** Every conversation about this video, searchable; picking an earlier one makes it the current chat again. */
-function ChatList({ current, history, onOpenCurrent, onRestore }: { current: ChatSummary | null; history: TutorThreadView["history"]; onOpenCurrent: () => void; onRestore: (threadId: string) => void }) {
+/** Every conversation about this video or paper, searchable; picking an earlier one makes it the current chat again. */
+function ChatList({ current, history, noun, onOpenCurrent, onRestore }: { current: ChatSummary | null; history: TutorThreadView["history"]; noun: string; onOpenCurrent: () => void; onRestore: (threadId: string) => void }) {
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const matches = (item: ChatSummary) => !needle || item.title.toLowerCase().includes(needle) || Boolean(item.preview?.toLowerCase().includes(needle));
@@ -54,20 +61,20 @@ function ChatList({ current, history, onOpenCurrent, onRestore }: { current: Cha
         {showCurrent ? <li><button type="button" onClick={onOpenCurrent}><strong>{current.title}</strong>{current.preview ? <span><MathText text={current.preview} /></span> : null}<small>Current chat</small></button></li> : null}
         {earlier.map((item) => <li key={item.id}><button type="button" onClick={() => onRestore(item.id)}><strong>{item.title}</strong>{item.preview ? <span><MathText text={item.preview} /></span> : null}<small><time dateTime={item.updatedAt}>{whenLabel(item.updatedAt)}</time></small></button></li>)}
       </ul>
-      {!showCurrent && earlier.length === 0 ? <p className="chat-list-empty">{needle ? <>No chats match &ldquo;{query.trim()}&rdquo;.</> : "No chats about this video yet."}</p> : null}
+      {!showCurrent && earlier.length === 0 ? <p className="chat-list-empty">{needle ? <>No chats match &ldquo;{query.trim()}&rdquo;.</> : `No chats about this ${noun} yet.`}</p> : null}
     </div>
   );
 }
 
-/** The transcript moments an answer cites, collapsed under a count. */
-function AnswerSources({ message, onSeek }: { message: TutorMessageView; onSeek: (positionMs: number) => void }) {
+/** The passages an answer cites, collapsed under a count. */
+function AnswerSources({ message, onGo }: { message: TutorMessageView; onGo: (place: StudyAnchor) => void }) {
   const [open, setOpen] = useState(false);
   if (message.sources.length === 0) return null;
   return (
     <>
-      <button className="chat-sources-toggle" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{message.sources.length} {message.sources.length === 1 ? "moment" : "moments"}<ChevronDown aria-hidden="true" /></button>
+      <button className="chat-sources-toggle" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{message.sources.length} {message.sources[0]?.anchor ? "passage" : "moment"}{message.sources.length === 1 ? "" : "s"}<ChevronDown aria-hidden="true" /></button>
       <div className="chat-sources" data-open={open || undefined}>
-        <ul inert={!open}>{message.sources.map((source) => <li key={source.chunkId}>{source.startMs === null ? <span className="chat-source"><span>{source.excerpt}</span></span> : <button className="chat-source" type="button" onClick={() => onSeek(source.startMs!)}><Play aria-hidden="true" /><time>{formatTime(source.startMs)}</time><span>{source.excerpt}</span></button>}</li>)}</ul>
+        <ul inert={!open}>{message.sources.map((source) => { const place = placeOf(source.startMs, source.anchor); return <li key={source.chunkId}>{place ? <button className="chat-source" type="button" onClick={() => onGo(place)}><PlaceIcon place={place} /><time>{placeLabel(place)}</time><span>{source.excerpt}</span></button> : <span className="chat-source"><span>{source.excerpt}</span></span>}</li>; })}</ul>
       </div>
     </>
   );
@@ -87,16 +94,23 @@ async function errorMessage(response: Response): Promise<string> {
 }
 
 /**
- * The tutor for the session's video. The learner can share the session's code draft with a question; it is sent only while
+ * The tutor for the session's video or paper, asked at `place`: the moment playing, or the page being read. The learner can share the session's code draft with a question; it is sent only while
  * they keep sharing it on, and only for this session.
  */
-export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCollapse }: { sessionId: string; resource: StudySessionResource; currentMs: number; code: SessionCodeDraft | null; onSeek: (positionMs: number) => void; onCollapse: () => void }) {
+export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCollapse }: {
+  sessionId: string; resource: StudySessionResource; place: StudyAnchor;
+  /** A question the lesson drafted for the learner (asking about a passage they selected); a newer `at` replaces the draft. */
+  seed?: { text: string; at: number } | null;
+  code: SessionCodeDraft | null; onGo: (place: StudyAnchor) => void; onCollapse: () => void;
+}) {
+  const noun = resource.type;
   const [shareCode, setShareCode] = useState(false);
   const sharedCode = shareCode && code?.code.trim() ? code : null;
   const [thread, setThread] = useState<TutorThreadView | null>(null);
   const [messages, setMessages] = useState<Array<TutorMessageView | { id: string; invalid: true }>>([]);
   const [loadError, setLoadError] = useState(false);
-  const [draft, setDraft] = useState("");
+  const [draft, setDraft] = useState(seed?.text ?? "");
+  useEffect(() => { if (seed) setDraft(seed.text); }, [seed]);
   const [pending, setPending] = useState<Pending | null>(null);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [reply, setReply] = useState<Reply | null>(null);
@@ -179,12 +193,12 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
     const localId = crypto.randomUUID();
     let accepted = false;
     let drafted = false;
-    upsert({ id: localId, role: "user", status: "completed", createdAt: new Date().toISOString(), text: question, positionMs: currentMs, outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt });
+    upsert({ id: localId, role: "user", status: "completed", createdAt: new Date().toISOString(), text: question, positionMs: place.kind === "video" ? place.positionMs : null, anchor: place, outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt });
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, positionMs: currentMs, idempotencyKey: crypto.randomUUID(), ...(replyTo ? { replyTo: { messageId: replyTo.messageId, blockId: replyTo.blockId } } : {}), ...(doubt ? { doubt } : {}), ...(sharedCode && !doubt ? { code: sharedCode } : {}) }),
+        body: JSON.stringify({ question, ...(place.kind === "video" ? { positionMs: place.positionMs } : { anchor: place }), idempotencyKey: crypto.randomUUID(), ...(replyTo ? { replyTo: { messageId: replyTo.messageId, blockId: replyTo.blockId } } : {}), ...(doubt ? { doubt } : {}), ...(sharedCode && !doubt ? { code: sharedCode } : {}) }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) {
@@ -255,7 +269,7 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
   }
 
   const actions: TutorActions = {
-    seek: onSeek,
+    go: onGo,
     answer: (messageId, blockId, choice) => void act({ action: "answer", messageId, blockId, choice }),
     hint: (messageId, blockId) => void act({ action: "hint", messageId, blockId }),
     reply: (messageId, blockId, prompt) => {
@@ -327,12 +341,12 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
   const lastQuestion = main.findLast((message) => message.role === "user");
   const firstQuestion = main.find((message) => message.role === "user")?.text ?? null;
   const current = firstQuestion ? { title: firstQuestion, preview: main.find((message) => message.role === "assistant" && message.status === "completed")?.text.slice(0, 200) || null } : null;
-  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />General knowledge, not from this video</p>;
+  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />General knowledge, not from this {noun}</p>;
 
   const pendingAnswer = (doubtId: string | null) => pending && pending.doubtId === doubtId ? (
     <article className="chat-message is-assistant">
       {streaming?.outcome === "general" ? generalNote : null}
-      {streaming ? <TutorAnswer message={streaming} actions={{ ...actions, busy: true }} streaming /> : <LoadingState label={phaseLabel[pending.phase]} />}
+      {streaming ? <TutorAnswer message={streaming} actions={{ ...actions, busy: true }} streaming /> : <LoadingState label={pending.phase === "retrieving" && noun === "paper" ? "Finding the passage in the paper" : phaseLabel[pending.phase]} />}
     </article>
   ) : null;
   const failureNote = (doubtId: string | null) => failure && failure.doubtId === doubtId ? (
@@ -367,9 +381,10 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
 
   function renderMessage(message: TutorMessageView): ReactNode {
     if (message.role === "user") {
+      const asked = placeOf(message.positionMs, message.anchor);
       return (
         <article className="chat-message is-user" key={message.id}>
-          {message.positionMs !== null && !message.doubt ? <button className="chat-context-chip" type="button" title="Play from this moment" onClick={() => onSeek(message.positionMs!)}><Play aria-hidden="true" />{formatTime(message.positionMs)}</button> : null}
+          {asked && !message.doubt ? <button className="chat-context-chip" type="button" title={asked.kind === "video" ? "Play from this moment" : "Go to this page"} onClick={() => onGo(asked)}><PlaceIcon place={asked} />{placeLabel(asked)}</button> : null}
           <p className="chat-bubble">{message.text}</p>
           {message === lastQuestion && !pending ? <button className="session-icon-button chat-edit" type="button" aria-label="Edit question" title="Edit and ask again" onClick={() => { setDraft(message.text); requestAnimationFrame(() => document.getElementById("study-question")?.focus()); }}><PencilLine aria-hidden="true" /></button> : null}
         </article>
@@ -381,12 +396,12 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
         {message.status === "completed" ? (
           message.blocks.length > 0 ? <TutorAnswer message={message} actions={actions} revealing={message.id === revealing} onRevealed={revealed} after={(blockId) => renderDoubts(message.id, blockId)} /> : <p>{message.text}</p>
         ) : <p className="session-tool-message">{message.status === "cancelled" ? "Stopped before answering." : "This answer didn't finish."}</p>}
-        {message.stale ? <p className="tutor-stale">Cites an earlier version of this video&apos;s transcript.</p> : null}
+        {message.stale ? <p className="tutor-stale">Cites an earlier version of this {noun === "video" ? "video\u2019s transcript" : "paper"}.</p> : null}
         {message.id === revealing ? null : <>
           {message.status === "completed" && message.text ? (
             <div className="chat-message-actions">
               <button className="session-icon-button" type="button" aria-label="Copy answer" title="Copy" onClick={() => void navigator.clipboard?.writeText(message.text)}><Copy aria-hidden="true" /></button>
-              <AnswerSources message={message} onSeek={onSeek} />
+              <AnswerSources message={message} onGo={onGo} />
             </div>
           ) : null}
           {message === visible.at(-1) && message.followUps.length > 0 && !pending ? (
@@ -402,11 +417,11 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
 
   return (
     <div className="session-tool session-chat">
-      <SessionPanelHeader title={listing ? "Chats about this video" : firstQuestion ?? "New chat"} onCollapse={onCollapse}>
+      <SessionPanelHeader title={listing ? `Chats about this ${noun}` : firstQuestion ?? "New chat"} onCollapse={onCollapse}>
         {listing ? null : <button className="session-icon-button" type="button" aria-label="All chats" title="All chats" disabled={Boolean(pending)} onClick={() => setListing(true)}><MessagesSquare aria-hidden="true" /></button>}
         <button className="session-icon-button" type="button" aria-label="New chat" title="New chat" disabled={(messages.length === 0 && !listing) || Boolean(pending)} onClick={() => (messages.length === 0 ? setListing(false) : void newChat())}><SquarePen aria-hidden="true" /></button>
       </SessionPanelHeader>
-      {listing ? <ChatList current={current} history={thread?.history ?? []} onOpenCurrent={() => setListing(false)} onRestore={(threadId) => void restore(threadId)} /> : <>
+      {listing ? <ChatList current={current} history={thread?.history ?? []} noun={noun} onOpenCurrent={() => setListing(false)} onRestore={(threadId) => void restore(threadId)} /> : <>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: selecting text is the interaction; the ask box it opens is a real form. */}
       <div
         className="chat-messages"
@@ -420,11 +435,11 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
         onKeyUp={(event) => { if (event.shiftKey) pickDoubt(); }}
       >
         {loadError ? <p className="session-tool-message is-error" role="alert">The conversation couldn&apos;t be loaded. <button className="session-link-button" type="button" onClick={() => void load()}>Try again</button></p> : null}
-        {thread && !ready ? <p className="tutor-notice" role="status">{transcriptNotice[thread.transcript.status as keyof typeof transcriptNotice]}</p> : null}
+        {thread && !ready ? <p className="tutor-notice" role="status">{transcriptNotice[noun][thread.transcript.status as keyof typeof transcriptNotice.video]}</p> : null}
         {thread && visible.length === 0 && !pending ? (
           <div className="chat-empty">
-            <p className="chat-empty-title">Learn from this video</p>
-            <p>Ask about anything the instructor covers. Answers link to the moment they come from, say plainly when they go beyond the video, and check what stuck as you go. Highlight any part of an answer to ask about just that.</p>
+            <p className="chat-empty-title">Learn from this {noun}</p>
+            <p>{noun === "video" ? "Ask about anything the instructor covers. Answers link to the moment they come from" : "Ask about any idea, equation or reference in the paper. Answers link to the page they come from"}, say plainly when they go beyond the {noun}, and check what stuck as you go. Highlight any part of an answer to ask about just that.</p>
             <ul className="chat-suggestions">{SKILLS.slice(0, 3).map((skill) => <li key={skill.name}><button type="button" disabled={!ready} onClick={() => void send(skill.prompt, null)}><ArrowUp aria-hidden="true" />{skill.prompt}</button></li>)}</ul>
           </div>
         ) : visible.map((message) => "invalid" in message ? (
@@ -436,7 +451,7 @@ export function SessionChat({ sessionId, resource, currentMs, code, onSeek, onCo
         {atEnd || visible.length === 0 ? null : <div className="chat-jump-dock"><button className="chat-jump" type="button" aria-label="Jump to latest" title="Jump to latest" onClick={() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" })}><ArrowDown aria-hidden="true" /></button></div>}
       </div>
       {code?.code.trim() ? <div className="chat-code-share"><button type="button" aria-pressed={shareCode} title={shareCode ? "The tutor sees your code with each question" : "Let the tutor see this session's code"} onClick={() => setShareCode(!shareCode)}><Code aria-hidden="true" /><span>{shareCode ? "Sharing your code" : "Share your code"}</span><small>{codeLabel(code)}</small></button></div> : null}
-      <ChatComposer draft={draft} onDraft={setDraft} ready={ready} answering={reply?.prompt ?? null} onCancelAnswering={() => setReply(null)} pending={Boolean(pending)} reasoning={pending?.phase === "reasoning"} onSend={(text) => void send(text)} onStop={() => abortRef.current?.abort()} currentMs={currentMs} resourceTitle={resource.title} />
+      <ChatComposer draft={draft} onDraft={setDraft} ready={ready} answering={reply?.prompt ?? null} onCancelAnswering={() => setReply(null)} pending={Boolean(pending)} reasoning={pending?.phase === "reasoning"} onSend={(text) => void send(text)} onStop={() => abortRef.current?.abort()} moment={placeLabel(place)} noun={noun} resourceTitle={resource.title} />
       </>}
     </div>
   );

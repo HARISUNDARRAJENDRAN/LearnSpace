@@ -1,5 +1,5 @@
 import type { CodeLanguage, StudyTool } from "@learnspace/shared";
-import { Code, ListChecks, type LucideIcon, MessagesSquare, NotebookPen, Workflow } from "lucide-react";
+import { Code, Lightbulb, ListChecks, type LucideIcon, MessagesSquare, NotebookPen, Workflow } from "lucide-react";
 
 /** The search parameter that opens a study tool beside the lesson, so the sidebar (and a reload) can deep link into one. */
 export const TOOL_PARAM = "tool";
@@ -11,6 +11,7 @@ export const sessionParts = [
   { slug: "chat", panel: "ai", label: "AI Chat", Icon: MessagesSquare },
   { slug: "code", panel: "code", label: "Code Exercises", Icon: Code },
   { slug: "practice", panel: "check", label: "Practice & Quizzes", Icon: ListChecks },
+  { slug: "guide", panel: "guide", label: "Project Guide", Icon: Lightbulb },
 ] as const satisfies ReadonlyArray<{ slug: string; panel: StudyTool | null; label: string; Icon: LucideIcon }>;
 
 export type SessionPartSlug = (typeof sessionParts)[number]["slug"];

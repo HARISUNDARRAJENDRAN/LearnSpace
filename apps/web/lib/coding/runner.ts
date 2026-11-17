@@ -1,4 +1,5 @@
 import type { LearnerRunRequest, LearnerSubmitRequest, ProblemSolution, RunResult, SubmitResult, VerifyResult } from "@learnspace/runner/api";
+import type { ExecuteResponse } from "@learnspace/runner";
 
 /**
  * The code runner (services/runner) is the only thing that executes learner code and the only reader of a problem's hidden
@@ -46,3 +47,7 @@ export const submitProblem = (problemId: string, request: LearnerSubmitRequest) 
 
 /** The reference approaches: the app asks only once an attempt is over or the learner chose to see it. */
 export const problemSolution = (problemId: string) => call<ProblemSolution>(`/v1/problems/${problemId}/solution`, { method: "GET", timeoutMs: 15_000 });
+
+/** Executes trusted generator code in the same isolated sandbox used by problem verification. */
+export const executeSandbox = (request: { language: "python"; files: Record<string, string>; runs: Array<{ stdin: string; timeoutMs: number }>; memoryMb?: number; stdoutLimit?: number }) =>
+  call<ExecuteResponse>("/v1/execute", { method: "POST", body: request, timeoutMs: 35_000 });

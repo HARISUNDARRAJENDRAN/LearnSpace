@@ -100,6 +100,8 @@ export async function removeFixture(migrator: postgres.Sql, { videoId, versionId
   if (users.length) {
     await migrator`DELETE FROM study.video_notes WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_transcript WHERE user_id IN ${migrator(users)}`;
+    await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id IN (SELECT id FROM retrieval.retrieval_runs WHERE user_id IN ${migrator(users)})`;
+    await migrator`DELETE FROM retrieval.retrieval_runs WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM agent.agent_runs WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id IN ${migrator(users)}`;

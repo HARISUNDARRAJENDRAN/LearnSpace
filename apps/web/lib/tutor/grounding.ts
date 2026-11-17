@@ -2,7 +2,7 @@ import { restoreLatex } from "../math";
 import type { TutorBlockView, TutorConceptStatus, TutorModelBlock, TutorModelOutput, TutorOutcome, TutorSource } from "@learnspace/shared/tutor";
 
 /** A retrieved transcript chunk the model was shown, numbered from 1 in the prompt. */
-export type Evidence = { chunkId: string; ordinal: number; startMs: number | null; endMs: number | null; content: string };
+export type Evidence = { chunkId: string; ordinal: number; startMs: number | null; endMs: number | null; content: string; anchor?: import("@learnspace/shared/contracts").PaperCitationAnchor; citations?: number[] };
 
 // Answers to checks and hints stay on the server until the learner earns them.
 type Hidden = { answer?: number; explanation?: string; hint?: string };
@@ -12,9 +12,15 @@ export type Interaction = { choice?: number; correct?: boolean; hint?: boolean }
 export type ReplyContext = { prompt: string; graded: { chose: string; correct: boolean } | null };
 export type GroundedAnswer = { outcome: TutorOutcome; blocks: StoredBlock[]; sources: TutorSource[]; followUps?: string[] };
 
-export const OUTCOME_NOTICE: Record<Exclude<TutorOutcome, "answer" | "general" | "clarify">, string> = {
-  not_covered: "This isn't covered in the transcript of this video. Ask about something the instructor discusses, or jump to the part you mean and ask again.",
-  off_topic: "I can only help with learning: this video, or questions from your studies. Ask me about something from the lesson."
+export const OUTCOME_NOTICE: Record<"video" | "paper", Record<Exclude<TutorOutcome, "answer" | "general" | "clarify">, string>> = {
+  video: {
+    not_covered: "This isn't covered in the transcript of this video. Ask about something the instructor discusses, or jump to the part you mean and ask again.",
+    off_topic: "I can only help with learning: this video, or questions from your studies. Ask me about something from the lesson.",
+  },
+  paper: {
+    not_covered: "I couldn't find this in the parts of the paper I can read. Select the passage you mean, or open its section, and ask again.",
+    off_topic: "I can only help with learning: this paper, or questions from your studies. Ask me about something in the paper.",
+  },
 };
 
 // Evidence numbers the model repeats in prose ("…count 8. [2][3]"); the app shows citations from the cite fields.
@@ -34,8 +40,8 @@ export function excerptOf(content: string, terms: string[] = []): string {
 
 /**
  * Turns the model's output into what is stored and shown: citations must name evidence the model was given, and a block
- * whose citations name none is removed. A block with no citations is general knowledge, kept and shown as beyond the
- * video; an answer with nothing cited is "general". A "general" answer is never attributed to the video, so its
+ * whose citations name none is removed. A block with no citations is general knowledge, kept and labelled by its basis;
+ * an answer with nothing cited is "general". A "general" answer is never attributed to the video, so its
  * citations are dropped and its blocks kept without them.
  */
 export function groundOutput(output: Pick<TutorModelOutput, "outcome" | "blocks" | "followUps">, evidence: Evidence[], terms: string[] = []): GroundedAnswer {
@@ -55,7 +61,7 @@ export function groundOutput(output: Pick<TutorModelOutput, "outcome" | "blocks"
     if (index === undefined) {
       index = sources.length;
       sourceIndex.set(cite, index);
-      sources.push({ chunkId: item.chunkId, startMs: item.startMs, endMs: item.endMs, excerpt: excerptOf(item.content, terms) });
+      sources.push({ chunkId: item.chunkId, startMs: item.startMs, endMs: item.endMs, excerpt: excerptOf(item.content, terms), ...(item.anchor ? { anchor: item.anchor } : {}) });
     }
     return index;
   };
@@ -64,7 +70,8 @@ export function groundOutput(output: Pick<TutorModelOutput, "outcome" | "blocks"
   for (const block of output.blocks) {
     const id = `b${blocks.length}`;
     const grounded = groundBlock(block, id, mapAll, map, (src, cites) => general || src.length > 0 || cites.length === 0);
-    if (grounded) blocks.push(grounded);
+    // A claim said to come from the source but citing none of it is not attributed to the source.
+    if (grounded) blocks.push({ ...grounded, basis: block.basis === "source" && blockSources(grounded).length === 0 ? "background" : block.basis });
   }
   if (blocks.length === 0) return { outcome: "not_covered", blocks: [], sources: [] };
   // Sources only some removed block used are dropped from the answer too.

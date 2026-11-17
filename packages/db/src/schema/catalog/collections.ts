@@ -35,6 +35,7 @@ export const collectionSections = catalogSchema.table(
     collectionId: uuid("collection_id").notNull().references(() => collections.id, { onDelete: "restrict" }),
     title: text("title").notNull(),
     description: text("description"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
     position: integer("position").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

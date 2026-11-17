@@ -1,4 +1,4 @@
-import { CODING_LANGUAGES, COMPARE_MODES, signatureSchema, type Signature } from "@learnspace/shared/coding";
+import { CODING_LANGUAGES, COMPARE_MODES, numericToleranceSchema, signatureSchema, type Signature } from "@learnspace/shared/coding";
 import { argsError, sameValue, typeError } from "@learnspace/shared/coding-code";
 import { z } from "zod";
 import type { ProblemSolution, RunCaseResult, RunResult, SubmitResult, Verification, VerifyResult } from "./api.js";
@@ -17,6 +17,7 @@ const approachSchema = z.object({ approach: z.string(), time: z.string(), space:
 export const problemSpecSchema = z.object({
   signature: signatureSchema,
   compare: z.enum(COMPARE_MODES),
+  numericTolerance: numericToleranceSchema.optional(),
   examples: z.array(caseSchema.extend({ explanation: z.string().optional() })).min(1).max(5),
 });
 
@@ -114,7 +115,7 @@ async function verify(execute: Execute, record: ProblemRecord, counts: { small: 
   if (!spec.success) throw new Rejection(`the problem statement is malformed: ${spec.error.issues[0]?.message ?? "invalid"}`);
   const authored = authoredSchema.safeParse(record.authored);
   if (!authored.success) throw new Rejection(`the problem's references are malformed: ${authored.error.issues[0]?.message ?? "invalid"}`);
-  const { signature, compare } = spec.data;
+  const { signature, compare, numericTolerance } = spec.data;
   const { baseline, optimal } = authored.data;
 
   // The authored cases, as written: the examples the learner reads, then the edge cases.
@@ -161,11 +162,11 @@ async function verify(execute: Execute, record: ProblemRecord, counts: { small: 
     const answer = optimalAnswers[index];
     const shapeError = typeError(signature.returns, answer, "the optimal reference's answer");
     if (shapeError) throw new Rejection(`${shapeError} on ${preview(args)}`);
-    if (!sameValue(signature.returns, answer, baselineAnswers[index], compare)) {
+    if (!sameValue(signature.returns, answer, baselineAnswers[index], compare, numericTolerance)) {
       throw new Rejection(`the references disagree on ${preview(args)}: baseline ${preview(baselineAnswers[index])}, optimal ${preview(answer)}`);
     }
     const item = written[index];
-    if (item && !sameValue(signature.returns, item.expected, answer, compare)) {
+    if (item && !sameValue(signature.returns, item.expected, answer, compare, numericTolerance)) {
       throw new Rejection(`${item.label} expects ${preview(item.expected)} but both references return ${preview(answer)}`);
     }
   }
@@ -179,7 +180,7 @@ async function verify(execute: Execute, record: ProblemRecord, counts: { small: 
   const largeAnswers = optimalRuns.length ? requireAnswers("optimal", optimalRuns[0]!, largeArgs) : [];
   if (optimalRuns[1]) {
     const again = requireAnswers("optimal", optimalRuns[1], largeArgs);
-    if (again.some((answer, index) => !sameValue(signature.returns, largeAnswers[index], answer, compare))) throw new Rejection("the optimal reference is not deterministic");
+    if (again.some((answer, index) => !sameValue(signature.returns, largeAnswers[index], answer, compare, numericTolerance))) throw new Rejection("the optimal reference is not deterministic");
   }
   for (const [index, answer] of largeAnswers.entries()) {
     const shapeError = typeError(signature.returns, answer, "the optimal reference's answer");
@@ -197,7 +198,7 @@ async function verify(execute: Execute, record: ProblemRecord, counts: { small: 
       efficiencyStage = true;
     } else {
       const answers = requireAnswers("baseline", baselineLarge, largeArgs);
-      if (answers.some((answer, index) => !sameValue(signature.returns, largeAnswers[index], answer, compare))) throw new Rejection("the references disagree on a large input");
+      if (answers.some((answer, index) => !sameValue(signature.returns, largeAnswers[index], answer, compare, numericTolerance))) throw new Rejection("the references disagree on a large input");
       baselineMs = baselineLarge.wallMs;
     }
   }
@@ -216,7 +217,7 @@ async function verify(execute: Execute, record: ProblemRecord, counts: { small: 
 // ---------------------------------------------------------------------------------------------------------------------
 // Grading a learner. Only verified problems are graded, and results never carry a hidden test's input or expected output.
 
-type Verified = { signature: Signature; compare: z.infer<typeof problemSpecSchema>["compare"]; examples: StoredTests["small"]; tests: StoredTests; perfLimitMs: number; efficiencyStage: boolean; sources: ReferenceSources; solution: { baseline: z.infer<typeof approachSchema>; optimal: z.infer<typeof approachSchema> } };
+type Verified = { signature: Signature; compare: z.infer<typeof problemSpecSchema>["compare"]; numericTolerance?: z.infer<typeof numericToleranceSchema>; examples: StoredTests["small"]; tests: StoredTests; perfLimitMs: number; efficiencyStage: boolean; sources: ReferenceSources; solution: { baseline: z.infer<typeof approachSchema>; optimal: z.infer<typeof approachSchema> } };
 
 const verifiedCache = new Map<string, Verified>();
 const CACHE_SIZE = 32;
@@ -234,6 +235,7 @@ async function loadVerified(store: ProblemStore, id: string): Promise<Verified> 
   const verified: Verified = {
     signature: spec.signature,
     compare: spec.compare,
+    ...(spec.numericTolerance ? { numericTolerance: spec.numericTolerance } : {}),
     examples: tests.small.filter((test) => test.kind === "example"),
     tests,
     perfLimitMs: record.perfLimitMs,
@@ -302,7 +304,7 @@ export async function runLearner(execute: Execute, store: ProblemStore, id: stri
       args,
       output: outcome.ok ? outcome.value : null,
       expected,
-      passed: outcome.ok === null ? null : outcome.ok && known ? sameValue(problem.signature.returns, expected, outcome.value, problem.compare) : outcome.ok ? null : false,
+      passed: outcome.ok === null ? null : outcome.ok && known ? sameValue(problem.signature.returns, expected, outcome.value, problem.compare, problem.numericTolerance) : outcome.ok ? null : false,
       stdout: outcome.stdout,
       error: outcome.ok === null ? null : errorText(outcome.error),
       ms: outcome.ms,
@@ -316,7 +318,7 @@ export async function runLearner(execute: Execute, store: ProblemStore, id: stri
 export async function submitLearner(execute: Execute, store: ProblemStore, id: string, input: z.infer<typeof learnerSubmitSchema>): Promise<SubmitResult> {
   const problem = await loadVerified(store, id);
   const small: TestCase[] = problem.tests.small;
-  const grade = await gradeSubmission(execute, { signature: problem.signature, compare: problem.compare, language: input.language, code: input.code, small, large: problem.tests.large, perfLimitMs: problem.perfLimitMs, efficiencyStage: problem.efficiencyStage });
+  const grade = await gradeSubmission(execute, { signature: problem.signature, compare: problem.compare, ...(problem.numericTolerance ? { numericTolerance: problem.numericTolerance } : {}), language: input.language, code: input.code, small, large: problem.tests.large, perfLimitMs: problem.perfLimitMs, efficiencyStage: problem.efficiencyStage });
   let failure: SubmitResult["failure"] = null;
   let tutorNote: string | null = null;
   const failing = grade.verdict !== "accepted" && grade.verdict !== "accepted_slow" && grade.verdict !== "compile_error";

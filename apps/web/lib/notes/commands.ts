@@ -2,9 +2,18 @@ import type { LessonControl } from "@learnspace/shared/notes";
 
 /** Luny's playback commands, written inline in her speech as [[...]] and never spoken (see TALKER_INSTRUCTIONS). */
 const SEEK = /^seek\s+(?:(\d+):)?(\d{1,2}):(\d{2})$|^seek\s+(\d+)$/;
+const PAPER_PAGE = /^page\s+(\d{1,4})$/;
+const PAPER_SECTION = /^section\s+([a-z0-9][a-z0-9-]{0,199})$/i;
+const PAPER_HIGHLIGHT = /^highlight\s+(\d{1,2})$/;
+const PAPER_REFERENCE = /^reference\s+(\d{1,4})$/;
 
-/** The seek, play or pause a command asks for, or null for one to ignore ([[listen]] among them). */
-export function parseCommand(command: string): LessonControl | null {
+type Passage = { chunkId: string; anchor: { page: number; sectionId: string } };
+
+/**
+ * The control a command asks for, or null for one to ignore ([[listen]] among them). A paper highlight names a passage by
+ * its number in this turn's evidence, so it can only point at a passage the model was shown.
+ */
+export function parseCommand(command: string, passages: Passage[] = []): LessonControl | null {
   const text = command.split(/\s+/).filter(Boolean).join(" ");
   const seek = SEEK.exec(text);
   if (seek) {
@@ -13,6 +22,15 @@ export function parseCommand(command: string): LessonControl | null {
     return { seekMs: Math.min(total * 1_000, 86_400_000), playback: null };
   }
   if (text === "pause" || text === "play") return { seekMs: null, playback: text };
+  const page = PAPER_PAGE.exec(text);
+  if (page) return { page: Number(page[1]) };
+  const section = PAPER_SECTION.exec(text);
+  if (section) return { sectionId: section[1] };
+  const highlight = PAPER_HIGHLIGHT.exec(text);
+  const passage = highlight ? passages[Number(highlight[1]) - 1] : undefined;
+  if (passage) return { chunkId: passage.chunkId, page: passage.anchor.page, sectionId: passage.anchor.sectionId, highlight: true };
+  const reference = PAPER_REFERENCE.exec(text);
+  if (reference && Number(reference[1]) > 0) return { reference: Number(reference[1]) };
   return null;
 }
 

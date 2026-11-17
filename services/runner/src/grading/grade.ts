@@ -1,4 +1,4 @@
-import type { CodingLanguage, CompareMode, Signature, Verdict } from "@learnspace/shared/coding";
+import type { CodingLanguage, CompareMode, NumericTolerance, Signature, Verdict } from "@learnspace/shared/coding";
 import { sameValue } from "@learnspace/shared/coding-code";
 import type { Execute } from "../executor.js";
 import type { RunReport } from "../protocol.js";
@@ -112,14 +112,14 @@ export type SuiteResult = {
 };
 
 /** Grades one suite: every case must return the expected value; the first failure decides the verdict. */
-export async function gradeSuite(execute: Execute, input: { signature: Signature; compare: CompareMode; language: CodingLanguage; code: string; cases: TestCase[]; timeoutMs: number }): Promise<SuiteResult> {
+export async function gradeSuite(execute: Execute, input: { signature: Signature; compare: CompareMode; numericTolerance?: NumericTolerance; language: CodingLanguage; code: string; cases: TestCase[]; timeoutMs: number }): Promise<SuiteResult> {
   const execution = await executeCases(execute, { ...input, cases: input.cases.map((test) => test.args) });
   const total = input.cases.length;
   if (execution.compileError) return { verdict: "compile_error", passed: 0, total, failedIndex: null, failedOutcome: null, compileError: execution.compileError, wallMs: 0, maxRssKb: 0 };
   let passed = 0;
   for (const [index, test] of input.cases.entries()) {
     const outcome = execution.outcomes[index]!;
-    const verdict: Verdict | null = outcome.ok === null ? stopVerdict(execution.status) : !outcome.ok ? "runtime_error" : sameValue(input.signature.returns, test.expected, outcome.value, input.compare) ? null : "wrong_answer";
+    const verdict: Verdict | null = outcome.ok === null ? stopVerdict(execution.status) : !outcome.ok ? "runtime_error" : sameValue(input.signature.returns, test.expected, outcome.value, input.compare, input.numericTolerance) ? null : "wrong_answer";
     if (verdict) return { verdict, passed, total, failedIndex: index, failedOutcome: outcome, compileError: null, wallMs: execution.wallMs, maxRssKb: execution.maxRssKb };
     passed += 1;
   }
@@ -139,7 +139,7 @@ export type SubmissionGrade = SuiteResult & {
  * A full submission: the small suite decides correctness; only then the large suite, timed from outside the program,
  * decides efficiency. A correct but slow solution is `accepted_slow` when the problem has an efficiency stage.
  */
-export async function gradeSubmission(execute: Execute, input: { signature: Signature; compare: CompareMode; language: CodingLanguage; code: string; small: TestCase[]; large: TestCase[]; perfLimitMs: number; efficiencyStage: boolean }): Promise<SubmissionGrade> {
+export async function gradeSubmission(execute: Execute, input: { signature: Signature; compare: CompareMode; numericTolerance?: NumericTolerance; language: CodingLanguage; code: string; small: TestCase[]; large: TestCase[]; perfLimitMs: number; efficiencyStage: boolean }): Promise<SubmissionGrade> {
   const total = input.small.length + input.large.length;
   const small = await gradeSuite(execute, { ...input, cases: input.small, timeoutMs: CORRECTNESS_LIMIT_MS });
   if (small.verdict !== "accepted") return { ...small, total, correct: false, efficient: false };

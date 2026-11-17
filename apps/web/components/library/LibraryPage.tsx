@@ -22,14 +22,6 @@ const colorOf = (session: StudySessionSummary): FolderColor => session.isCourse 
 
 /** Playlists kept for later, then the learner's finished sessions, one folder each, holding the notes, conversations and code the session kept. */
 export function LibraryPage({ sessions, watchLater }: { sessions: StudySessionSummary[]; watchLater: WatchLaterPlaylist[] }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  const [shownId, setShownId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!openId) return;
-    const timer = window.setTimeout(() => setShownId(openId), OPEN_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [openId]);
-  const shown = sessions.find((session) => session.id === shownId) ?? null;
   return (
     <main className="library-home">
       <header className="library-intro">
@@ -53,28 +45,42 @@ export function LibraryPage({ sessions, watchLater }: { sessions: StudySessionSu
           : <div className="library-empty"><p>Nothing saved for later</p><span>Open a playlist in Discover and choose Watch later to keep it here.</span><Link href="/app/discover">Browse Discover<ArrowUpRight aria-hidden="true" /></Link></div>}
       </section>
 
-      <section className="library-section" aria-labelledby="library-finished">
-        <div className="library-section-heading">
-          <h2 id="library-finished">Finished sessions{sessions.length ? <span className="library-count">{sessions.length}</span> : null}</h2>
-          <p>Open a folder to look back through a session.</p>
-        </div>
-        {sessions.length > 0
-          ? <ul className="library-folders">{sessions.map((session) => {
-            const meta = [kindOf(session), session.isCourse ? plural(session.resourceCount, "lesson") : null, session.endedAt ? finishedDate.format(new Date(session.endedAt)) : null].filter(Boolean).join(" · ");
-            return (
-              <li key={session.id}>
-                <button className="library-folder" type="button" data-open={openId === session.id || undefined} onClick={() => setOpenId(session.id)} aria-haspopup="dialog">
-                  <Folder id={session.id} color={colorOf(session)} open={openId === session.id} />
-                  <span className="library-folder-copy"><strong>{session.title}</strong><small>{meta}</small></span>
-                </button>
-              </li>
-            );
-          })}</ul>
-          : <div className="library-empty"><p>Nothing finished yet</p><span>Watch a video to the end and pass its mastery check, and its whole workspace lands here.</span><Link href="/app/discover">Find a lesson<ArrowUpRight aria-hidden="true" /></Link></div>}
-      </section>
-
-      {shown ? <SessionFolder session={shown} onClose={() => { setShownId(null); setOpenId(null); }} /> : null}
+      <FinishedSessions sessions={sessions} empty={<div className="library-empty"><p>Nothing finished yet</p><span>Watch a video to the end and pass its mastery check, and its whole workspace lands here.</span><Link href="/app/discover">Find a lesson<ArrowUpRight aria-hidden="true" /></Link></div>} />
     </main>
+  );
+}
+
+/** Finished sessions as folders; opening one shows the notes, conversations and code it kept. Shared by the Learn and Research libraries. */
+export function FinishedSessions({ sessions, empty }: { sessions: StudySessionSummary[]; empty: React.ReactNode }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [shownId, setShownId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!openId) return;
+    const timer = window.setTimeout(() => setShownId(openId), OPEN_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [openId]);
+  const shown = sessions.find((session) => session.id === shownId) ?? null;
+  return (
+    <section className="library-section" aria-labelledby="library-finished">
+      <div className="library-section-heading">
+        <h2 id="library-finished">Finished sessions{sessions.length ? <span className="library-count">{sessions.length}</span> : null}</h2>
+        <p>Open a folder to look back through a session.</p>
+      </div>
+      {sessions.length > 0
+        ? <ul className="library-folders">{sessions.map((session) => {
+          const meta = [kindOf(session), session.isCourse ? plural(session.resourceCount, "lesson") : null, session.endedAt ? finishedDate.format(new Date(session.endedAt)) : null].filter(Boolean).join(" · ");
+          return (
+            <li key={session.id}>
+              <button className="library-folder" type="button" data-open={openId === session.id || undefined} onClick={() => setOpenId(session.id)} aria-haspopup="dialog">
+                <Folder id={session.id} color={colorOf(session)} open={openId === session.id} />
+                <span className="library-folder-copy"><strong>{session.title}</strong><small>{meta}</small></span>
+              </button>
+            </li>
+          );
+        })}</ul>
+        : empty}
+      {shown ? <SessionFolder session={shown} onClose={() => { setShownId(null); setOpenId(null); }} /> : null}
+    </section>
   );
 }
 

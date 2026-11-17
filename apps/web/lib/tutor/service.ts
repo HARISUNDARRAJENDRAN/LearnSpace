@@ -11,11 +11,13 @@ import { embedText } from "../ai/openai";
 import { estimateCostUsd, openAiTutorModel, TUTOR_MODEL, type TutorDepth, type TutorModel, type TutorModelResult, TutorModelError, type TutorUsage } from "../ai/tutor-model";
 import { AuthError } from "../auth/errors";
 import { recordStudyQuestion } from "../study/service";
+import { loadPaperContext, paperReferenceOrdinals, retrievePaperEvidence, type PaperContext } from "../research/paper-context";
+import { retrieveResearchPapers } from "../research/retrieval/service";
 import { cacheEligible, findCachedAnswer, storeCachedAnswer } from "./cache";
 import { type CourseOutline, courseOutline, lessonOutline } from "./context";
 import { answerText, blockView, type Evidence, type GroundedAnswer, groundOutput, type Interaction, type LearnerState, mergeLearner, OUTCOME_NOTICE, type ReplyContext, readLearner, recordCheck, type StoredBlock, suggestMove } from "./grounding";
 import { admitTutorGeneration, recordGlobalSpend } from "./limits";
-import { buildTutorPrompt, type HistoryTurn, type SharedCode, TUTOR_INSTRUCTIONS } from "./prompt";
+import { buildPaperTutorPrompt, buildTutorPrompt, type HistoryTurn, type SharedCode, PAPER_TUTOR_INSTRUCTIONS, TUTOR_INSTRUCTIONS } from "./prompt";
 import { retrieveEvidence } from "./retrieval";
 import { formatClock, lexicalQuery, questionTerms, resolveScope, type TutorScope } from "./scope";
 
@@ -43,11 +45,13 @@ type AssistantContent = {
   cache?: "exact" | "semantic";
   doubt?: TutorDoubt;
 };
-type UserContent = { positionMs?: number; replyTo?: { messageId: string; blockId: string }; doubt?: TutorDoubt; sharedCode?: { language: string; chars: number } };
+type PaperTurnAnchor = { kind: "paper"; page?: number; sectionId?: string; chunkId?: string };
+type UserContent = { positionMs?: number; anchor?: PaperTurnAnchor; replyTo?: { messageId: string; blockId: string }; doubt?: TutorDoubt; sharedCode?: { language: string; chars: number } };
 const doubtOf = (row: MessageRow) => (row.content as { doubt?: TutorDoubt }).doubt;
 type MessageRow = typeof tutorMessages.$inferSelect;
 
 type VideoContext = {
+  resourceType: "video" | "paper";
   sessionId: string;
   resourceId: string;
   title: string;
@@ -59,47 +63,55 @@ type VideoContext = {
 };
 
 /** The learner's session and its active video, with where that video's transcript stands. Only the active video is ever in scope. */
-export async function videoContext(tx: Transaction, userId: string, sessionId: string): Promise<VideoContext> {
+export async function studyContext(tx: Transaction, userId: string, sessionId: string): Promise<VideoContext> {
   const [row] = await tx
     .select({ session: studySessions, resource: resources, durationMs: videoDetails.durationMs, versionStatus: resourceVersions.processingStatus, versionSource: resourceVersions.parserName, requestStatus: transcriptRequests.status })
     .from(studySessions)
     .innerJoin(resources, eq(resources.id, studySessions.activeResourceId))
-    .innerJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
+    .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
     .leftJoin(resourceVersions, eq(resourceVersions.id, resources.currentVersionId))
     .leftJoin(transcriptRequests, eq(transcriptRequests.resourceId, resources.id))
     .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"), isNull(resources.deletedAt)))
     .limit(1);
-  if (!row) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session has no video to study.", 404);
+  if (!row || (row.resource.type !== "video" && row.resource.type !== "paper")) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session has no study material to tutor.", 404);
   const ready = row.versionStatus === "ready";
-  const transcript: TutorTranscriptStatus = ready ? "ready" : row.requestStatus === "unavailable" ? "unavailable" : row.requestStatus === "failed" ? "failed" : "preparing";
+  const transcript: TutorTranscriptStatus = ready ? "ready" : row.resource.type === "video" && row.requestStatus === "unavailable" ? "unavailable" : row.versionStatus === "failed" || row.resource.status === "failed" || row.requestStatus === "failed" ? "failed" : "preparing";
   return {
+    resourceType: row.resource.type,
     sessionId, resourceId: row.resource.id, title: row.resource.title, durationMs: row.durationMs,
     publicSource: row.resource.ownerUserId === null && (row.resource.visibility === "public" || row.resource.visibility === "unlisted"),
     versionId: ready ? row.resource.currentVersionId : null, versionSource: ready ? row.versionSource : null, transcript,
   };
 }
 
+/** Learn-mode callers that need video duration keep the video-only guard. */
+export async function videoContext(tx: Transaction, userId: string, sessionId: string): Promise<VideoContext> {
+  const context = await studyContext(tx, userId, sessionId);
+  if (context.resourceType !== "video") throw new AuthError("STUDY_SESSION_NOT_FOUND", "That study session has no video to study.", 404);
+  return context;
+}
+
 async function activeThread(tx: Transaction, userId: string, video: VideoContext, create: boolean): Promise<typeof tutorThreads.$inferSelect | null> {
   const where = and(eq(tutorThreads.userId, userId), eq(tutorThreads.studySessionId, video.sessionId), eq(tutorThreads.resourceId, video.resourceId), eq(tutorThreads.status, "active"));
   const [existing] = await tx.select().from(tutorThreads).where(where).limit(1);
   if (existing || !create) return existing ?? null;
-  await tx.insert(tutorThreads).values({ userId, studySessionId: video.sessionId, resourceId: video.resourceId, mode: PURPOSE }).onConflictDoNothing();
+  await tx.insert(tutorThreads).values({ userId, studySessionId: video.sessionId, resourceId: video.resourceId, mode: video.resourceType === "paper" ? "paper_tutor" : PURPOSE }).onConflictDoNothing();
   const [created] = await tx.select().from(tutorThreads).where(where).limit(1);
   return created ?? null;
 }
 
-export function messageView(row: MessageRow, currentVersionId: string | null): TutorMessageView {
+export function messageView(row: MessageRow, currentVersionId: string | null, resourceType: "video" | "paper"): TutorMessageView {
   if (row.actorType === "user") {
     const content = row.content as UserContent;
-    return { id: row.id, role: "user", status: "completed", createdAt: row.createdAt.toISOString(), text: row.contentText ?? "", positionMs: content.positionMs ?? null, outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt: content.doubt ?? null };
+    return { id: row.id, role: "user", status: "completed", createdAt: row.createdAt.toISOString(), text: row.contentText ?? "", positionMs: content.positionMs ?? null, anchor: content.anchor ?? (resourceType === "video" && content.positionMs !== undefined ? { kind: "video", positionMs: content.positionMs } : null), outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt: content.doubt ?? null };
   }
   const content = row.content as AssistantContent;
   const outcome = content.outcome ?? null;
-  const notice = outcome === "not_covered" || outcome === "off_topic" ? OUTCOME_NOTICE[outcome] : "";
+  const notice = outcome === "not_covered" || outcome === "off_topic" ? OUTCOME_NOTICE[resourceType][outcome] : "";
   const blocks = (content.blocks ?? []).map((block) => blockView(block, content.interactions?.[block.id]));
   return {
     id: row.id, role: "assistant", status: row.status as TutorMessageView["status"], createdAt: row.createdAt.toISOString(),
-    text: notice || (content.blocks ? answerText(content.blocks, content.interactions) : ""), positionMs: null, outcome, blocks, sources: content.sources ?? [], followUps: content.followUps ?? [],
+    text: notice || (content.blocks ? answerText(content.blocks, content.interactions) : ""), positionMs: null, anchor: null, outcome, blocks, sources: content.sources ?? [], followUps: content.followUps ?? [],
     stale: Boolean(content.versionId && currentVersionId && content.versionId !== currentVersionId),
     doubt: content.doubt ?? null,
   };
@@ -107,7 +119,7 @@ export function messageView(row: MessageRow, currentVersionId: string | null): T
 
 export async function getTutorThread(userId: string, sessionId: string): Promise<TutorThreadView> {
   return withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
     const thread = await activeThread(tx, userId, video, false);
     const rows = thread ? await tx.select().from(tutorMessages).where(eq(tutorMessages.threadId, thread.id)).orderBy(asc(tutorMessages.createdAt), asc(tutorMessages.id)) : [];
     const learner = readLearner(thread?.metadata);
@@ -119,7 +131,8 @@ export async function getTutorThread(userId: string, sessionId: string): Promise
     return {
       resourceId: video.resourceId,
       transcript: { status: video.transcript, source: video.versionSource },
-      messages: rows.map((row) => messageView(row, video.versionId)),
+      resourceType: video.resourceType,
+      messages: rows.map((row) => messageView(row, video.versionId, video.resourceType)),
       learner: { goal: learner.goal, concepts: learner.concepts.map(({ name, status }) => ({ name, status })), nextStep: learner.nextStep },
       history: past.map((row) => ({ id: row.id, title: row.title ?? "", preview: row.preview, updatedAt: row.updatedAt.toISOString() })),
       resolvedDoubts: resolvedDoubts(thread?.metadata),
@@ -130,7 +143,7 @@ export async function getTutorThread(userId: string, sessionId: string): Promise
 /** Ends the video's current conversation; the next question starts a fresh thread with a fresh learner record. */
 export async function endTutorThread(userId: string, sessionId: string): Promise<void> {
   await withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
     await tx.update(tutorThreads).set({ status: "ended", endedAt: new Date(), updatedAt: new Date() })
       .where(and(eq(tutorThreads.userId, userId), eq(tutorThreads.studySessionId, video.sessionId), eq(tutorThreads.resourceId, video.resourceId), eq(tutorThreads.status, "active")));
   });
@@ -139,7 +152,7 @@ export async function endTutorThread(userId: string, sessionId: string): Promise
 /** Makes an earlier conversation about this video the current one again; the current one moves to history. */
 export async function restoreTutorThread(userId: string, sessionId: string, threadId: string): Promise<void> {
   await withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
     const scope = and(eq(tutorThreads.userId, userId), eq(tutorThreads.studySessionId, video.sessionId), eq(tutorThreads.resourceId, video.resourceId));
     const [target] = await tx.select({ status: tutorThreads.status }).from(tutorThreads).where(and(scope, eq(tutorThreads.id, threadId))).limit(1);
     if (!target) throw new AuthError("TUTOR_THREAD_NOT_FOUND", "That conversation isn't available.", 404);
@@ -155,7 +168,7 @@ const resolvedDoubts = (metadata: Record<string, unknown> | undefined) => Array.
 /** "Got it" on a doubt in the current conversation, or opening it again. */
 export async function resolveTutorDoubt(userId: string, sessionId: string, doubtId: string, resolved: boolean): Promise<void> {
   await withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
     const thread = await activeThread(tx, userId, video, false);
     const [asked] = thread ? await tx.select({ id: tutorMessages.id }).from(tutorMessages).where(and(eq(tutorMessages.threadId, thread.id), sql`${tutorMessages.content}->'doubt'->>'id' = ${doubtId}`)).limit(1) : [];
     if (!thread || !asked) throw new AuthError("TUTOR_DOUBT_NOT_FOUND", "That doubt isn't part of this conversation.", 404);
@@ -172,12 +185,14 @@ export type AdmittedTurn =
     kind: "new";
     userId: string;
     video: VideoContext & { versionId: string };
+    paper: PaperContext | null;
+    anchor: PaperTurnAnchor | null;
     threadId: string;
     agentRunId: string;
     user: TutorMessageView;
     assistantId: string;
     question: string;
-    positionMs: number;
+    positionMs: number | null;
     replyTo: ReplyContext | null;
     /** The highlighted words and the text of the block they are in. */
     doubt: { anchor: TutorDoubt; passage: string } | null;
@@ -199,21 +214,30 @@ export type AdmittedTurn =
  */
 export async function admitTutorTurn(userId: string, sessionId: string, input: TutorTurnRequest): Promise<AdmittedTurn> {
   return withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
-    if (!video.versionId) throw new AuthError("TRANSCRIPT_NOT_READY", video.transcript === "preparing" ? "The transcript for this video is still being prepared." : "This video has no transcript, so the tutor can't answer questions about it.", 409, undefined, { transcript: video.transcript });
+    const video = await studyContext(tx, userId, sessionId);
+    if (!video.versionId) throw new AuthError(video.resourceType === "paper" ? "PAPER_CONTENT_NOT_READY" : "TRANSCRIPT_NOT_READY", video.transcript === "preparing" ? `The ${video.resourceType === "paper" ? "paper text" : "transcript"} is still being prepared.` : `This ${video.resourceType} has no parsed content for the tutor.`, 409, undefined, { transcript: video.transcript });
+    const paper = video.resourceType === "paper" ? await loadPaperContext(tx, userId, video.resourceId, video.versionId) : null;
+    const positionMs = "positionMs" in input ? input.positionMs : null;
+    const requestAnchor = "anchor" in input ? input.anchor : null;
+    const anchor: PaperTurnAnchor | null = requestAnchor ? {
+      kind: "paper",
+      ...(requestAnchor.page !== undefined ? { page: requestAnchor.page } : {}),
+      ...(requestAnchor.sectionId !== undefined ? { sectionId: requestAnchor.sectionId } : {}),
+      ...(requestAnchor.chunkId !== undefined ? { chunkId: requestAnchor.chunkId } : {}),
+    } : null;
     const thread = await activeThread(tx, userId, video, true);
     if (!thread) throw new Error("Tutor thread was not created");
     const [repeat] = await tx.select().from(tutorMessages).where(and(eq(tutorMessages.threadId, thread.id), eq(tutorMessages.idempotencyKey, input.idempotencyKey))).limit(1);
     if (repeat) {
       const [answer] = await tx.select().from(tutorMessages).where(and(eq(tutorMessages.threadId, thread.id), eq(tutorMessages.sourceMessageId, repeat.id))).limit(1);
-      if (answer) return { kind: "replay", user: messageView(repeat, video.versionId), assistant: messageView(answer, video.versionId) };
+      if (answer) return { kind: "replay", user: messageView(repeat, video.versionId, video.resourceType), assistant: messageView(answer, video.versionId, video.resourceType) };
     }
     await admitTutorGeneration(tx, userId);
     const completed = (await tx.select().from(tutorMessages).where(eq(tutorMessages.threadId, thread.id)).orderBy(asc(tutorMessages.createdAt), asc(tutorMessages.id)))
       .filter((row) => row.status === "completed");
     // Doubt threads stay out of the main conversation, so a side question never steers the lesson.
     const main = completed.filter((row) => !doubtOf(row));
-    const turnOf = (row: MessageRow): HistoryTurn => ({ role: row.actorType === "user" ? "learner" : "tutor", text: row.actorType === "user" ? row.contentText ?? "" : messageView(row, video.versionId).text });
+    const turnOf = (row: MessageRow): HistoryTurn => ({ role: row.actorType === "user" ? "learner" : "tutor", text: row.actorType === "user" ? row.contentText ?? "" : messageView(row, video.versionId, video.resourceType).text });
     let replyTo: ReplyContext | null = null;
     if (input.replyTo) {
       const target = main.find((row) => row.id === input.replyTo!.messageId && row.actorType === "assistant")?.content as AssistantContent | undefined;
@@ -242,17 +266,17 @@ export async function admitTutorTurn(userId: string, sessionId: string, input: T
     const lastAnswer = cited?.content as AssistantContent | undefined;
     const recentChunkIds = lastAnswer?.versionId === video.versionId ? (lastAnswer.sources ?? []).map((source) => source.chunkId) : [];
     const [run] = await tx.insert(agentRuns).values({
-      userId, studySessionId: video.sessionId, tutorThreadId: thread.id, purpose: PURPOSE, status: "executing", goal: "Answer a learner's question from the video transcript",
+      userId, studySessionId: video.sessionId, tutorThreadId: thread.id, purpose: video.resourceType === "paper" ? "paper_tutor" : PURPOSE, status: "executing", goal: video.resourceType === "paper" ? "Answer a learner's question from the parsed paper" : "Answer a learner's question from the video transcript",
       policyVersion: TUTOR_CONTRACT_VERSION, maxIterations: 1, maxToolCalls: 0, maxTokens: TUTOR_MODEL.depths.deep.maxOutputTokens, correlationId: randomUUID(), startedAt: new Date(),
     }).returning({ id: agentRuns.id });
-    const userContent: UserContent = { positionMs: input.positionMs, ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.doubt ? { doubt: input.doubt } : {}), ...(input.code ? { sharedCode: { language: input.code.language, chars: input.code.code.length } } : {}) };
+    const userContent: UserContent = { ...(positionMs !== null ? { positionMs } : {}), ...(anchor ? { anchor } : {}), ...(input.replyTo ? { replyTo: input.replyTo } : {}), ...(input.doubt ? { doubt: input.doubt } : {}), ...(input.code ? { sharedCode: { language: input.code.language, chars: input.code.code.length } } : {}) };
     const [userRow] = await tx.insert(tutorMessages).values({ threadId: thread.id, actorType: "user", idempotencyKey: input.idempotencyKey, contentText: input.question, content: userContent, createdAt: sql`clock_timestamp()` }).returning();
     const [assistantRow] = await tx.insert(tutorMessages).values({ threadId: thread.id, actorType: "assistant", status: "pending", agentRunId: run!.id, sourceMessageId: userRow!.id, content: { contract: TUTOR_CONTRACT_VERSION, versionId: video.versionId, ...(input.doubt ? { doubt: input.doubt } : {}) }, createdAt: sql`clock_timestamp()` }).returning();
     await tx.update(tutorThreads).set({ updatedAt: new Date() }).where(eq(tutorThreads.id, thread.id));
-    await recordStudyQuestion(tx, { userId, sessionId: video.sessionId, resourceId: video.resourceId, resourceVersionId: video.versionId, question: input.question, positionMs: input.positionMs, idempotencyKey: input.idempotencyKey });
+    if (positionMs !== null) await recordStudyQuestion(tx, { userId, sessionId: video.sessionId, resourceId: video.resourceId, resourceVersionId: video.versionId, question: input.question, positionMs, idempotencyKey: input.idempotencyKey });
     return {
-      kind: "new", userId, video: { ...video, versionId: video.versionId }, threadId: thread.id, agentRunId: run!.id, user: messageView(userRow!, video.versionId), assistantId: assistantRow!.id,
-      question: input.question, positionMs: input.positionMs, replyTo, doubt, history, recentChunkIds, learner: readLearner(thread.metadata), firstTurn: main.length === 0,
+      kind: "new", userId, video: { ...video, versionId: video.versionId }, paper, anchor, threadId: thread.id, agentRunId: run!.id, user: messageView(userRow!, video.versionId, video.resourceType), assistantId: assistantRow!.id,
+      question: input.question, positionMs, replyTo, doubt, history, recentChunkIds, learner: readLearner(thread.metadata), firstTurn: main.length === 0,
       code: input.code ?? null,
       course: await courseOutline(tx, userId, video.sessionId), outline: await lessonOutline(tx, userId, video.resourceId),
     };
@@ -280,7 +304,7 @@ async function finishTurn(turn: Extract<AdmittedTurn, { kind: "new" }>, finish: 
     if (finish.retrievalRunId && answer.sources.length) {
       await tx.insert(citations).values(answer.sources.map((source, ordinal) => ({
         retrievalRunId: finish.retrievalRunId!, chunkId: source.chunkId, resourceVersionId: turn.video.versionId, agentRunId: turn.agentRunId, messageId: row.id, ordinal,
-        anchorSnapshot: { kind: "video", startMs: source.startMs, endMs: source.endMs }, quoteSha256: createHash("sha256").update(source.excerpt).digest("hex"),
+        anchorSnapshot: source.anchor ?? { kind: "video", startMs: source.startMs, endMs: source.endMs }, quoteSha256: createHash("sha256").update(source.excerpt).digest("hex"),
       })));
     }
     const costUsd = finish.usage ? estimateCostUsd(finish.usage) : 0;
@@ -294,13 +318,13 @@ async function finishTurn(turn: Extract<AdmittedTurn, { kind: "new" }>, finish: 
       const learner = mergeLearner(readLearner(thread?.metadata), finish.learner, answer.blocks, row.id);
       await tx.update(tutorThreads).set({ metadata: { ...(thread?.metadata ?? {}), learner }, updatedAt: new Date() }).where(eq(tutorThreads.id, turn.threadId));
     }
-    return messageView(row, turn.video.versionId);
+    return messageView(row, turn.video.versionId, turn.video.resourceType);
   });
 }
 
 async function recordInvocation(tx: Transaction, turn: Extract<AdmittedTurn, { kind: "new" }>, depth: TutorDepth, usage: TutorUsage | null, costUsd: number, cache: string, safety: string, firstOutputMs: number | null, latencyMs: number | null, inputSha: string | null, outputSha: string | null) {
   await tx.insert(modelInvocations).values({
-    agentRunId: turn.agentRunId, provider: TUTOR_MODEL.provider, modelName: TUTOR_MODEL.id, purpose: `${PURPOSE}:${TUTOR_MODEL.depths[depth].effort}`, promptTemplateId: "tutor", promptTemplateVer: TUTOR_CONTRACT_VERSION,
+    agentRunId: turn.agentRunId, provider: TUTOR_MODEL.provider, modelName: TUTOR_MODEL.id, purpose: `${turn.video.resourceType === "paper" ? "paper_tutor" : PURPOSE}:${TUTOR_MODEL.depths[depth].effort}`, promptTemplateId: turn.video.resourceType === "paper" ? "paper-tutor" : "tutor", promptTemplateVer: TUTOR_CONTRACT_VERSION,
     inputSha256: inputSha, outputSha256: outputSha, inputTokens: usage?.inputTokens ?? null, cachedTokens: usage?.cachedTokens ?? null, outputTokens: usage?.outputTokens ?? null,
     reasoningTokens: usage?.reasoningTokens ?? null, firstOutputMs, latencyMs, estimatedCostUsd: costUsd.toFixed(8), cacheStatus: cache, safetyStatus: safety, completedAt: new Date(),
   });
@@ -333,8 +357,9 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
   let usage: TutorUsage | null = null;
   let depth: TutorDepth = "quick";
   try {
-    const scope: TutorScope = resolveScope(turn.question, turn.positionMs, turn.video.durationMs, turn.course !== null);
-    if (scope.kind === "out_of_range") {
+    const isPaper = turn.video.resourceType === "paper" && turn.paper !== null;
+    const scope: TutorScope | null = isPaper ? null : resolveScope(turn.question, turn.positionMs ?? 0, turn.video.durationMs, turn.course !== null);
+    if (scope?.kind === "out_of_range") {
       const text = `This video is ${turn.video.durationMs ? formatClock(turn.video.durationMs) : "shorter than that"} long, so there's nothing at ${formatClock(scope.requestedMs)}. Which moment did you mean?`;
       return await finishTurn(turn, { answer: { outcome: "clarify", blocks: [{ type: "text", id: "b0", text, src: [] }], sources: [] }, cache: "bypass" }, null, null);
     }
@@ -342,13 +367,51 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
     // A reply is read with the question it answers, and a doubt with the words it is about.
     const context = turn.replyTo?.prompt ?? turn.doubt?.anchor.quote ?? null;
     const terms = questionTerms(context ? `${context} ${turn.question}` : turn.question);
-    const vector = await embed(context ? `${context}\n${turn.question}` : turn.question, options.signal);
-    // An answer about the learner's own code is about that code only, so it is never served from or stored in the shared cache.
-    const eligible = !turn.code && cacheEligible({ firstTurn: turn.firstTurn, replying: Boolean(context), publicSource: turn.video.publicSource, question: turn.question, scopeKind: scope.kind });
-    const { retrieval, cached } = await withUserTransaction(turn.userId, async (tx) => ({
-      retrieval: await retrieveEvidence(tx, { userId: turn.userId, sessionId: turn.video.sessionId, agentRunId: turn.agentRunId, versionId: turn.video.versionId, question: turn.question, tsquery: lexicalQuery(terms), scope, vector, recentChunkIds: turn.recentChunkIds }),
-      cached: eligible ? await findCachedAnswer(tx, turn.video.versionId, scope.key, turn.question, vector) : null,
-    }));
+    let vector: number[] | null = null;
+    let eligible = false;
+    let retrieval: { runId: string; evidence: Evidence[]; coverage: "full" | "partial"; timed: boolean; latencyMs: number; vectorUsed: boolean };
+    let cached: Awaited<ReturnType<typeof findCachedAnswer>> = null;
+    let prompt: { developer: string; user: string };
+    let instructions = TUTOR_INSTRUCTIONS;
+    if (isPaper && turn.paper) {
+      const paperAnchor = turn.anchor ?? { kind: "paper" as const };
+      const found = await withUserTransaction(turn.userId, (tx) => retrievePaperEvidence(tx, {
+        userId: turn.userId, sessionId: turn.video.sessionId, agentRunId: turn.agentRunId, paper: turn.paper!,
+        question: context ? `${context} ${turn.question}` : turn.question, anchor: paperAnchor,
+      }));
+      retrieval = {
+        ...found,
+        evidence: found.evidence.map((item) => ({ chunkId: item.chunkId, ordinal: item.ordinal, content: item.content, startMs: null, endMs: null, anchor: item.anchor, citations: item.citations })),
+        coverage: "partial", timed: false, vectorUsed: false,
+      };
+      const ordinals = paperReferenceOrdinals(turn.question, found.evidence);
+      const references = turn.paper.references.filter((reference) => ordinals.includes(reference.ordinal));
+      const outsideRequested = /\b(related|follow[- ]?up|subsequent|prior work|future work|later (?:work|papers?|research)|since then|compare|alternatives?|builds? on|improve[sd]? (?:on|upon)|inspired by|what came after|original (?:paper|work))\b/i.test(turn.question);
+      const outsideResearch = outsideRequested ? (await retrieveResearchPapers(turn.question, { timeoutMs: 4_000 }).catch(() => ({ papers: [] }))).papers.slice(0, 4).flatMap((paper) => paper.canonicalUrl.startsWith("https://") ? [{ title: paper.title, authors: paper.authors.map((author) => author.name), year: paper.publishedAt?.slice(0, 4) ?? null, url: paper.canonicalUrl, abstract: paper.abstract }] : []) : [];
+      prompt = buildPaperTutorPrompt({
+        title: turn.paper.title, authors: turn.paper.authors, abstract: turn.paper.abstract, outline: turn.paper.outline,
+        evidence: found.evidence, references, outsideResearch, anchor: paperAnchor, learner: turn.learner, history: turn.history,
+        question: turn.question, move: turn.doubt ? DOUBT_MOVE : suggestMove(turn.learner, turn.firstTurn, turn.replyTo),
+        replyTo: turn.replyTo, doubt: turn.doubt ? { quote: turn.doubt.anchor.quote, passage: turn.doubt.passage } : null, code: turn.code,
+      });
+      instructions = PAPER_TUTOR_INSTRUCTIONS;
+    } else {
+      if (!scope || turn.positionMs === null) throw new Error("A video tutor turn needs a playback position.");
+      vector = await embed(context ? `${context}\n${turn.question}` : turn.question, options.signal);
+      // An answer about the learner's own code is about that code only, so it is never served from or stored in the shared cache.
+      eligible = !turn.code && cacheEligible({ firstTurn: turn.firstTurn, replying: Boolean(context), publicSource: turn.video.publicSource, question: turn.question, scopeKind: scope.kind });
+      const found = await withUserTransaction(turn.userId, async (tx) => ({
+        retrieval: await retrieveEvidence(tx, { userId: turn.userId, sessionId: turn.video.sessionId, agentRunId: turn.agentRunId, versionId: turn.video.versionId, question: turn.question, tsquery: lexicalQuery(terms), scope, vector, recentChunkIds: turn.recentChunkIds }),
+        cached: eligible ? await findCachedAnswer(tx, turn.video.versionId, scope.key, turn.question, vector) : null,
+      }));
+      retrieval = found.retrieval;
+      cached = found.cached;
+      prompt = buildTutorPrompt({
+        title: turn.video.title, durationMs: turn.video.durationMs, positionMs: turn.positionMs, scope, timed: retrieval.timed, coverage: retrieval.coverage, evidence: retrieval.evidence,
+        learner: turn.learner, history: turn.history, question: turn.question,
+        course: scope.kind === "course" ? turn.course : null, outline: scope.kind === "whole" || scope.kind === "course" ? turn.outline : [], move: turn.doubt ? DOUBT_MOVE : suggestMove(turn.learner, turn.firstTurn, turn.replyTo), replyTo: turn.replyTo, doubt: turn.doubt ? { quote: turn.doubt.anchor.quote, passage: turn.doubt.passage } : null, code: turn.code,
+      });
+    }
     if (cached) {
       // A hit is only used when every chunk it cites was retrieved for this request, so citations stay auditable.
       const retrieved = new Set(retrieval.evidence.map((item) => item.chunkId));
@@ -356,14 +419,8 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
         return await finishTurn(turn, { answer: cached, learner: cached.learner, retrievalRunId: retrieval.runId, cache: cached.match }, null, null);
       }
     }
-    const prompt = buildTutorPrompt({
-      title: turn.video.title, durationMs: turn.video.durationMs, positionMs: turn.positionMs, scope, timed: retrieval.timed, coverage: retrieval.coverage, evidence: retrieval.evidence,
-      learner: turn.learner, history: turn.history, question: turn.question,
-      // The whole lecture's outline and the course's lesson list answer "what is all this about"; a question about one moment needs neither.
-      course: scope.kind === "course" ? turn.course : null, outline: scope.kind === "whole" || scope.kind === "course" ? turn.outline : [], move: turn.doubt ? DOUBT_MOVE : suggestMove(turn.learner, turn.firstTurn, turn.replyTo), replyTo: turn.replyTo, doubt: turn.doubt ? { quote: turn.doubt.anchor.quote, passage: turn.doubt.passage } : null, code: turn.code,
-    });
     options.emit({ type: "phase", phase: "thinking" });
-    const request = { instructions: TUTOR_INSTRUCTIONS, user: prompt.user, cacheKey: `learnspace-${TUTOR_CONTRACT_VERSION}` };
+    const request = { instructions, user: prompt.user, cacheKey: `learnspace-${TUTOR_CONTRACT_VERSION}` };
     // The model answers without reasoning unless its first field asks for it; then that answer is dropped and asked again.
     const quick = new AbortController();
     let decided: boolean | null = null;
@@ -401,7 +458,7 @@ export async function runTutorTurn(turn: Extract<AdmittedTurn, { kind: "new" }>,
     const answer = output ? groundOutput(output, retrieval.evidence, terms) : { outcome: "off_topic" as const, blocks: [], sources: [] };
     if (!output && !result.refusal) throw new TutorModelError("invalid_output", usage);
     const message = await finishTurn(turn, { answer, learner: output?.learner, retrievalRunId: retrieval.runId, usage, firstOutputMs: result.firstOutputMs, latencyMs: result.latencyMs, depth, cache: eligible ? "miss" : "bypass" }, inputSha, outputSha);
-    if (eligible && output && answer.outcome === "answer") {
+    if (eligible && !isPaper && scope && output && answer.outcome === "answer") {
       await withUserTransaction(turn.userId, (tx) => storeCachedAnswer(tx, turn.video.versionId, scope.key, turn.question, vector, answer, output.learner)).catch(() => undefined);
     }
     return message;
@@ -445,7 +502,7 @@ function drafter(assistantId: string, doubt: TutorDoubt | null, evidence: Eviden
     const key = JSON.stringify(view);
     if (key === sent) return;
     sent = key;
-    emit({ type: "draft", message: { id: assistantId, role: "assistant", status: "pending", createdAt: new Date().toISOString(), text: "", positionMs: null, outcome: grounded.outcome, blocks: view, sources: grounded.sources, followUps: [], stale: false, doubt } });
+    emit({ type: "draft", message: { id: assistantId, role: "assistant", status: "pending", createdAt: new Date().toISOString(), text: "", positionMs: null, anchor: null, outcome: grounded.outcome, blocks: view, sources: grounded.sources, followUps: [], stale: false, doubt } });
   };
 }
 
@@ -461,7 +518,7 @@ function parseOutput(text: string): TutorModelOutput | null {
 /** Grades a check or reveals a hint. Answers are graded here, from the stored key, never by the browser or the model. */
 export async function tutorInteraction(userId: string, sessionId: string, input: TutorInteractionRequest): Promise<TutorMessageView> {
   return withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId);
     await tx.execute(sql`SELECT m.id FROM study.tutor_messages m JOIN study.tutor_threads t ON t.id = m.thread_id WHERE m.id = ${input.messageId} AND t.user_id = ${userId} FOR UPDATE OF m, t`);
     const [row] = await tx.select({ message: tutorMessages, thread: tutorThreads }).from(tutorMessages).innerJoin(tutorThreads, eq(tutorThreads.id, tutorMessages.threadId))
       .where(and(eq(tutorMessages.id, input.messageId), eq(tutorThreads.userId, userId), eq(tutorThreads.studySessionId, video.sessionId), eq(tutorThreads.resourceId, video.resourceId), eq(tutorMessages.actorType, "assistant"), eq(tutorMessages.status, "completed")))
@@ -474,19 +531,19 @@ export async function tutorInteraction(userId: string, sessionId: string, input:
     const previous = interactions[block.id] ?? {};
     let learner = readLearner(row.thread.metadata);
     if (input.action === "answer" && block.type === "check") {
-      if (previous.choice !== undefined) return messageView(row.message, video.versionId);
+      if (previous.choice !== undefined) return messageView(row.message, video.versionId, video.resourceType);
       if (input.choice >= block.options.length) throw new AuthError("INVALID_TUTOR_ACTION", "That option isn't part of this check.", 422);
       const correct = input.choice === block.answer;
       interactions[block.id] = { ...previous, choice: input.choice, correct };
       learner = recordCheck(learner, block.concept || block.question.slice(0, 60), correct, row.message.id);
     } else if (input.action === "hint") {
-      if (previous.hint) return messageView(row.message, video.versionId);
+      if (previous.hint) return messageView(row.message, video.versionId, video.resourceType);
       interactions[block.id] = { ...previous, hint: true };
       learner = { ...learner, hintsGiven: learner.hintsGiven + 1 };
     }
     const [updated] = await tx.update(tutorMessages).set({ content: { ...content, interactions } }).where(eq(tutorMessages.id, row.message.id)).returning();
     await tx.update(tutorThreads).set({ metadata: { ...row.thread.metadata, learner }, updatedAt: new Date() }).where(eq(tutorThreads.id, row.thread.id));
-    return messageView(updated!, video.versionId);
+    return messageView(updated!, video.versionId, video.resourceType);
   });
 }
 

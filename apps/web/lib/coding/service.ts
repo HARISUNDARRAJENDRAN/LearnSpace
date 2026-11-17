@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 import { type Transaction, withUserTransaction } from "@learnspace/db";
-import { agentRuns, codingAttempts, codingEvents, codingMastery, codingProblems, codingSubmissions } from "@learnspace/db/schema";
+import { agentRuns, codingAttempts, codingEvents, codingMastery, codingProblems, codingSubmissions, paperCodingProfiles } from "@learnspace/db/schema";
 import type { RunResult, SubmitResult } from "@learnspace/runner/api";
-import {
-  CODING_CONCEPT_SLUGS, CODING_CONCEPTS, CODING_LANGUAGES, type AttemptOutcome, type AttemptRole, type CodingActivityRequest, type CodingAttemptView,
-  type CodingConcept, type CodingLanguage, type CodingProblemView, type CodingStateView, type ConceptMasteryView, type Difficulty, type HintView, type RunResultView,
-  type CoachMessageView, type CoachMoment, type SubmissionView, type TutorState,
+import {type AttemptOutcome, type AttemptRole,
+  CODING_CONCEPT_SLUGS, CODING_CONCEPTS, CODING_LANGUAGES,
+  type CoachMessageView, type CoachMoment, type CodingActivityRequest, type CodingAttemptView,
+  type CodingConcept, type CodingEligibilityView, type CodingLanguage, type CodingProblemView, type CodingStateView, type ConceptMasteryView, type Difficulty, type HintView, type RunResultView,type SubmissionView, type TutorState,
 } from "@learnspace/shared/coding";
 import { parseCaseText, starterCode } from "@learnspace/shared/coding-code";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { TutorModel } from "../ai/tutor-model";
 import { AuthError } from "../auth/errors";
-import { videoContext } from "../tutor/service";
+import { studyContext, videoContext } from "../tutor/service";
+import { paperProfileView, planPaperVersion } from "../research/practice";
 import { authorProblem, findProblem, type ProblemSpec, type ProblemTutor, type Slot, slotPending } from "./author";
 import {
-  attemptOutcome, COACH_RULES, type CoachTrigger, coachMoment, coachSpoke, coachThinking, creditCap, emptyTracker, hintAvailability, independentSolve, masteryStatus, nextDifficulty, pastedShare, readTracker, recordActivity, recordDecline,
-  recordCoach, recordExecution, recordHint, recordOffer, shouldOffer, startingDifficulty, stallReason, type Tracker, transition, updateMastery,
+  attemptOutcome, COACH_RULES, type CoachTrigger, coachMoment, coachSpoke, coachThinking,
+  codingEligible,creditCap, emptyTracker, hintAvailability, independentSolve, masteryStatus, nextDifficulty, pastedShare, readTracker, recordActivity,
+  recordCoach, recordDecline,recordExecution, recordHint, recordOffer, shouldOffer, stallReason, startingDifficulty, type Tracker, transition, updateMastery,
 } from "./policy";
 import { classifyVersion, loadProfile, profileView, type StoredConcept } from "./profile";
 import { problemSolution, runProblem, submitProblem } from "./runner";
@@ -44,10 +46,10 @@ function problemView(row: ProblemRow): CodingProblemView {
   const concept = row.concept as CodingConcept;
   return {
     id: row.id, title: row.title ?? "Problem", difficulty: row.difficulty as Difficulty, concept, conceptLabel: CODING_CONCEPTS[concept] ?? concept,
-    statement: spec.statement, signature: spec.signature, compare: spec.compare, constraints: spec.constraints,
+    statement: spec.statement, signature: spec.signature, compare: spec.compare, numericTolerance: spec.numericTolerance ?? null, constraints: spec.constraints,
     examples: spec.examples.map((example) => ({ args: example.args, expected: example.expected, explanation: example.explanation })),
     starter: Object.fromEntries(CODING_LANGUAGES.map((language) => [language, starterCode(spec.signature, language)])) as Record<CodingLanguage, string>,
-    moments: spec.moments, efficiencyStage: (row.verification as { efficiencyStage?: boolean } | null)?.efficiencyStage === true, related: spec.related,
+    moments: spec.moments, paper: spec.paper ?? null, efficiencyStage: (row.verification as { efficiencyStage?: boolean } | null)?.efficiencyStage === true, related: spec.related,
   };
 }
 
@@ -156,6 +158,19 @@ async function preparingView(tx: Transaction, userId: string, sessionId: string,
 }
 
 async function stateOf(tx: Transaction, userId: string, sessionId: string, options: Options = {}): Promise<CodingStateView> {
+  const context = await studyContext(tx, userId, sessionId);
+  if (context.resourceType === "paper") {
+    const [paperRow] = context.versionId ? await tx.select().from(paperCodingProfiles).where(eq(paperCodingProfiles.resourceVersionId, context.versionId)).limit(1) : [];
+    const profile = paperProfileView(paperRow ?? null);
+    if (context.versionId && (!paperRow || paperRow.status === "planning" || paperRow.status === "failed")) keep(options, planPaperVersion(userId, sessionId));
+    const attempt = await latestAttempt(tx, userId, context.resourceId);
+    const [problem] = attempt ? await tx.select().from(codingProblems).where(eq(codingProblems.id, attempt.problemId)).limit(1) : [];
+    return {
+      profile, attempt: attempt && problem ? await attemptView(tx, attempt, problem) : null,
+      preparing: { status: profile.status === "classifying" ? "preparing" : "idle", message: profile.status === "classifying" ? "Checking whether this paper has a useful CPU exercise..." : null },
+      mastery: [], next: null,
+    };
+  }
   const video = await videoContext(tx, userId, sessionId);
   const profileRow = video.versionId ? await loadProfile(tx, video.versionId) : null;
   const profile = profileView(profileRow, video.transcript);
@@ -184,11 +199,44 @@ async function stateOf(tx: Transaction, userId: string, sessionId: string, optio
   };
 }
 
+function requireEligibleVideo(profile: Awaited<ReturnType<typeof loadProfile>>): void {
+  if (!codingEligible("video", profile ? { category: profile.category, practiceFit: profile.practiceFit === null ? null : Number(profile.practiceFit), concepts: profile.concepts as unknown[] } : null)) {
+    throw new AuthError("CODING_NOT_ELIGIBLE", "Coding exercises aren't available for this lesson.", 403);
+  }
+}
+
+/** The sidebar's resource capability without loading attempts or prefetching a problem. */
+export async function getCodingEligibility(userId: string, sessionId: string, options: Options = {}): Promise<CodingEligibilityView> {
+  return withUserTransaction(userId, async (tx) => {
+    const context = await studyContext(tx, userId, sessionId);
+    if (context.resourceType === "paper") {
+      const [row] = context.versionId ? await tx.select().from(paperCodingProfiles).where(eq(paperCodingProfiles.resourceVersionId, context.versionId)).limit(1) : [];
+      const profile = paperProfileView(row ?? null);
+      if (context.versionId && (profile.status === "classifying" || profile.status === "failed")) keep(options, planPaperVersion(userId, sessionId));
+      return { status: profile.status === "classifying" ? "pending" : profile.eligible ? "eligible" : "ineligible", eligible: profile.eligible, concepts: profile.concepts };
+    }
+    const video = await videoContext(tx, userId, sessionId);
+    const row = video.versionId ? await loadProfile(tx, video.versionId) : null;
+    const profile = profileView(row, video.transcript);
+    if (video.versionId && (profile.status === "classifying" || profile.status === "failed")) {
+      keep(options, classifyVersion(userId, { resourceId: video.resourceId, versionId: video.versionId, title: video.title }));
+    }
+    return { status: profile.status === "classifying" || profile.status === "waiting_transcript" ? "pending" : profile.eligible ? "eligible" : "ineligible", eligible: profile.eligible };
+  });
+}
+
 /** The session's coding state for its active video; classifies the lesson in the background the first time it's needed. */
 export async function getCodingState(userId: string, sessionId: string, options: Options = {}): Promise<CodingStateView> {
-  const state = await withUserTransaction(userId, (tx) => stateOf(tx, userId, sessionId, options));
+  let state = await withUserTransaction(userId, (tx) => stateOf(tx, userId, sessionId, options));
+  if (!state.profile.eligible) {
+    if (state.profile.status === "classifying" || state.profile.status === "waiting_transcript") {
+      state = { ...state, attempt: null, preparing: { status: "preparing", message: "Checking whether this lesson calls for coding practice..." }, mastery: [], next: null };
+    } else {
+      throw new AuthError("CODING_NOT_ELIGIBLE", "Coding exercises aren't available for this lesson.", 403);
+    }
+  }
   // A recommended lesson's first problem is written ahead, so the Code button opens onto it.
-  if (state.profile.status === "ready" && state.profile.recommended && !state.attempt && state.preparing.status === "idle" && state.profile.concepts[0]) {
+  if (state.profile.status === "ready" && state.profile.eligible && !state.attempt && state.preparing.status === "idle" && state.profile.concepts[0]) {
     keep(options, prefetch(userId, sessionId, state.profile.concepts[0].concept, options));
   }
   // A problem just opened, with nothing said yet: the tutor greets the learner.
@@ -199,8 +247,11 @@ export async function getCodingState(userId: string, sessionId: string, options:
 
 async function prefetch(userId: string, sessionId: string, concept: CodingConcept, options: Options) {
   const slot = await withUserTransaction(userId, async (tx) => {
+    // A paper's exercises come from its planner, not from writing ahead.
+    if ((await studyContext(tx, userId, sessionId)).resourceType === "paper") return null;
     const video = await videoContext(tx, userId, sessionId);
     const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
+    requireEligibleVideo(profile);
     const target: Slot = { resourceId: video.resourceId, concept, difficulty: startingDifficulty((profile?.difficulty ?? "easy") as Difficulty, await masteryOf(tx, userId, concept)), parentProblemId: null };
     return (await findProblem(tx, userId, target)) || (await slotPending(tx, target)) ? null : target;
   });
@@ -226,12 +277,15 @@ async function openAttempt(tx: Transaction, userId: string, sessionId: string, p
  * and verified in the background, and the learner polls this until it is ready.
  */
 export async function startCoding(userId: string, sessionId: string, input: { concept?: CodingConcept | undefined; retry?: boolean | undefined }, options: Options = {}): Promise<CodingStateView> {
+  const paper = await withUserTransaction(userId, async (tx) => (await studyContext(tx, userId, sessionId)).resourceType === "paper");
+  if (paper) return startPaperCoding(userId, sessionId, input, options);
   const author = await withUserTransaction(userId, async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`coding.start:${userId}:${sessionId}`}, 0))`);
     const video = await videoContext(tx, userId, sessionId);
+    const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
+    requireEligibleVideo(profile);
     const current = await latestAttempt(tx, userId, video.resourceId);
     if (current && !current.completedAt) return null;
-    const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
     const concepts = (profile?.concepts ?? []) as StoredConcept[];
     let plan: Omit<Plan, "kind">;
     if (current?.completedAt && !input.concept) {
@@ -258,6 +312,30 @@ export async function startCoding(userId: string, sessionId: string, input: { co
   return author && !open && state.preparing.status !== "preparing" ? { ...state, preparing: { status: "preparing", message: "Writing a problem for this lesson and checking it against its tests..." } } : state;
 }
 
+async function startPaperCoding(userId: string, sessionId: string, input: { concept?: CodingConcept | undefined }, options: Options): Promise<CodingStateView> {
+  await withUserTransaction(userId, async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`coding.start:${userId}:${sessionId}`}, 0))`);
+    const paper = await studyContext(tx, userId, sessionId);
+    if (paper.resourceType !== "paper" || !paper.versionId) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That session has no ready paper.", 404);
+    const [profile] = await tx.select().from(paperCodingProfiles).where(eq(paperCodingProfiles.resourceVersionId, paper.versionId)).limit(1);
+    const view = paperProfileView(profile ?? null);
+    if (!view.eligible) throw new AuthError(view.status === "classifying" ? "CODING_PREPARING" : "CODING_NOT_ELIGIBLE", view.status === "classifying" ? "Paper exercises are still being prepared." : "Coding exercises aren't available for this paper.", view.status === "classifying" ? 409 : 403);
+    const current = await latestAttempt(tx, userId, paper.resourceId);
+    if (current && !current.completedAt) return;
+    const used = await finishedConcepts(tx, userId, paper.resourceId);
+    const component = view.concepts.find((item) => (!input.concept || item.concept === input.concept) && !used.has(item.concept))
+      ?? view.concepts.find((item) => !input.concept || item.concept === input.concept);
+    if (!component) throw new AuthError("CODING_CONCEPT_REQUIRED", "Pick a paper component to practise.", 409);
+    const [problem] = await tx.select({ difficulty: codingProblems.difficulty }).from(codingProblems).where(and(eq(codingProblems.resourceId, paper.resourceId), eq(codingProblems.concept, component.concept), eq(codingProblems.status, "verified"))).orderBy(asc(codingProblems.verifiedAt)).limit(1);
+    if (!problem) throw new AuthError("CODING_PREPARING", "This paper exercise is still being prepared.", 409);
+    await openAttempt(tx, userId, sessionId, { slot: { resourceId: paper.resourceId, concept: component.concept, difficulty: problem.difficulty as Difficulty, parentProblemId: null }, role: "primary", depth: 0, parentAttemptId: null }, "python");
+  });
+  const state = await getCodingState(userId, sessionId, options);
+  const attempt = state.attempt;
+  if (attempt && !attempt.completedAt && !attempt.coach.messages.length && !attempt.coach.thinking) return (await coachOpen(userId, sessionId, options)) ?? state;
+  return state;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Working an attempt.
 
@@ -265,6 +343,16 @@ async function lockAttempt(tx: Transaction, userId: string, sessionId: string, a
   const [row] = await tx.select().from(codingAttempts).where(and(eq(codingAttempts.id, attemptId), eq(codingAttempts.userId, userId), eq(codingAttempts.studySessionId, sessionId))).for("update").limit(1);
   if (!row) throw new AuthError("CODING_ATTEMPT_NOT_FOUND", "That problem isn't part of this session.", 404);
   if (open && row.completedAt) throw new AuthError("CODING_ATTEMPT_CLOSED", "This problem is finished.", 409);
+  const context = await studyContext(tx, userId, sessionId);
+  if (context.resourceType === "paper") {
+    const [paperProfile] = context.versionId ? await tx.select().from(paperCodingProfiles).where(eq(paperCodingProfiles.resourceVersionId, context.versionId)).limit(1) : [];
+    if (context.resourceId !== row.resourceId || !paperProfileView(paperProfile ?? null).eligible) throw new AuthError("CODING_NOT_ELIGIBLE", "Coding exercises aren't available for this paper.", 403);
+  } else {
+    const video = await videoContext(tx, userId, sessionId);
+    const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
+    requireEligibleVideo(profile);
+    if (video.resourceId !== row.resourceId) throw new AuthError("CODING_NOT_ELIGIBLE", "Coding exercises aren't available for this lesson.", 403);
+  }
   const [problem] = await tx.select().from(codingProblems).where(eq(codingProblems.id, row.problemId)).limit(1);
   return { row, problem: problem!, tracker: readTracker(row.tracker) as Tracked };
 }
@@ -337,8 +425,8 @@ const speakLater = (job: CoachJob | null, options: Options) => { if (job) keep(o
 /** Checks in as the problem opens: the tutor greets the learner and gets them thinking before they type. */
 async function coachOpen(userId: string, sessionId: string, options: Options): Promise<CodingStateView | null> {
   const planned = await withUserTransaction(userId, async (tx) => {
-    const video = await videoContext(tx, userId, sessionId);
-    const open = await latestAttempt(tx, userId, video.resourceId);
+    const context = await studyContext(tx, userId, sessionId);
+    const open = await latestAttempt(tx, userId, context.resourceId);
     if (!open || open.completedAt) return null;
     const { row, problem, tracker } = await lockAttempt(tx, userId, sessionId, open.id);
     const { tracker: next, job } = await planCoach(tx, row, problem, tracker, row.state as TutorState, { kind: "open" });
@@ -517,10 +605,13 @@ async function complete(tx: Transaction, row: AttemptRow, tracker: Tracked, from
 /** Once an attempt ends, the likely next problem is written ahead, so Next rarely waits. */
 async function prefetchAfter(userId: string, sessionId: string, options: Options) {
   const slot = await withUserTransaction(userId, async (tx) => {
+    const context = await studyContext(tx, userId, sessionId);
+    if (context.resourceType === "paper") return null;
     const video = await videoContext(tx, userId, sessionId);
     const attempt = await latestAttempt(tx, userId, video.resourceId);
     if (!attempt?.completedAt) return null;
     const profile = video.versionId ? await loadProfile(tx, video.versionId) : null;
+    requireEligibleVideo(profile);
     const plan = await planNext(tx, userId, attempt, (profile?.concepts ?? []) as StoredConcept[], (profile?.difficulty ?? "easy") as Difficulty);
     return (await findProblem(tx, userId, plan.slot)) || (await slotPending(tx, plan.slot)) ? null : plan.slot;
   });

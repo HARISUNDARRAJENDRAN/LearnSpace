@@ -59,32 +59,38 @@ test("near and watched scopes keep evidence to the right part of the video", () 
 
 test("grounding drops fabricated citations and keeps uncited blocks as general knowledge", () => {
   const grounded = groundOutput(output([
-    { type: "text", text: "Supported claim.", cite: [2, 99] },
-    { type: "text", text: "Claim citing nothing real.", cite: [42] },
-    { type: "concept", term: "Gradient", definition: "Beyond the video.", cite: [] },
-    { type: "check", question: "Which?", options: ["a", "a"], answer: 0, explanation: "", hint: "", concept: "x", cite: [1] },
-    { type: "check", question: "Which step?", options: ["one", "two"], answer: 5, explanation: "", hint: "", concept: "x", cite: [1] },
+    { type: "text", basis: "source", text: "Supported claim.", cite: [2, 99] },
+    { type: "text", basis: "source", text: "Claim citing nothing real.", cite: [42] },
+    { type: "concept", basis: "source", term: "Gradient", definition: "Beyond the video.", cite: [] },
+    { type: "check", basis: "source", question: "Which?", options: ["a", "a"], answer: 0, explanation: "", hint: "", concept: "x", cite: [1] },
+    { type: "check", basis: "source", question: "Which step?", options: ["one", "two"], answer: 5, explanation: "", hint: "", concept: "x", cite: [1] },
   ]), evidence);
   assert.equal(grounded.outcome, "answer");
   assert.equal(grounded.blocks.length, 2);
   assert.deepEqual(grounded.sources.map((source) => source.chunkId), [evidence[1]!.chunkId]);
-  assert.deepEqual(grounded.blocks[0], { type: "text", id: "b0", text: "Supported claim.", src: [0] });
-  // A block with no citations is the tutor's own knowledge, shown as beyond the video; one citing nothing real is removed.
-  assert.deepEqual(grounded.blocks[1], { type: "concept", id: "b1", term: "Gradient", definition: "Beyond the video.", src: [] });
+  assert.deepEqual(grounded.blocks[0], { type: "text", id: "b0", text: "Supported claim.", src: [0], basis: "source" });
+  // A block with no citations is the tutor's own knowledge, so a "source" claim citing nothing is background; one citing nothing real is removed.
+  assert.deepEqual(grounded.blocks[1], { type: "concept", id: "b1", term: "Gradient", definition: "Beyond the video.", src: [], basis: "background" });
+  // Interpretation and speculation keep their basis, cited or not.
+  const labelled = groundOutput(output([
+    { type: "text", basis: "interpretation", text: "A likely reason.", cite: [1] },
+    { type: "text", basis: "speculation", text: "It might generalise.", cite: [] },
+  ]), evidence);
+  assert.deepEqual(labelled.blocks.map((block) => block.basis), ["interpretation", "speculation"]);
   // Evidence numbers written into prose are removed; indexing like array[2] is not a citation.
-  const prose = groundOutput(output([{ type: "text", text: "You need another bit to count 8. [2][3] Bits are switches [1, 2], and array[2] is the third slot [1].", cite: [1] }]), evidence);
+  const prose = groundOutput(output([{ type: "text", basis: "source", text: "You need another bit to count 8. [2][3] Bits are switches [1, 2], and array[2] is the third slot [1].", cite: [1] }]), evidence);
   assert.equal(prose.blocks[0]?.type === "text" && prose.blocks[0].text, "You need another bit to count 8. Bits are switches, and array[2] is the third slot.");
   // Nothing cited means nothing came from the video: the answer is general knowledge; nothing left at all is not covered.
-  assert.equal(groundOutput(output([{ type: "text", text: "General knowledge.", cite: [] }]), evidence).outcome, "general");
-  assert.equal(groundOutput(output([{ type: "text", text: "Made-up citation.", cite: [42] }]), evidence).outcome, "not_covered");
-  assert.deepEqual(groundOutput(output([{ type: "text", text: "I'd love to help with your taxes!", cite: [1] }], "off_topic"), evidence), { outcome: "off_topic", blocks: [], sources: [] });
+  assert.equal(groundOutput(output([{ type: "text", basis: "source", text: "General knowledge.", cite: [] }]), evidence).outcome, "general");
+  assert.equal(groundOutput(output([{ type: "text", basis: "source", text: "Made-up citation.", cite: [42] }]), evidence).outcome, "not_covered");
+  assert.deepEqual(groundOutput(output([{ type: "text", basis: "source", text: "I'd love to help with your taxes!", cite: [1] }], "off_topic"), evidence), { outcome: "off_topic", blocks: [], sources: [] });
 });
 
 test("general answers keep their blocks but are never attributed to the video", () => {
   const general = groundOutput(output([
-    { type: "text", text: "**e** is about 2.71828, the base of natural logarithms.", cite: [1] },
-    { type: "concept", term: "e", definition: "The limit of (1 + 1/n)^n as n grows.", cite: [] },
-    { type: "evidence", note: "Quoted from the video.", cite: 1 },
+    { type: "text", basis: "source", text: "**e** is about 2.71828, the base of natural logarithms.", cite: [1] },
+    { type: "concept", basis: "source", term: "e", definition: "The limit of (1 + 1/n)^n as n grows.", cite: [] },
+    { type: "evidence", basis: "source", note: "Quoted from the video.", cite: 1 },
   ], "general"), evidence);
   assert.equal(general.outcome, "general");
   assert.deepEqual(general.sources, []);
@@ -94,13 +100,13 @@ test("general answers keep their blocks but are never attributed to the video", 
 
 test("diagrams keep only the stages and parts the evidence supports", () => {
   const { blocks, sources } = groundOutput({ ...output([
-    { type: "flow", title: "Descent", loop: true, nodes: [
+    { type: "flow", basis: "source", title: "Descent", loop: true, nodes: [
       { label: "Compute **gradient**", detail: "", arrow: "gives", cite: [1] },
       { label: "Invented stage", detail: "", arrow: "", cite: [9] },
       { label: "Take a step", detail: "against it", arrow: "", cite: [2] },
     ] },
-    { type: "flow", title: "Too thin", loop: false, nodes: [{ label: "One", detail: "", arrow: "", cite: [1] }, { label: "Two", detail: "", arrow: "", cite: [8] }] },
-    { type: "tree", title: "", root: "Optimisers", cite: [3], branches: [
+    { type: "flow", basis: "source", title: "Too thin", loop: false, nodes: [{ label: "One", detail: "", arrow: "", cite: [1] }, { label: "Two", detail: "", arrow: "", cite: [8] }] },
+    { type: "tree", basis: "source", title: "", root: "Optimisers", cite: [3], branches: [
       { label: "Momentum", detail: "", leaves: ["a", "a", "b"], cite: [2] },
       { label: "Adam", detail: "", leaves: [], cite: [8] },
       { label: "Plain", detail: "", leaves: [], cite: [1] },
@@ -113,11 +119,11 @@ test("diagrams keep only the stages and parts the evidence supports", () => {
   assert.equal(sources.length, 3);
   // A loop reads back to its first stage, and arrow labels survive into the history the next turn sees.
   assert.equal(answerText(blocks.slice(0, 1)), "Descent\n1. Compute **gradient** → gives → Take a step\n2. Take a step: against it → Compute **gradient**");
-  assert.deepEqual(groundOutput({ ...output([{ type: "text", text: "Yes.", cite: [1] }]), followUps: ["Why **step** against it?", "Why step against it?", ""] }, evidence).followUps, ["Why step against it?"]);
+  assert.deepEqual(groundOutput({ ...output([{ type: "text", basis: "source", text: "Yes.", cite: [1] }]), followUps: ["Why **step** against it?", "Why step against it?", ""] }, evidence).followUps, ["Why step against it?"]);
 });
 
 test("checks reveal their answer and hints only after the learner acts", () => {
-  const { blocks } = groundOutput(output([{ type: "check", question: "Which step comes first?", options: ["zero", "one", "two"], answer: 0, explanation: "Step zero comes first.", hint: "Look at the start.", concept: "Order", cite: [1] }]), evidence);
+  const { blocks } = groundOutput(output([{ type: "check", basis: "source", question: "Which step comes first?", options: ["zero", "one", "two"], answer: 0, explanation: "Step zero comes first.", hint: "Look at the start.", concept: "Order", cite: [1] }]), evidence);
   const block = blocks[0]!;
   const hidden = JSON.stringify(blockView(block, undefined));
   assert.ok(!hidden.includes("Step zero comes first") && !hidden.includes("Look at the start") && !hidden.includes('"answer"'));

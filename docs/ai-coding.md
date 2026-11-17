@@ -140,6 +140,9 @@ credit.
 - **With Compose.** `docker compose up -d` builds `learnspace-sandbox:1`
   (the `sandbox` service) and starts `runner` on :4100.
 - **Configuration.**
+  - Set one random `RUNNER_TOKEN` (at least 32 random bytes) in the ignored
+    root `.env`; Compose requires it and passes the same value to the web app
+    and runner. For example, generate one with `openssl rand -hex 32`.
   - The web app needs `RUNNER_URL` and `RUNNER_TOKEN`.
   - The runner needs `RUNNER_TOKEN` and `DATABASE_RUNNER_URL`, and
     optionally `SANDBOX_RUNTIME`, `SANDBOX_CPUS`, `RUNNER_CONCURRENCY` and

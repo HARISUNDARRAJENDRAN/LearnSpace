@@ -302,6 +302,48 @@
       "when": 1794756612805,
       "tag": "0042_coding_practice",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1794818747117,
+      "tag": "0043_favorite_authors",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1794825590587,
+      "tag": "0044_research_topics",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794830738497,
+      "tag": "0045_watery_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794834000000,
+      "tag": "0046_paper_practice",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794837600000,
+      "tag": "0047_paper_ingestion_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794841200000,
+      "tag": "0048_paper_references_worker_delete",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,7 @@ import {
   userSettings,
   users,
 } from "@learnspace/db/schema";
-import { and, eq, gt, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
   createOpaqueToken,
@@ -396,14 +396,16 @@ export async function findSessionWithOnboarding(token: string): Promise<SessionL
   const { session, user } = row;
 
   // Seen at most every five minutes. A session seen in the last four is not asked about (a minute's margin for the
-  // database's clock, which the statement itself still checks against).
+  // database's clock, which the statement itself still checks against). It is bookkeeping: a row another request has
+  // locked is skipped rather than waited on, so the bump never delays or fails the request.
   if (session.lastSeenAt === null || session.lastSeenAt.getTime() < now.getTime() - 4 * 60_000) {
+    const unlocked = database.select({ id: authSessions.id }).from(authSessions).where(eq(authSessions.id, session.id)).for("no key update", { skipLocked: true });
     await database
       .update(authSessions)
       .set({ lastSeenAt: new Date() })
       .where(
         and(
-          eq(authSessions.id, session.id),
+          inArray(authSessions.id, unlocked),
           or(
             isNull(authSessions.lastSeenAt),
             lt(authSessions.lastSeenAt, sql`now() - interval '5 minutes'`),

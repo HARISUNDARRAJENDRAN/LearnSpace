@@ -1,0 +1,7 @@
+{
+  "name": "learnspace_pdf_parser",
+  "triples": {
+    "defaults": true,
+    "additional": ["x86_64-unknown-linux-gnu"]
+  }
+}

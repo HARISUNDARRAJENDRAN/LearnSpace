@@ -93,6 +93,7 @@
 .source-discovery-close:hover { background: #f2f3f2; }
 .source-discovery-close svg { width: 21px; height: 21px; stroke-width: 1.75; }
 
+
 .source-discovery-body {
   min-height: 0;
   overflow: auto;

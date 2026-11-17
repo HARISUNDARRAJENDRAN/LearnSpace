@@ -32,14 +32,27 @@ FROM base AS worker-build
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json .npmrc ./
 COPY packages/shared/package.json packages/shared/package.json
+COPY packages/pdf-parser/package.json packages/pdf-parser/package.json
 COPY services/worker/package.json services/worker/package.json
 RUN --mount=type=cache,id=learnspace-pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir /pnpm/store --filter @learnspace/worker... --filter learnspace
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl build-essential pkg-config libssl-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none \
+    && /root/.cargo/bin/rustup toolchain install 1.98.1 --profile minimal --target x86_64-unknown-linux-gnu
+ENV PATH="/root/.cargo/bin:${PATH}"
 COPY packages/shared ./packages/shared
+COPY packages/pdf-parser ./packages/pdf-parser
+COPY vendor/pdf-inspector-researchpapers ./vendor/pdf-inspector-researchpapers
 COPY services/worker ./services/worker
 COPY apps/web/public/data/learnspace_youtube_curriculum_master.csv ./apps/web/public/data/learnspace_youtube_curriculum_master.csv
+COPY apps/web/lib/research/curriculum/data.json ./apps/web/lib/research/curriculum/data.json
 
-RUN pnpm --filter "@learnspace/worker..." run build \
+RUN --mount=type=cache,id=learnspace-cargo-registry,target=/root/.cargo/registry \
+    --mount=type=cache,id=learnspace-pdf-parser-target,target=/workspace/packages/pdf-parser/native/target \
+    pnpm --filter @learnspace/shared build \
+    && pnpm --filter @learnspace/pdf-parser build \
+    && pnpm --filter @learnspace/worker run build \
     && pnpm --filter @learnspace/worker deploy --prod --legacy --config.allowUnusedPatches=true /worker-runtime
 
 # The discovery worker: Exa and YouTube discovery, quality scoring and recommendation upkeep.

@@ -3,7 +3,6 @@
 import { ArrowUp, Clock, CornerDownRight, LoaderCircle, Mic, Plus, Square, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MathText } from "./MathText";
-import { formatTime } from "./StudyWorkspace";
 import { useSpeechInput } from "./useSpeechInput";
 
 /** Ready-made asks. A skill fills the input with its prompt; one that ends in a space waits for the learner to finish it. */
@@ -26,7 +25,7 @@ function slashToken(draft: string): { query: string; start: number } | null {
   return match ? { query: match[2]!.toLowerCase(), start: match.index + match[1]!.length } : null;
 }
 
-export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnswering, pending, reasoning, onSend, onStop, currentMs, resourceTitle }: {
+export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnswering, pending, reasoning, onSend, onStop, moment, noun, resourceTitle }: {
   draft: string;
   onDraft: (value: string | ((current: string) => string)) => void;
   ready: boolean;
@@ -37,7 +36,9 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
   reasoning: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
-  currentMs: number;
+  /** Where the question is asked: "4:10" in a video, "p. 3" in a paper. */
+  moment: string;
+  noun: "video" | "paper";
   resourceTitle: string;
 }) {
   const [plusOpen, setPlusOpen] = useState(false);
@@ -112,7 +113,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
 
   const recording = speech.state === "recording";
   const canSend = Boolean(draft.trim()) && ready;
-  const placeholder = !ready ? "Waiting for the transcript…" : recording ? "Listening…" : speech.state === "transcribing" ? "Transcribing…" : answering ? "Your answer…" : "Ask about this video, / for skills…";
+  const placeholder = !ready ? `Waiting for the ${noun === "video" ? "transcript" : "paper"}…` : recording ? "Listening…" : speech.state === "transcribing" ? "Transcribing…" : answering ? "Your answer…" : `Ask about this ${noun}, / for skills…`;
   return (
     <div className="chat-composer-wrap" ref={rootRef}>
       {open ? (
@@ -184,7 +185,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
               }
             }}
           />
-          <span className="chat-composer-moment" ref={momentRef} title={`Your question is asked about ${resourceTitle} at this moment`}><Clock aria-hidden="true" />{formatTime(currentMs)}</span>
+          <span className="chat-composer-moment" ref={momentRef} title={`Your question is asked about ${resourceTitle} at ${moment}`}><Clock aria-hidden="true" />{moment}</span>
           <button className={`chat-mic${recording ? " is-recording" : ""}`} type="button" aria-label={recording ? "Stop dictating" : "Dictate your question"} title={recording ? "Stop dictating" : "Dictate (runs on your device)"} aria-pressed={recording} disabled={!ready || speech.state === "transcribing"} onClick={() => (recording ? speech.stop() : void speech.start())}>
             {recording ? <span className="chat-eq" aria-hidden="true"><span /><span /><span /></span> : speech.state === "transcribing" ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Mic aria-hidden="true" />}
           </button>

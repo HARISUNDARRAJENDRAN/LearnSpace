@@ -1,12 +1,13 @@
 import { type Transaction, withUserTransaction } from "@learnspace/db";
 import { resourceChunks, videoCodingProfiles } from "@learnspace/db/schema";
 import {
-  CODING_CONCEPTS, CODING_CONTRACT_VERSION, type CodingClassificationOutput, codingClassificationOutputSchema, type CodingConcept, type CodingProfileView, type Difficulty, type VideoCategory,
+  CODING_CONCEPTS, CODING_CONTRACT_VERSION, type CodingClassificationOutput, type CodingConcept, type CodingProfileView, codingClassificationOutputSchema, type Difficulty, type VideoCategory,
 } from "@learnspace/shared/coding";
 import { strictJsonSchema } from "@learnspace/shared/tutor";
 import { asc, eq, sql } from "drizzle-orm";
 import { openAiConfigured, structuredCompletion } from "../ai/openai";
 import { formatClock } from "../tutor/scope";
+import { codingEligible } from "./policy";
 import { CLASSIFY_INSTRUCTIONS, fence } from "./prompt";
 
 /** A classification still marked running after this long died with its server and is tried again. */
@@ -15,9 +16,6 @@ const CLASSIFY_WINDOW_MS = 120_000;
 const RETRY_FAILED_MS = 15 * 60_000;
 const MAX_PASSAGES = 60;
 const PASSAGE_CHARS = 700;
-const RECOMMEND_FIT = 0.6;
-const CODING_CATEGORIES: VideoCategory[] = ["dsa_lesson", "programming_tutorial"];
-
 export type StoredConcept = { concept: CodingConcept; focus: string; startMs: number | null };
 export type ProfileRow = typeof videoCodingProfiles.$inferSelect;
 export type Classifier = (input: { system: string; user: string }) => Promise<CodingClassificationOutput>;
@@ -28,19 +26,14 @@ export const openAiClassifier: Classifier = (input) => structuredCompletion({
   name: "coding_profile", system: input.system, user: input.user, jsonSchema: SCHEMA, parser: codingClassificationOutputSchema, reasoningEffort: "low", timeoutMs: 60_000,
 });
 
-/** Whether a lesson should offer coding practice: the classifier's call, held to a bar the LLM doesn't set. */
-export function recommends(output: Pick<CodingClassificationOutput, "category" | "practiceFit" | "concepts">): boolean {
-  return CODING_CATEGORIES.includes(output.category) && output.practiceFit >= RECOMMEND_FIT && output.concepts.length > 0;
-}
-
 export function profileView(row: ProfileRow | null, transcript: "ready" | "preparing" | "unavailable" | "failed"): CodingProfileView {
-  const empty = { recommended: false, category: null, concepts: [] };
+  const empty = { eligible: false, category: null, concepts: [] };
   if (transcript === "unavailable" || transcript === "failed") return { status: "unavailable", ...empty };
   if (!row) return { status: transcript === "ready" ? "classifying" : "waiting_transcript", ...empty };
   if (row.status !== "ready") return { status: row.status === "failed" ? "failed" : "classifying", ...empty };
   return {
     status: "ready",
-    recommended: row.recommended,
+    eligible: codingEligible("video", row ? { category: row.category, practiceFit: row.practiceFit === null ? null : Number(row.practiceFit), concepts: row.concepts as unknown[] } : null),
     category: row.category as VideoCategory | null,
     concepts: (row.concepts as StoredConcept[]).map((item) => ({ concept: item.concept, label: CODING_CONCEPTS[item.concept], focus: item.focus, startMs: item.startMs })),
   };
@@ -98,7 +91,7 @@ export async function classifyVersion(userId: string, video: { resourceId: strin
       return [{ concept: item.concept, focus: item.focus.trim(), startMs: cited?.startMs ?? null }];
     });
     return await finish({
-      status: "ready", category: output.category, practiceFit: output.practiceFit, recommended: recommends({ ...output, concepts: output.concepts }),
+      status: "ready", category: output.category, practiceFit: output.practiceFit, recommended: codingEligible("video", output),
       language: output.language, difficulty: output.difficulty as Difficulty, concepts, reason: output.reason.slice(0, 300), contractVersion: CODING_CONTRACT_VERSION,
     });
   } catch (error) {

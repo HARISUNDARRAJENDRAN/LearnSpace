@@ -6,6 +6,7 @@ import {
   masteryQuestionsOutputSchema, type MasteryVerdict, type MasteryView,
 } from "@learnspace/shared/mastery";
 import type { NoteBlock } from "@learnspace/shared/notes";
+import type { PaperCitationAnchor } from "@learnspace/shared/contracts";
 import { strictJsonSchema } from "@learnspace/shared/tutor";
 import { and, asc, desc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { Allow, parse as parsePartial } from "partial-json";
@@ -15,11 +16,13 @@ import { restoreLatex } from "../math";
 import { completeMasteredLesson } from "../study/service";
 import { admitTutorGeneration, recordGlobalSpend } from "../tutor/limits";
 import { formatClock } from "../tutor/scope";
-import { videoContext } from "../tutor/service";
-import { ANALYSIS_INSTRUCTIONS, buildAnalysisPrompt, fence, GRADING_INSTRUCTIONS, QUESTION_INSTRUCTIONS } from "./prompt";
+import { studyContext } from "../tutor/service";
+import { loadPaperContext, loadPaperPassages } from "../research/paper-context";
+import { ANALYSIS_INSTRUCTIONS, buildAnalysisPrompt, fence, GRADING_INSTRUCTIONS, PAPER_GRADING_INSTRUCTIONS, PAPER_QUESTION_INSTRUCTIONS, QUESTION_INSTRUCTIONS } from "./prompt";
 
 const PURPOSE = "mastery_check";
-const WATCHED_PCT = 95;
+const VIDEO_WATCHED_PCT = 95;
+const PAPER_WATCHED_PCT = 90;
 const WRITE_GOAL = "Write a mastery check from the video transcript";
 const ANALYSIS_GOAL = "Analyse a scored mastery check";
 // An analysis still "writing" after its route's limit was cut off with it, so it can be asked for again.
@@ -31,7 +34,7 @@ const WRITING_WINDOW_MS = 150_000;
 const CREDIT: Record<MasteryVerdict, number> = { correct: 1, partial: 0.5, incorrect: 0 };
 
 // Sets written before questions named their concept have none.
-type Base = { id: string; concept?: string; question: string; chunkIds: string[]; positionMs: number | null };
+type Base = { id: string; concept?: string; question: string; chunkIds: string[]; positionMs: number | null; anchor: PaperCitationAnchor | null };
 type StoredQuestion = (Base & { type: "choice"; options: string[]; answer: number; explanation: string }) | (Base & { type: "written"; keyPoints: string[]; modelAnswer: string });
 type StoredAnswer = { response: { choice: number } | { text: string }; verdict: MasteryVerdict; credit: number; feedback: string };
 type CheckRow = typeof masteryChecks.$inferSelect;
@@ -62,7 +65,7 @@ function checkView(row: CheckRow, report: Report = NO_REPORT): MasteryCheckView 
     questions: (row.questions as StoredQuestion[]).map((question) => {
       const answer = answers[question.id];
       return {
-        id: question.id, type: question.type, concept: question.concept ?? null, question: question.question, options: question.type === "choice" ? question.options : null, positionMs: question.positionMs,
+        id: question.id, type: question.type, concept: question.concept ?? null, question: question.question, options: question.type === "choice" ? question.options : null, positionMs: question.positionMs, anchor: question.anchor ?? null,
         result: answer ? {
           verdict: answer.verdict, credit: answer.credit, feedback: answer.feedback, response: answer.response,
           answer: question.type === "choice" ? question.answer : null, modelAnswer: question.type === "written" ? question.modelAnswer : null,
@@ -94,9 +97,9 @@ async function reportOf(tx: Transaction, row: CheckRow): Promise<Report> {
   return { earlierScores: earlier.map((item) => Number(item.score)), notesSections };
 }
 
-async function watched(tx: Transaction, userId: string, resourceId: string): Promise<boolean> {
-  const [progress] = await tx.select({ pct: userResourceProgress.progressPct }).from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), eq(userResourceProgress.resourceId, resourceId))).limit(1);
-  return Number(progress?.pct ?? 0) >= WATCHED_PCT;
+async function watched(tx: Transaction, userId: string, resourceId: string, resourceType: "video" | "paper"): Promise<boolean> {
+  const [progress] = await tx.select({ pct: userResourceProgress.progressPct, status: userResourceProgress.status }).from(userResourceProgress).where(and(eq(userResourceProgress.userId, userId), eq(userResourceProgress.resourceId, resourceId))).limit(1);
+  return progress?.status === "completed" || Number(progress?.pct ?? 0) >= (resourceType === "paper" ? PAPER_WATCHED_PCT : VIDEO_WATCHED_PCT);
 }
 
 /**
@@ -104,11 +107,11 @@ async function watched(tx: Transaction, userId: string, resourceId: string): Pro
  * unanswerable) until the video is watched to the end; `writing` says a set is being written and has no question yet.
  */
 async function masteryContext(tx: Transaction, userId: string, sessionId: string) {
-  const video = await videoContext(tx, userId, sessionId);
+  const video = await studyContext(tx, userId, sessionId);
   const [latest] = await tx.select().from(masteryChecks).where(and(eq(masteryChecks.userId, userId), eq(masteryChecks.resourceId, video.resourceId))).orderBy(desc(masteryChecks.createdAt)).limit(1);
   const state: MasteryView["state"] = !video.versionId ? "unavailable"
     : latest?.status === "passed" ? "passed"
-    : !(await watched(tx, userId, video.resourceId)) ? "locked"
+    : !(await watched(tx, userId, video.resourceId, video.resourceType)) ? "locked"
     : latest?.status === "open" ? "open"
     : latest?.status === "failed" ? "failed"
     : "ready";
@@ -224,28 +227,36 @@ export async function startMastery(userId: string, sessionId: string, options: O
     // The background write when the video ends and the learner's own request must not both start a set.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`mastery.write:${userId}:${sessionId}`}, 0))`);
     const { video, latest, state, writing } = await masteryContext(tx, userId, sessionId);
-    if (state === "unavailable" || !video.versionId) throw new AuthError("MASTERY_UNAVAILABLE", "This video has no transcript, so it has no mastery check.", 409);
+    if (state === "unavailable" || !video.versionId) throw new AuthError("MASTERY_UNAVAILABLE", `This ${video.resourceType} has no parsed content, so it has no mastery check.`, 409);
     // `ahead` writes the first set while the video plays; any other set waits until the video is watched.
-    if (state === "locked" && (!options.ahead || latest)) throw new AuthError("MASTERY_LOCKED", "Finish the video to unlock its mastery check.", 409);
+    if (state === "locked" && (!options.ahead || latest)) throw new AuthError("MASTERY_LOCKED", video.resourceType === "paper" ? "Read at least 90% of the paper to unlock its mastery check." : "Finish the video to unlock its mastery check.", 409);
     if (state === "open" || state === "passed" || writing || (options.ahead && state !== "locked")) return { view: { state: state === "locked" ? "locked" : writing ? "writing" : state, passScore: MASTERY_PASS_SCORE, check: latest && state !== "locked" ? checkView(latest) : null } satisfies MasteryView };
     await admitTutorGeneration(tx, userId);
-    const chunks = await tx.select({ id: resourceChunks.id, content: resourceChunks.content, startMs: resourceChunks.startMs }).from(resourceChunks)
-      .where(eq(resourceChunks.resourceVersionId, video.versionId)).orderBy(asc(resourceChunks.ordinal));
+    const passages = video.resourceType === "paper"
+      ? (await loadPaperPassages(tx, video.versionId)).filter((passage) => passage.page !== null).map((passage) => ({ id: passage.chunkId, content: passage.content, startMs: null, anchor: { kind: "paper" as const, page: passage.page!, sectionId: passage.sectionId ?? passage.headingPath.at(-1) ?? "unsectioned", chunkId: passage.chunkId } satisfies PaperCitationAnchor }))
+      : await tx.select({ id: resourceChunks.id, content: resourceChunks.content, startMs: resourceChunks.startMs }).from(resourceChunks).where(eq(resourceChunks.resourceVersionId, video.versionId)).orderBy(asc(resourceChunks.ordinal)).then((chunks) => chunks.map((chunk) => ({ ...chunk, anchor: null as PaperCitationAnchor | null })));
+    const paper = video.resourceType === "paper" ? await loadPaperContext(tx, userId, video.resourceId, video.versionId) : null;
     const earlier = await tx.select({ questions: masteryChecks.questions }).from(masteryChecks).where(and(eq(masteryChecks.userId, userId), eq(masteryChecks.resourceId, video.resourceId)));
     const runId = await openRun(tx, userId, video.sessionId, WRITE_GOAL);
-    return { video: { ...video, versionId: video.versionId }, chunks, avoid: earlier.flatMap((row) => (row.questions as StoredQuestion[]).map((question) => question.question)), runId };
+    return { video: { ...video, versionId: video.versionId }, paper, passages, avoid: earlier.flatMap((row) => (row.questions as StoredQuestion[]).map((question) => question.question)), runId };
   });
   if ("view" in prepared) return prepared.view;
   const { video, runId } = prepared;
-  // The whole transcript, every time, so no part of the lesson goes untested.
-  const passages = prepared.chunks;
+  const passages = prepared.passages;
   const count = questionCount(video.durationMs);
   const written = Math.max(2, Math.round(count * 0.3));
-  const user = [
-    `<video_title>${fence(video.title)}</video_title>`,
-    `<transcript>\n${passages.map((chunk, index) => `[${index + 1}]${chunk.startMs === null ? "" : ` ${formatClock(chunk.startMs)}`}\n${fence(chunk.content)}`).join("\n\n")}\n</transcript>`,
-    `<avoid>\n${prepared.avoid.map((question) => `- ${fence(question)}`).join("\n")}\n</avoid>`,
-  ].join("\n\n");
+  const user = video.resourceType === "paper" && prepared.paper
+    ? [
+      `<paper_title>${fence(prepared.paper.title)}</paper_title>`,
+      `<paper_abstract>${fence(prepared.paper.abstract ?? "Unavailable")}</paper_abstract>`,
+      `<paper_passages>\n${passages.map((chunk, index) => `[${index + 1}] p. ${chunk.anchor?.page}, section ${fence(chunk.anchor?.sectionId ?? "unsectioned")}\n${fence(chunk.content)}`).join("\n\n")}\n</paper_passages>`,
+      `<avoid>\n${prepared.avoid.map((question) => `- ${fence(question)}`).join("\n")}\n</avoid>`,
+    ].join("\n\n")
+    : [
+      `<video_title>${fence(video.title)}</video_title>`,
+      `<transcript>\n${passages.map((chunk, index) => `[${index + 1}]${chunk.startMs === null ? "" : ` ${formatClock(chunk.startMs)}`}\n${fence(chunk.content)}`).join("\n\n")}\n</transcript>`,
+      `<avoid>\n${prepared.avoid.map((question) => `- ${fence(question)}`).join("\n")}\n</avoid>`,
+    ].join("\n\n");
 
   const stored: StoredQuestion[] = [];
   let seen = 0;
@@ -266,7 +277,7 @@ export async function startMastery(userId: string, sessionId: string, options: O
       const cited = parsed.success ? parsed.data.cite.flatMap((number) => passages[number - 1] ?? []) : [];
       if (!parsed.success || cited.length === 0 || !parsed.data.question.trim()) continue;
       const question = parsed.data;
-      const base = { id: `q${stored.length}`, ...(question.concept.trim() ? { concept: question.concept.trim() } : {}), question: question.question.trim(), chunkIds: cited.map((chunk) => chunk.id), positionMs: cited[0]!.startMs };
+      const base = { id: `q${stored.length}`, ...(question.concept.trim() ? { concept: question.concept.trim() } : {}), question: question.question.trim(), chunkIds: cited.map((chunk) => chunk.id), positionMs: cited[0]!.startMs, anchor: cited[0]!.anchor };
       stored.push(question.type === "choice"
         ? { ...base, type: "choice", options: question.options, answer: question.answer, explanation: question.explanation }
         : { ...base, type: "written", keyPoints: question.keyPoints, modelAnswer: question.modelAnswer });
@@ -303,8 +314,8 @@ export async function startMastery(userId: string, sessionId: string, options: O
     let failure: TutorModelError | null = null;
     try {
       result = await model({
-        depth: "deep", instructions: QUESTION_INSTRUCTIONS, user, schema: strictJsonSchema(masteryQuestionsOutputSchema), cacheKey: `learnspace-${MASTERY_CONTRACT_VERSION}`,
-        developer: `Write exactly ${count} questions: ${count - written} "choice" and ${written} "written", in the order their ideas appear in the lesson.`,
+        depth: "deep", instructions: video.resourceType === "paper" ? PAPER_QUESTION_INSTRUCTIONS : QUESTION_INSTRUCTIONS, user, schema: strictJsonSchema(masteryQuestionsOutputSchema), cacheKey: `learnspace-${MASTERY_CONTRACT_VERSION}`,
+        developer: `Write exactly ${count} questions: ${count - written} "choice" and ${written} "written", in the order their ideas appear in the ${video.resourceType === "paper" ? "paper" : "lesson"}.`,
       }, {
         signal: stop.signal,
         onText: (text) => {
@@ -331,7 +342,7 @@ export async function startMastery(userId: string, sessionId: string, options: O
 
 /** Locks the learner's open set for this video and the question being answered. */
 async function lockQuestion(tx: Transaction, userId: string, sessionId: string, input: MasteryAnswerRequest) {
-  const video = await videoContext(tx, userId, sessionId);
+  const video = await studyContext(tx, userId, sessionId);
   const [row] = await tx.select().from(masteryChecks).where(and(eq(masteryChecks.id, input.checkId), eq(masteryChecks.userId, userId), eq(masteryChecks.resourceId, video.resourceId))).for("update").limit(1);
   if (!row) throw new AuthError("MASTERY_CHECK_NOT_FOUND", "That check isn't part of this lesson.", 404);
   const question = (row.questions as StoredQuestion[]).find((item) => item.id === input.questionId);
@@ -339,7 +350,7 @@ async function lockQuestion(tx: Transaction, userId: string, sessionId: string, 
   if (("choice" in input) !== (question.type === "choice")) throw new AuthError("INVALID_MASTERY_ANSWER", question.type === "choice" ? "Pick one of the options." : "Write your answer.", 422);
   const settled = row.status !== "open" || Boolean((row.answers as Record<string, StoredAnswer>)[question.id]);
   // A set written while the video plays can't be answered before the video is watched.
-  if (!settled && !(await watched(tx, userId, video.resourceId))) throw new AuthError("MASTERY_LOCKED", "Finish the video to unlock its mastery check.", 409);
+  if (!settled && !(await watched(tx, userId, video.resourceId, video.resourceType))) throw new AuthError("MASTERY_LOCKED", video.resourceType === "paper" ? "Read at least 90% of the paper to unlock its mastery check." : "Finish the video to unlock its mastery check.", 409);
   return { video, row, question, settled };
 }
 
@@ -356,14 +367,14 @@ async function settle(tx: Transaction, userId: string, sessionId: string, row: C
   const passed = score !== null && score >= MASTERY_PASS_SCORE;
   const [updated] = await tx.update(masteryChecks).set({ answers, ...(done ? { status: passed ? "passed" : "failed", score: score!.toFixed(4), completedAt: new Date() } : {}) })
     .where(eq(masteryChecks.id, row.id)).returning();
-  if (passed) await completeMasteredLesson(tx, userId, sessionId, row.resourceId, row.id);
+  if (passed && (await studyContext(tx, userId, sessionId)).resourceType === "video") await completeMasteredLesson(tx, userId, sessionId, row.resourceId, row.id);
   return { state: done ? passed ? "passed" : "failed" : "open", passScore: MASTERY_PASS_SCORE, check: checkView(updated!, await reportOf(tx, updated!)) };
 }
 
 export async function answerMastery(userId: string, sessionId: string, input: MasteryAnswerRequest, options: Options = {}): Promise<MasteryView> {
   const model = options.model ?? openAiTutorModel;
   const staged = await withUserTransaction(userId, async (tx) => {
-    const { row, question, settled } = await lockQuestion(tx, userId, sessionId, input);
+    const { video, row, question, settled } = await lockQuestion(tx, userId, sessionId, input);
     if (settled) return { view: await viewOf(tx, userId, sessionId) };
     // Multiple choice is graded here, from the stored key.
     if (question.type === "choice" && "choice" in input) {
@@ -373,12 +384,12 @@ export async function answerMastery(userId: string, sessionId: string, input: Ma
     if (question.type !== "written" || !("text" in input)) throw new AuthError("INVALID_MASTERY_ANSWER", "Write your answer.", 422);
     await admitTutorGeneration(tx, userId);
     const passages = await tx.select({ content: resourceChunks.content }).from(resourceChunks).where(inArray(resourceChunks.id, question.chunkIds));
-    return { question, text: input.text, passages: passages.map((passage) => passage.content), runId: await openRun(tx, userId, row.studySessionId, "Grade a written mastery answer") };
+    return { resourceType: video.resourceType, question, text: input.text, passages: passages.map((passage) => passage.content), runId: await openRun(tx, userId, row.studySessionId, "Grade a written mastery answer") };
   });
   if ("view" in staged) return staged.view;
-  const { question, text, passages, runId } = staged;
+  const { resourceType, question, text, passages, runId } = staged;
   const result = await call(userId, runId, model, {
-    depth: "deep", instructions: GRADING_INSTRUCTIONS, developer: "Grade the learner's answer.", schema: strictJsonSchema(masteryGradeOutputSchema), cacheKey: `learnspace-${MASTERY_CONTRACT_VERSION}-grade`,
+    depth: "deep", instructions: resourceType === "paper" ? PAPER_GRADING_INSTRUCTIONS : GRADING_INSTRUCTIONS, developer: "Grade the learner's answer.", schema: strictJsonSchema(masteryGradeOutputSchema), cacheKey: `learnspace-${MASTERY_CONTRACT_VERSION}-grade`,
     user: [
       `<question>${fence(question.question)}</question>`,
       `<key_points>\n${question.keyPoints.map((point) => `- ${fence(point)}`).join("\n")}\n</key_points>`,
@@ -423,7 +434,7 @@ export async function startAnalysis(userId: string, sessionId: string, checkId: 
         const answer = answers[question.id];
         const response = answer?.response;
         return {
-          id: question.id, concept: question.concept ?? null, type: question.type, question: question.question, moment: question.positionMs === null ? null : formatClock(question.positionMs),
+          id: question.id, concept: question.concept ?? null, type: question.type, question: question.question, moment: question.anchor?.kind === "paper" ? `p. ${question.anchor.page}, ${question.anchor.sectionId}` : question.positionMs === null ? null : formatClock(question.positionMs),
           verdict: answer?.verdict ?? "incorrect",
           ...(question.type === "choice"
             ? { options: question.options, correct: question.answer, chosen: response && "choice" in response ? response.choice : null, explanation: question.explanation }

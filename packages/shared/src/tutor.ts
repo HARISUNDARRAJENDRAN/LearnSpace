@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { CODE_LANGUAGES, MAX_SESSION_CODE_LENGTH } from "./contracts.js";
+import { CODE_LANGUAGES, MAX_SESSION_CODE_LENGTH, paperCitationAnchorSchema, studyAnchorSchema } from "./contracts.js";
 
 /** Bumped whenever the prompt, output schema or grounding rules change; cached answers from another contract are never reused. */
-export const TUTOR_CONTRACT_VERSION = "tutor-v9";
+export const TUTOR_CONTRACT_VERSION = "tutor-v11";
 /** Transcript chunk embeddings share the discovery embedding model but live in their own retrieval profile. */
 export const TRANSCRIPT_EMBEDDING_PROFILE = "openai-text-embedding-3-small-1536";
 export const MAX_EVIDENCE = 40;
@@ -12,20 +12,28 @@ const cite = z.array(z.number().int().min(1).max(MAX_EVIDENCE)).max(4);
 const oneCite = z.number().int().min(1).max(MAX_EVIDENCE);
 // Every citation comes before the words it supports, so an answer streams with its grounding already decided.
 const citedLine = z.object({ cite, text: z.string() }).strict();
+/**
+ * What a block's claims rest on: the studied source itself (cited), a work the source cites, established background
+ * knowledge, the tutor's own interpretation, or a hypothesis. Written first, so the label is known before the words stream.
+ */
+export const CLAIM_BASES = ["source", "cited_work", "background", "interpretation", "speculation"] as const;
+export const claimBasisSchema = z.enum(CLAIM_BASES);
+export type ClaimBasis = z.infer<typeof claimBasisSchema>;
+const basis = claimBasisSchema;
 
 const modelBlockSchema = z.union([
-  z.object({ type: z.literal("text"), cite, text: z.string() }).strict(),
-  z.object({ type: z.literal("concept"), cite, term: z.string(), definition: z.string() }).strict(),
-  z.object({ type: z.literal("steps"), title: z.string(), items: z.array(citedLine).max(8) }).strict(),
-  z.object({ type: z.literal("compare"), cite, title: z.string(), columns: z.array(z.object({ label: z.string(), points: z.array(z.string()).max(6) }).strict()).min(2).max(3) }).strict(),
-  z.object({ type: z.literal("outline"), title: z.string(), items: z.array(citedLine).max(10) }).strict(),
-  z.object({ type: z.literal("timeline"), title: z.string(), items: z.array(z.object({ cite: oneCite, label: z.string() }).strict()).max(10) }).strict(),
+  z.object({ type: z.literal("text"), basis, cite, text: z.string() }).strict(),
+  z.object({ type: z.literal("concept"), basis, cite, term: z.string(), definition: z.string() }).strict(),
+  z.object({ type: z.literal("steps"), basis, title: z.string(), items: z.array(citedLine).max(8) }).strict(),
+  z.object({ type: z.literal("compare"), basis, cite, title: z.string(), columns: z.array(z.object({ label: z.string(), points: z.array(z.string()).max(6) }).strict()).min(2).max(3) }).strict(),
+  z.object({ type: z.literal("outline"), basis, title: z.string(), items: z.array(citedLine).max(10) }).strict(),
+  z.object({ type: z.literal("timeline"), basis, title: z.string(), items: z.array(z.object({ cite: oneCite, label: z.string() }).strict()).max(10) }).strict(),
   // Diagrams: a chain of stages joined by labelled arrows (closing back on itself when `loop`), or one idea split into its parts.
-  z.object({ type: z.literal("flow"), title: z.string(), loop: z.boolean(), nodes: z.array(z.object({ cite, label: z.string(), detail: z.string(), arrow: z.string() }).strict()).min(2).max(6) }).strict(),
-  z.object({ type: z.literal("tree"), cite, title: z.string(), root: z.string(), branches: z.array(z.object({ cite, label: z.string(), detail: z.string(), leaves: z.array(z.string()).max(4) }).strict()).min(2).max(5) }).strict(),
-  z.object({ type: z.literal("evidence"), cite: oneCite, note: z.string() }).strict(),
-  z.object({ type: z.literal("question"), cite, prompt: z.string(), hint: z.string(), concept: z.string() }).strict(),
-  z.object({ type: z.literal("check"), cite, question: z.string(), options: z.array(z.string()).min(2).max(5), answer: z.number().int().min(0).max(4), explanation: z.string(), hint: z.string(), concept: z.string() }).strict(),
+  z.object({ type: z.literal("flow"), basis, title: z.string(), loop: z.boolean(), nodes: z.array(z.object({ cite, label: z.string(), detail: z.string(), arrow: z.string() }).strict()).min(2).max(6) }).strict(),
+  z.object({ type: z.literal("tree"), basis, cite, title: z.string(), root: z.string(), branches: z.array(z.object({ cite, label: z.string(), detail: z.string(), leaves: z.array(z.string()).max(4) }).strict()).min(2).max(5) }).strict(),
+  z.object({ type: z.literal("evidence"), basis, cite: oneCite, note: z.string() }).strict(),
+  z.object({ type: z.literal("question"), basis, cite, prompt: z.string(), hint: z.string(), concept: z.string() }).strict(),
+  z.object({ type: z.literal("check"), basis, cite, question: z.string(), options: z.array(z.string()).min(2).max(5), answer: z.number().int().min(0).max(4), explanation: z.string(), hint: z.string(), concept: z.string() }).strict(),
 ]);
 
 export const tutorModelOutputSchema = z.object({
@@ -67,23 +75,23 @@ export function tutorOutputJsonSchema(reasoning = false): Record<string, unknown
 
 // What the browser receives. Sources are server-resolved chunks; blocks point at them by index.
 const src = z.array(z.number().int().min(0)).max(4);
-export const tutorSourceSchema = z.object({ chunkId: z.string().uuid(), startMs: z.number().int().min(0).nullable(), endMs: z.number().int().min(0).nullable(), excerpt: z.string() }).strict();
+export const tutorSourceSchema = z.object({ chunkId: z.string().uuid(), startMs: z.number().int().min(0).nullable(), endMs: z.number().int().min(0).nullable(), excerpt: z.string(), anchor: paperCitationAnchorSchema.optional() }).strict();
 const viewLine = z.object({ text: z.string(), src }).strict();
 const interactive = { id: z.string(), concept: z.string(), src, hintAvailable: z.boolean(), hint: z.string().nullable() };
 
 export const tutorBlockViewSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("text"), id: z.string(), text: z.string(), src }).strict(),
-  z.object({ type: z.literal("concept"), id: z.string(), term: z.string(), definition: z.string(), src }).strict(),
-  z.object({ type: z.literal("steps"), id: z.string(), title: z.string(), items: z.array(viewLine) }).strict(),
-  z.object({ type: z.literal("compare"), id: z.string(), title: z.string(), columns: z.array(z.object({ label: z.string(), points: z.array(z.string()) }).strict()), src }).strict(),
-  z.object({ type: z.literal("outline"), id: z.string(), title: z.string(), items: z.array(viewLine) }).strict(),
-  z.object({ type: z.literal("timeline"), id: z.string(), title: z.string(), items: z.array(z.object({ label: z.string(), src: z.number().int().min(0) }).strict()) }).strict(),
-  z.object({ type: z.literal("flow"), id: z.string(), title: z.string(), loop: z.boolean(), nodes: z.array(z.object({ label: z.string(), detail: z.string(), arrow: z.string(), src }).strict()) }).strict(),
-  z.object({ type: z.literal("tree"), id: z.string(), title: z.string(), root: z.string(), src, branches: z.array(z.object({ label: z.string(), detail: z.string(), leaves: z.array(z.string()), src }).strict()) }).strict(),
-  z.object({ type: z.literal("evidence"), id: z.string(), note: z.string(), src: z.number().int().min(0) }).strict(),
-  z.object({ type: z.literal("question"), prompt: z.string(), ...interactive }).strict(),
+  z.object({ type: z.literal("text"), basis: basis.optional(), id: z.string(), text: z.string(), src }).strict(),
+  z.object({ type: z.literal("concept"), basis: basis.optional(), id: z.string(), term: z.string(), definition: z.string(), src }).strict(),
+  z.object({ type: z.literal("steps"), basis: basis.optional(), id: z.string(), title: z.string(), items: z.array(viewLine) }).strict(),
+  z.object({ type: z.literal("compare"), basis: basis.optional(), id: z.string(), title: z.string(), columns: z.array(z.object({ label: z.string(), points: z.array(z.string()) }).strict()), src }).strict(),
+  z.object({ type: z.literal("outline"), basis: basis.optional(), id: z.string(), title: z.string(), items: z.array(viewLine) }).strict(),
+  z.object({ type: z.literal("timeline"), basis: basis.optional(), id: z.string(), title: z.string(), items: z.array(z.object({ label: z.string(), src: z.number().int().min(0) }).strict()) }).strict(),
+  z.object({ type: z.literal("flow"), basis: basis.optional(), id: z.string(), title: z.string(), loop: z.boolean(), nodes: z.array(z.object({ label: z.string(), detail: z.string(), arrow: z.string(), src }).strict()) }).strict(),
+  z.object({ type: z.literal("tree"), basis: basis.optional(), id: z.string(), title: z.string(), root: z.string(), src, branches: z.array(z.object({ label: z.string(), detail: z.string(), leaves: z.array(z.string()), src }).strict()) }).strict(),
+  z.object({ type: z.literal("evidence"), basis: basis.optional(), id: z.string(), note: z.string(), src: z.number().int().min(0) }).strict(),
+  z.object({ type: z.literal("question"), basis: basis.optional(), prompt: z.string(), ...interactive }).strict(),
   z.object({
-    type: z.literal("check"), question: z.string(), options: z.array(z.string()).min(2).max(5), ...interactive,
+    type: z.literal("check"), basis: basis.optional(), question: z.string(), options: z.array(z.string()).min(2).max(5), ...interactive,
     result: z.object({ choice: z.number().int(), correct: z.boolean(), answer: z.number().int(), explanation: z.string() }).strict().nullable(),
   }).strict(),
 ]);
@@ -114,6 +122,7 @@ export const tutorMessageViewSchema = z.object({
   createdAt: z.string(),
   text: z.string(),
   positionMs: z.number().int().nullable(),
+  anchor: studyAnchorSchema.nullable(),
   outcome: tutorOutcomeSchema.nullable(),
   blocks: z.array(tutorBlockViewSchema),
   sources: z.array(tutorSourceSchema),
@@ -130,6 +139,7 @@ export type TutorTranscriptStatus = "ready" | "preparing" | "unavailable" | "fai
 export type TutorConceptStatus = "introduced" | "struggling" | "demonstrated";
 export type TutorThreadView = {
   resourceId: string;
+  resourceType: "video" | "paper";
   transcript: { status: TutorTranscriptStatus; source: string | null };
   messages: TutorMessageView[];
   learner: { goal: string | null; concepts: Array<{ name: string; status: TutorConceptStatus }>; nextStep: string | null };
@@ -150,15 +160,21 @@ export type TutorStreamEvent =
 
 const idempotencyKey = z.string().trim().min(8).max(128);
 
-export const tutorTurnRequestSchema = z.object({
+const tutorTurnShared = {
   question: z.string().trim().min(1).max(1_000),
-  positionMs: z.number().int().min(0).max(86_400_000),
   replyTo: z.object({ messageId: z.string().uuid(), blockId }).strict().optional(),
   doubt: tutorDoubtSchema.optional(),
   // The session's code draft, sent only when the learner chose to share it with this question.
   code: z.object({ language: z.enum(CODE_LANGUAGES), code: z.string().trim().min(1).max(MAX_SESSION_CODE_LENGTH) }).strict().optional(),
   idempotencyKey,
-}).strict()
+};
+const paperTurnAnchor = z.object({
+  kind: z.literal("paper"), page: z.number().int().positive().optional(), sectionId: z.string().min(1).max(200).optional(), chunkId: z.string().uuid().optional(),
+}).strict().refine((value) => value.page !== undefined || value.sectionId !== undefined, "A paper anchor needs a page or section.");
+export const tutorTurnRequestSchema = z.union([
+  z.object({ ...tutorTurnShared, positionMs: z.number().int().min(0).max(86_400_000) }).strict(),
+  z.object({ ...tutorTurnShared, anchor: paperTurnAnchor }).strict(),
+])
   .refine((input) => !(input.replyTo && input.doubt), "A turn answers a check or asks about a doubt, not both.")
   .refine((input) => !(input.code && input.doubt), "A doubt is about the tutor's words, so it does not carry code.");
 export type TutorTurnRequest = z.infer<typeof tutorTurnRequestSchema>;

@@ -3,7 +3,7 @@
 FROM node:24.11.1-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends python3 g++ openjdk-17-jdk-headless \
+  && apt-get install -y --no-install-recommends python3 python3-numpy g++ openjdk-17-jdk-headless \
   && rm -rf /var/lib/apt/lists/*
 
 # Every C++ program includes <bits/stdc++.h>; precompiled with the flags programs are built with, it compiles in a fraction of the time.

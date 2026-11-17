@@ -56,32 +56,38 @@ test.afterAll(async () => {
   if (!db) return;
   const ids = Object.values(videos).map((video) => video.id);
   const versionIds = Object.values(videos).map((video) => video.versionId);
-  // A recommended lesson has its first problem written ahead; those rows belong to the lesson, not the learner.
-  await db`DELETE FROM practice.coding_problems WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM practice.coding_mastery WHERE user_id = ${userId}`;
-  await db`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
-  await db`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
-  await db`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
-  await db`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
-  await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.focus_sessions WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
-  await db`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
-  await db`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
-  await db`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
-  await db`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${userId}`;
-  await db`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN ${db(ids)}`;
-  // The coding profiles go with their transcript versions (ON DELETE CASCADE).
-  await db`DELETE FROM retrieval.resource_chunks WHERE resource_version_id IN ${db(versionIds)}`;
-  await db`DELETE FROM catalog.resource_versions WHERE id IN ${db(versionIds)}`;
-  await db`DELETE FROM ops.transcript_requests WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(ids)}`;
-  await db`DELETE FROM catalog.resources WHERE id IN ${db(ids)}`;
-  await db`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:%${userId}`}`;
-  await db`DELETE FROM identity.users WHERE id = ${userId}`;
+  // Background work from the page visits may still be writing. Locking the user and the lessons first makes any late
+  // insert wait for this transaction, then fail against the deleted rows, instead of racing the deletes.
+  await db.begin(async (tx) => {
+    await tx`SELECT id FROM identity.users WHERE id = ${userId} FOR UPDATE`;
+    await tx`SELECT id FROM catalog.resources WHERE id IN ${tx(ids)} FOR UPDATE`;
+    // A recommended lesson has its first problem written ahead; those rows belong to the lesson, not the learner.
+    await tx`DELETE FROM practice.coding_problems WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM practice.coding_mastery WHERE user_id = ${userId}`;
+    await tx`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
+    await tx`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
+    await tx`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.focus_sessions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${userId})`;
+    await tx`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
+    await tx`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
+    await tx`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM discovery.discovery_interactions WHERE user_id = ${userId}`;
+    await tx`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${userId}`;
+    await tx`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN ${tx(ids)}`;
+    // The coding profiles go with their transcript versions (ON DELETE CASCADE).
+    await tx`DELETE FROM retrieval.resource_chunks WHERE resource_version_id IN ${tx(versionIds)}`;
+    await tx`DELETE FROM catalog.resource_versions WHERE id IN ${tx(versionIds)}`;
+    await tx`DELETE FROM ops.transcript_requests WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM catalog.video_details WHERE resource_id IN ${tx(ids)}`;
+    await tx`DELETE FROM catalog.resources WHERE id IN ${tx(ids)}`;
+    await tx`DELETE FROM ops.rate_limit_counters WHERE key LIKE ${`learnspace:%${userId}`}`;
+    await tx`DELETE FROM identity.users WHERE id = ${userId}`;
+  });
   await db.end({ timeout: 5 });
 });
 
@@ -100,8 +106,8 @@ async function startSession(page: Page, resourceId: string): Promise<string> {
 
 /** Asks for the session's coding state (which starts the classification) until the profile settles. */
 async function settledProfile(page: Page, sessionId: string) {
-  type Profile = { status: string; recommended: boolean; category: string | null; concepts: Array<{ concept: string; startMs: number | null }> };
-  let profile: Profile = { status: "unknown", recommended: false, category: null, concepts: [] };
+  type Profile = { status: string; eligible: boolean; category: string | null; concepts: Array<{ concept: string; startMs: number | null }> };
+  let profile: Profile = { status: "unknown", eligible: false, category: null, concepts: [] };
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/study-sessions/${sessionId}/coding`);
     expect(response.status()).toBe(200);
@@ -114,7 +120,7 @@ async function settledProfile(page: Page, sessionId: string) {
 test("a recursion lesson is classified as coding practice and offers the Code tool", async ({ page }) => {
   const sessionId = await startSession(page, videos.recursion.id);
   const profile = await settledProfile(page, sessionId);
-  expect(profile).toMatchObject({ recommended: true, category: "dsa_lesson" });
+  expect(profile).toMatchObject({ eligible: true, category: "dsa_lesson" });
   // The concept carries the time its cited passage starts at, so practice can point back into the video.
   expect(profile.concepts).toEqual([expect.objectContaining({ concept: "recursion", startMs: 0 })]);
   const [row] = await (database as NonNullable<typeof database>)`SELECT status, practice_fit, language FROM practice.video_coding_profiles WHERE resource_version_id = ${videos.recursion.versionId}`;
@@ -126,11 +132,19 @@ test("a recursion lesson is classified as coding practice and offers the Code to
 
 test("a conceptual lesson is classified but does not offer the Code tool", async ({ page }) => {
   const sessionId = await startSession(page, videos.concept.id);
-  const profile = await settledProfile(page, sessionId);
-  expect(profile).toMatchObject({ recommended: false, category: "conceptual_cs", concepts: [] });
+  // An ineligible lesson has no coding state (403); the tool bar asks the eligibility endpoint instead.
+  const eligibility = `/api/v1/study-sessions/${sessionId}/coding/eligibility`;
+  await expect.poll(async () => {
+    const response = await page.request.get(eligibility);
+    expect(response.status()).toBe(200);
+    return ((await response.json()) as { status: string }).status;
+  }, { timeout: 30_000, intervals: [500, 1_000, 2_000] }).toBe("ineligible");
+  const [row] = await (database as NonNullable<typeof database>)`SELECT status, category FROM practice.video_coding_profiles WHERE resource_version_id = ${videos.concept.versionId}`;
+  expect(row).toMatchObject({ status: "ready", category: "conceptual_cs" });
+  expect((await page.request.get(`/api/v1/study-sessions/${sessionId}/coding`)).status()).toBe(403);
 
   // The profile is already settled, so the tool bar's first answer is final.
-  const asked = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/study-sessions/${sessionId}/coding`);
+  const asked = page.waitForResponse((response) => new URL(response.url()).pathname === eligibility);
   await page.goto(`/app/study/video/${sessionId}`);
   expect((await asked).status()).toBe(200);
   await expect(studyTool(page, "AI")).toBeVisible();

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
-import postgres from "postgres";
 import type { CodingClassificationOutput, CodingProblemOutput } from "@learnspace/shared/coding";
+import postgres from "postgres";
 import type { TutorModel, TutorModelRequest } from "../lib/ai/tutor-model";
 import { AuthError } from "../lib/auth/errors";
 
@@ -78,6 +78,8 @@ test("a coding lesson is classified, its problem written and verified, and an as
   const owner = await createEmailUser({ email: `coding-${randomUUID()}@example.test`, displayName: "Coding Owner", passwordHash: "test-hash" });
   const videoId = randomUUID();
   const versionId = randomUUID();
+  let rejectedVideoId: string | null = null;
+  let rejectedVersionId: string | null = null;
   const youtubeId = `c${randomUUID().replaceAll("-", "").slice(0, 10)}`;
   const calls: TutorModelRequest[] = [];
   const background: Promise<unknown>[] = [];
@@ -107,7 +109,7 @@ test("a coding lesson is classified, its problem written and verified, and an as
 
     // Opening the session writes the first problem ahead; the runner verifies it against its own references.
     let state = await coding.getCodingState(owner.id, sessionId, options);
-    assert.equal(state.profile.recommended, true);
+    assert.equal(state.profile.eligible, true);
     assert.deepEqual(state.profile.concepts.map((item) => [item.concept, item.startMs]), [["dynamic-programming", 120_000]]);
     await settle();
     const [problem] = await migrator<{ id: string; status: string; verification: { efficiencyStage: boolean } }[]>`SELECT id, status, verification FROM practice.coding_problems WHERE resource_id = ${videoId}`;
@@ -195,13 +197,31 @@ test("a coding lesson is classified, its problem written and verified, and an as
     assert.equal(state.attempt!.problem.title, "Hottest Stretch");
     assert.notEqual(state.attempt!.problem.id, attempt.problem.id);
     assert.ok(calls.some((call) => call.depth === "author" && call.user.includes("<original_problem")));
+
+    // A ready non-coding classification blocks both opening state and creating an attempt through the service API.
+    rejectedVideoId = randomUUID();
+    rejectedVersionId = randomUUID();
+    const ineligibleYoutubeId = `n${randomUUID().replaceAll("-", "").slice(0, 10)}`;
+    await migrator`
+      INSERT INTO catalog.resources (id, owner_user_id, type, provider, external_id, canonical_url, title, visibility, status, quality_score, metadata)
+      VALUES (${rejectedVideoId}, NULL, 'video', 'youtube', ${ineligibleYoutubeId}, ${`https://www.youtube.com/watch?v=${ineligibleYoutubeId}`}, 'A history lesson', 'public', 'ready', 0.9, '{}'::jsonb)`;
+    await migrator`INSERT INTO catalog.video_details (resource_id, youtube_id, duration_ms) VALUES (${rejectedVideoId}, ${ineligibleYoutubeId}, 600000)`;
+    await migrator`
+      INSERT INTO catalog.resource_versions (id, resource_id, version_no, source_sha256, content_sha256, raw_object_key, mime_type, parser_name, parser_version, processing_status, fetched_at, ready_at)
+      VALUES (${rejectedVersionId}, ${rejectedVideoId}, 1, ${"e".repeat(64)}, ${"e".repeat(64)}, ${`transcripts/${rejectedVideoId}`}, 'application/json', 'learner-captions', '1', 'ready', now(), now())`;
+    await migrator`UPDATE catalog.resources SET current_version_id = ${rejectedVersionId} WHERE id = ${rejectedVideoId}`;
+    const ineligibleSessionId = (await study.startOrResumeStudySession(owner.id, { resourceId: rejectedVideoId, origin: "home", idempotencyKey: `coding-${randomUUID()}` })).sessionId;
+    await profile.classifyVersion(owner.id, { resourceId: rejectedVideoId, versionId: rejectedVersionId, title: "A history lesson" }, async () => ({ ...classification, category: "non_coding", concepts: [], reason: "No coding practice applies." }));
+    const notEligible = (error: unknown) => error instanceof AuthError && error.code === "CODING_NOT_ELIGIBLE";
+    await assert.rejects(coding.getCodingState(owner.id, ineligibleSessionId, options), notEligible);
+    await assert.rejects(coding.startCoding(owner.id, ineligibleSessionId, {}, options), notEligible);
   } finally {
     await settle().catch(() => undefined);
     await migrator`DELETE FROM practice.coding_attempts WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM practice.coding_mastery WHERE user_id = ${owner.id}`;
     await migrator`UPDATE practice.coding_problems SET parent_problem_id = NULL WHERE resource_id = ${videoId}`;
     await migrator`DELETE FROM practice.coding_problems WHERE resource_id = ${videoId}`;
-    await migrator`DELETE FROM practice.video_coding_profiles WHERE resource_id = ${videoId}`;
+    await migrator`DELETE FROM practice.video_coding_profiles WHERE resource_id IN (${videoId}, ${rejectedVideoId})`;
     await migrator`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${owner.id})`;
     await migrator`DELETE FROM agent.agent_runs WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id = ${owner.id}`;
@@ -212,14 +232,14 @@ test("a coding lesson is classified, its problem written and verified, and an as
     await migrator`DELETE FROM study.study_sessions WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM discovery.user_concept_affinity WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${owner.id}`;
-    await migrator`UPDATE catalog.resources SET current_version_id = NULL WHERE id = ${videoId}`;
+    await migrator`UPDATE catalog.resources SET current_version_id = NULL WHERE id IN (${videoId}, ${rejectedVideoId})`;
     // The local worker may have embedded the chunks while the test ran.
-    await migrator`DELETE FROM retrieval.chunk_embeddings WHERE chunk_id IN (SELECT id FROM retrieval.resource_chunks WHERE resource_version_id = ${versionId})`;
-    await migrator`DELETE FROM retrieval.resource_chunks WHERE resource_version_id = ${versionId}`;
-    await migrator`DELETE FROM catalog.resource_versions WHERE id = ${versionId}`;
-    await migrator`DELETE FROM ops.transcript_requests WHERE resource_id = ${videoId}`;
-    await migrator`DELETE FROM catalog.video_details WHERE resource_id = ${videoId}`;
-    await migrator`DELETE FROM catalog.resources WHERE id = ${videoId}`;
+    await migrator`DELETE FROM retrieval.chunk_embeddings WHERE chunk_id IN (SELECT id FROM retrieval.resource_chunks WHERE resource_version_id IN (${versionId}, ${rejectedVersionId}))`;
+    await migrator`DELETE FROM retrieval.resource_chunks WHERE resource_version_id IN (${versionId}, ${rejectedVersionId})`;
+    await migrator`DELETE FROM catalog.resource_versions WHERE id IN (${versionId}, ${rejectedVersionId})`;
+    await migrator`DELETE FROM ops.transcript_requests WHERE resource_id IN (${videoId}, ${rejectedVideoId})`;
+    await migrator`DELETE FROM catalog.video_details WHERE resource_id IN (${videoId}, ${rejectedVideoId})`;
+    await migrator`DELETE FROM catalog.resources WHERE id IN (${videoId}, ${rejectedVideoId})`;
     await migrator`DELETE FROM identity.users WHERE id = ${owner.id}`;
     await migrator.end({ timeout: 5 });
     await closeDb();

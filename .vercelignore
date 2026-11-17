@@ -18,3 +18,7 @@ artifacts
 infra/postgres/data
 supabase
 *.log
+**/target
+docs/benchmarks/pdf-parser/corpus
+scripts/research-curriculum/.cache
+packages/pdf-parser/native/*.node

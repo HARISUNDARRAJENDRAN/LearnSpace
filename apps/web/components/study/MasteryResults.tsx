@@ -1,11 +1,12 @@
 "use client";
 
+import type { StudyAnchor } from "@learnspace/shared";
 import { type MasteryCheckView, masteryBand } from "@learnspace/shared/mastery";
-import { ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, Lightbulb, LoaderCircle, Play, RotateCcw, Sparkles, Target, X } from "lucide-react";
+import { ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, Lightbulb, LoaderCircle, RotateCcw, Sparkles, Target, X } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { DIAL, dialStripes, HEAT, ringSlice } from "../ui/stripes";
 import { MathText } from "./MathText";
-import { formatTime } from "./StudyWorkspace";
+import { PlaceLink, placeOf } from "./place";
 
 /** Where passing this lesson leads: the course's next lesson, or the end of the course (or of a single lesson). */
 export type MasteryNext = { course: { completed: number; total: number } | null; nextTitle: string | null };
@@ -49,7 +50,7 @@ type Props = {
   passScore: number;
   next: MasteryNext;
   moving: boolean;
-  onSeek: (positionMs: number) => void;
+  onGo: (place: StudyAnchor) => void;
   onReview: (index: number) => void;
   onContinue: () => void;
   onRetake: () => void;
@@ -60,7 +61,7 @@ type Props = {
  * What a scored set says: the score on a dial, the answers and concepts behind it, progress over attempts and the course,
  * where to revise, and a learning analysis written from the learner's own answers, which fills in when it is ready.
  */
-export function MasteryResults({ check, passScore, next, moving, onSeek, onReview, onContinue, onRetake, onAnalyse }: Props) {
+export function MasteryResults({ check, passScore, next, moving, onGo, onReview, onContinue, onRetake, onAnalyse }: Props) {
   const score = check.score ?? 0;
   const passed = check.status === "passed";
   const band = masteryBand(score, passScore);
@@ -169,7 +170,7 @@ export function MasteryResults({ check, passScore, next, moving, onSeek, onRevie
               <span className="mastery-round" aria-hidden="true"><ArrowUpRight /></span>
             </button>
             <div className="mastery-revise-links">
-              {question.positionMs === null ? null : <button className="session-link-button" type="button" onClick={() => onSeek(question.positionMs ?? 0)}><Play aria-hidden="true" />Watch at {formatTime(question.positionMs)}</button>}
+              <PlaceLink place={placeOf(question.positionMs, question.anchor)} onGo={onGo} />
               {check.notesSections[question.id] ? <span className="mastery-notes-link">In your notes: <MathText text={check.notesSections[question.id] ?? ""} /></span> : null}
             </div>
           </li>)}

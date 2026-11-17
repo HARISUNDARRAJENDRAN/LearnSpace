@@ -120,8 +120,9 @@ test(
     ]);
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
     const user = await createEmailUser({ email: `paper-import-${randomUUID()}@example.test`, displayName: "Paper Import Test", passwordHash: await hashPassword("paper-import-password-123") });
-    const arxivUrl = "https://arxiv.org/abs/1706.03762v7";
-    const doiUrl = "https://doi.org/10.48550/arXiv.1706.03762";
+    const arxivId = `2601.${String(parseInt(randomUUID().replaceAll("-", "").slice(0, 8), 16) % 100_000).padStart(5, "0")}`;
+    const arxivUrl = `https://arxiv.org/abs/${arxivId}v7`;
+    const doiUrl = `https://doi.org/10.5555/source-import-${randomUUID()}`;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input) => {
       const requestUrl = String(input);
@@ -139,7 +140,7 @@ test(
       const arxivAgain = await resolveSource(user.id, { mode: "research", url: arxivUrl, correlationId: randomUUID() });
       const doi = await resolveSource(user.id, { mode: "research", url: doiUrl, correlationId: randomUUID() });
       resourceIds.push(arxiv.resourceId, doi.resourceId);
-      assert.equal(arxiv.arxivId, "1706.03762");
+      assert.equal(arxiv.arxivId, arxivId);
       assert.equal(arxiv.sourceOrigin, "direct_url");
       assert.equal(arxivAgain.resourceId, arxiv.resourceId);
       assert.notEqual(arxiv.resourceId, doi.resourceId);
@@ -173,6 +174,7 @@ test(
       await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${user.id}`;
       await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${user.id}`;
       if (resourceIds.length > 0) {
+        await migrator`DELETE FROM catalog.paper_authors WHERE paper_resource_id IN ${migrator(resourceIds)}`;
         await migrator`DELETE FROM catalog.paper_details WHERE resource_id IN ${migrator(resourceIds)}`;
         await migrator`DELETE FROM catalog.resources WHERE id IN ${migrator(resourceIds)}`;
       }
@@ -240,6 +242,50 @@ async function withVideoProviders<T>(fake: typeof fetch, run: () => Promise<T>):
     }
   }
 }
+
+test(
+  "research source discovery uses one Exa search and completes without provider enrichment",
+  { skip: databaseAvailable ? false : "database URLs are required" },
+  async () => {
+    const [{ createEmailUser }, { searchSources, getSourceDiscoveryRun }, { closeDb }] = await Promise.all([
+      import("../lib/auth/repository"),
+      import("../lib/source-discovery/service"),
+      import("@learnspace/db"),
+    ]);
+    const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
+    const user = await createEmailUser({ email: `exa-paper-search-${randomUUID()}@example.test`, displayName: "Exa Paper Search", passwordHash: await hashPassword("exa-paper-search-password-123") });
+    const originalFetch = globalThis.fetch;
+    const originalExaKey = process.env.EXA_API_KEY;
+    const requests: string[] = [];
+    process.env.EXA_API_KEY = "test-key";
+    globalThis.fetch = (async (input) => {
+      const url = String(input);
+      requests.push(url);
+      assert.equal(url, "https://api.exa.ai/search");
+      return Response.json({ results: [
+        { url: "https://arxiv.org/abs/1706.03762", title: "Attention Is All You Need", text: "A transformer architecture.", publishedDate: "2017-06-12", authors: ["Ashish Vaswani"] },
+      ] });
+    }) as typeof fetch;
+    try {
+      const result = await searchSources(user.id, { mode: "research", query: "Attention Is All You Need", rankingIntent: "best_match", correlationId: randomUUID() }, () => assert.fail("Exa retrieval has no deferred enrichment"));
+      assert.equal(result.status, "completed");
+      assert.equal(result.candidates[0]?.externalId, "1706.03762");
+      assert.equal(result.candidates[0]?.canonicalUrl, "https://arxiv.org/abs/1706.03762");
+      assert.deepEqual(requests, ["https://api.exa.ai/search"]);
+      const run = await getSourceDiscoveryRun(user.id, result.runId!);
+      assert.equal(run.status, "completed");
+      assert.equal(run.candidates[0]?.title, "Attention Is All You Need");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalExaKey === undefined) delete process.env.EXA_API_KEY;
+      else process.env.EXA_API_KEY = originalExaKey;
+      await migrator`DELETE FROM discovery.recommendation_runs WHERE user_id = ${user.id}`;
+      await migrator`DELETE FROM identity.users WHERE id = ${user.id}`;
+      await migrator.end({ timeout: 5 });
+      await closeDb();
+    }
+  },
+);
 
 test(
   "the video agent answers with checked videos at once, then the model's ranked picks, which start Study and are shared",

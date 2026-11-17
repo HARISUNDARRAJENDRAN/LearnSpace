@@ -18,6 +18,7 @@ type Props = {
 };
 
 type ErrorBody = { error?: { code?: string; message?: string; detectedMode?: SourceDiscoveryMode } };
+type PaperPresentation = SourceDiscoveryCandidate & { venue?: string | null };
 
 function messageFrom(body: ErrorBody): string {
   return body.error?.message ?? "Something went wrong. Please try again.";
@@ -223,7 +224,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
   async function pollRun(run: string, controller: AbortController, version: number, initialCandidates: SourceDiscoveryCandidate[]) {
     const deadline = Date.now() + sourceDiscoveryPollBudgetMs;
-    let waitMs = 1_000;
+    let waitMs = research && initialCandidates.length === 0 ? 250 : 1_000;
     let latestCandidates = initialCandidates;
     try {
       while (Date.now() < deadline) {
@@ -246,7 +247,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
           return;
         }
         // The agent's ranking lands within seconds, so it is checked often; a worker refresh takes longer.
-        waitMs = result.agent ? 1_200 : Math.min(8_000, waitMs * 2);
+        waitMs = research ? (latestCandidates.length === 0 ? 250 : 500) : result.agent ? 1_200 : Math.min(8_000, waitMs * 2);
       }
       if (version === requestVersion.current) {
         setError(research ? "We couldn't finish comparing the papers. Try again." : "We couldn't finish finding strong videos. Try again.");
@@ -365,7 +366,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
           </form>
 
           <div className={`source-discovery-lower ${state === "results" || state === "searching" ? "is-results" : ""}`}>
-            {state === "searching" && candidates.length === 0 ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Searching YouTube for the best lessons…"}</p><span>{research ? "Comparing candidate papers…" : "Running several searches and checking each video's length, audience and availability…"}</span></div> : null}
+            {state === "searching" && candidates.length === 0 ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Searching YouTube for the best lessons…"}</p><span>{research ? "Searching Exa for papers…" : "Running several searches and checking each video's length, audience and availability…"}</span></div> : null}
             {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{agent ? <AgentStatus agent={agent} count={candidates.length} /> : null}{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />)}{state === "searching" && !agent ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}{state === "results" && error ? <div className="source-discovery-more source-discovery-more-error" role="alert"><span>{error}</span><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}</> : <div className="source-discovery-empty-results"><p>{error ?? (research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic.")}</p><span>Try making the topic more specific.</span></div>}</div> : null}
             {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} /> : null}
             {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? "Research" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
@@ -400,6 +401,7 @@ function compactCount(value: number): string {
 }
 
 function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string; onStart: () => void }) {
+  const paper = candidate as PaperPresentation;
   const duration = formatDuration(candidate.durationMs);
   const sourceProps = candidate.sourceOrigin === "external_refresh" && candidate.canonicalUrl
     ? { sourceUrl: candidate.canonicalUrl, sourceMode: mode }
@@ -417,7 +419,7 @@ function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: Source
     </div>
     <div className="source-discovery-result-copy">
       <h3 title={candidate.title}>{candidate.title}</h3>
-      <p>{[candidate.author, mode === "learn" ? views : duration, formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p>
+      <p>{[candidate.author, mode === "research" ? paper.venue : views, mode === "learn" ? duration : formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p>
       <span className="source-discovery-why">{tags.map((tag) => <em key={tag}>{tag}</em>)}<span>{candidate.reason}</span></span>
     </div>
     <StartStudyButton {...sourceProps} {...(candidate.recommendationRunId === undefined ? {} : { recommendationRunId: candidate.recommendationRunId })} origin={mode === "research" ? "research" : "discover"} label={startLabel} className="source-discovery-start" onClick={onStart} />
