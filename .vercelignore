@@ -21,3 +21,5 @@ supabase
 **/target
 scripts/research-curriculum/.cache
 packages/pdf-parser/native/*.node
+.claude
+media
