@@ -100,8 +100,8 @@ async function startSession(page: Page, resourceId: string): Promise<string> {
 
 /** Asks for the session's coding state (which starts the classification) until the profile settles. */
 async function settledProfile(page: Page, sessionId: string) {
-  type Profile = { status: string; recommended: boolean; category: string | null; concepts: Array<{ concept: string; startMs: number | null }> };
-  let profile: Profile = { status: "unknown", recommended: false, category: null, concepts: [] };
+  type Profile = { status: string; eligible: boolean; category: string | null; concepts: Array<{ concept: string; startMs: number | null }> };
+  let profile: Profile = { status: "unknown", eligible: false, category: null, concepts: [] };
   await expect.poll(async () => {
     const response = await page.request.get(`/api/v1/study-sessions/${sessionId}/coding`);
     expect(response.status()).toBe(200);
@@ -114,7 +114,7 @@ async function settledProfile(page: Page, sessionId: string) {
 test("a recursion lesson is classified as coding practice and offers the Code tool", async ({ page }) => {
   const sessionId = await startSession(page, videos.recursion.id);
   const profile = await settledProfile(page, sessionId);
-  expect(profile).toMatchObject({ recommended: true, category: "dsa_lesson" });
+  expect(profile).toMatchObject({ eligible: true, category: "dsa_lesson" });
   // The concept carries the time its cited passage starts at, so practice can point back into the video.
   expect(profile.concepts).toEqual([expect.objectContaining({ concept: "recursion", startMs: 0 })]);
   const [row] = await (database as NonNullable<typeof database>)`SELECT status, practice_fit, language FROM practice.video_coding_profiles WHERE resource_version_id = ${videos.recursion.versionId}`;
@@ -127,7 +127,7 @@ test("a recursion lesson is classified as coding practice and offers the Code to
 test("a conceptual lesson is classified but does not offer the Code tool", async ({ page }) => {
   const sessionId = await startSession(page, videos.concept.id);
   const profile = await settledProfile(page, sessionId);
-  expect(profile).toMatchObject({ recommended: false, category: "conceptual_cs", concepts: [] });
+  expect(profile).toMatchObject({ eligible: false, category: "conceptual_cs", concepts: [] });
 
   // The profile is already settled, so the tool bar's first answer is final.
   const asked = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/v1/study-sessions/${sessionId}/coding`);

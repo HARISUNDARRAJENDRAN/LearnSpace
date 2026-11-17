@@ -162,19 +162,27 @@ test("catalog discovery starts the correct StudySession and preserves mode conte
   const researchInput = page.getByLabel("What do you want to research?");
   await researchInput.fill("Efficient transformer attention mechanisms");
   await researchInput.press("Enter");
-  await expect.poll(() => page.locator(".source-discovery-result").count()).toBeGreaterThanOrEqual(3);
-  expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(SOURCE_DISCOVERY_MAX_RESULTS);
-  await page.locator(".source-discovery-result").first().getByRole("button", { name: "Start researching" }).click();
-  await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
-  await finishCurrentSession(page);
-  await page.reload();
+  // Papers come only from Exa. Without a key, as in CI, the picker says it could not search instead of inventing results.
+  if (process.env.EXA_API_KEY) {
+    await expect.poll(() => page.locator(".source-discovery-result").count()).toBeGreaterThanOrEqual(3);
+    expect(await page.locator(".source-discovery-result").count()).toBeLessThanOrEqual(SOURCE_DISCOVERY_MAX_RESULTS);
+    await page.locator(".source-discovery-result").first().getByRole("button", { name: "Start researching" }).click();
+    await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+$/);
+    await finishCurrentSession(page);
+    await page.reload();
+  } else {
+    await expect(page.getByRole("dialog").getByRole("alert")).toBeVisible();
+    await expect(page.locator(".source-discovery-result")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+  }
+  const researchPage = page.url();
 
   await page.getByRole("button", { name: "Start research", exact: true }).click();
   await expect(page.getByLabel("What do you want to research?")).toBeFocused();
   await page.getByLabel("What do you want to research?").fill("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   await page.getByLabel("What do you want to research?").press("Enter");
   await expect(page.getByText("This looks like a YouTube video.")).toBeVisible();
-  await expect(page).toHaveURL(/\/app\/study\/paper\//);
+  await expect(page).toHaveURL(researchPage);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Start research", exact: true })).toBeFocused();

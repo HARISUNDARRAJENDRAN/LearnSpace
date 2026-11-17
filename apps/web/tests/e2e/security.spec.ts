@@ -32,7 +32,8 @@ test("unauthenticated pages and APIs stay private and apply browser security hea
   ];
   for (const path of protectedPaths) {
     const response = await context.request.get(path);
-    expect(response.status(), path).toBe(401);
+    // Production builds remove the discovery debug route outright (404); everything else asks for a sign-in (401).
+    expect([401, 404], path).toContain(response.status());
     const body = await response.text();
     expect(body).not.toMatch(/passwordHash|sessionToken|RUNNER_TOKEN/i);
   }

@@ -16,6 +16,8 @@ export type ResearchFixture = {
   citedVersionId: string;
   originalCpuVersionId: string | null;
   originalCpuStatus: string;
+  /** Whether the fixture created the XGBoost catalogue row (CI's seed has no research catalogue) and so removes it. */
+  createdCpu: boolean;
   authorId: string;
   referenceMarker: string;
 };
@@ -54,11 +56,22 @@ async function insertVersion(db: Database, resourceId: string, versionId: string
 
 /** A real parsed paper fixture; XGBoost is the first beginner-path paper and stays shared catalogue data. */
 export async function seedResearchFixture(db: Database, saved = false): Promise<ResearchFixture> {
-  const [cpu] = await db<{ id: string; current_version_id: string | null; status: string }[]>`
+  let [cpu] = await db<{ id: string; current_version_id: string | null; status: string }[]>`
     SELECT id, current_version_id, status FROM catalog.resources r
     JOIN catalog.paper_details p ON p.resource_id = r.id
     WHERE p.arxiv_id = '1603.02754' AND r.deleted_at IS NULL LIMIT 1`;
-  if (!cpu) throw new Error("The seeded XGBoost curriculum paper is required for Research E2E");
+  const createdCpu = !cpu;
+  if (!cpu) {
+    // The research catalogue is filled by a backfill against arXiv, which CI's seeded database never runs; this is its row.
+    const [created] = await db<{ id: string }[]>`
+      INSERT INTO catalog.resources (type, provider, external_id, canonical_url, title, visibility, status, metadata)
+      VALUES ('paper', 'arxiv', '1603.02754', 'https://arxiv.org/abs/1603.02754', 'XGBoost: A Scalable Tree Boosting System', 'public', 'ready',
+        '{"curriculum": {"itemIds": ["arxiv:1603.02754"], "trackIds": ["ml-foundations"]}, "paperClass": "foundational", "catalogMetadataVerified": true}'::jsonb)
+      RETURNING id`;
+    await db`INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, venue, publication_date, primary_category, pdf_source_url)
+      VALUES (${created!.id}, '1603.02754', 'Tree boosting is a highly effective and widely used machine learning method. In this paper, we describe a scalable end-to-end tree boosting system called XGBoost.', 'arXiv', '2016-03-09', 'cs.LG', 'https://arxiv.org/pdf/1603.02754')`;
+    cpu = { id: created!.id, current_version_id: null, status: "ready" };
+  }
 
   const userId = randomUUID();
   const email = `research-e2e-${userId}@example.test`;
@@ -106,7 +119,7 @@ export async function seedResearchFixture(db: Database, saved = false): Promise<
     if (saved) await tx`INSERT INTO catalog.library_items (user_id, resource_id, status, source) VALUES (${userId}, ${cpu.id}, 'saved', 'user')`;
   });
 
-  const fixture: ResearchFixture = { userId, email, sessionToken: "", cpuResourceId: cpu.id, cpuVersionId, gpuResourceId, gpuVersionId, citedResourceId, citedVersionId, originalCpuVersionId: cpu.current_version_id, originalCpuStatus: cpu.status, authorId, referenceMarker };
+  const fixture: ResearchFixture = { userId, email, sessionToken: "", cpuResourceId: cpu.id, cpuVersionId, gpuResourceId, gpuVersionId, citedResourceId, citedVersionId, originalCpuVersionId: cpu.current_version_id, originalCpuStatus: cpu.status, createdCpu, authorId, referenceMarker };
   try {
     fixture.sessionToken = (await createSession(userId, { userAgent: "research-e2e" }, process.env.AUTH_SECRET ?? "")).token;
     return fixture;
@@ -164,6 +177,11 @@ export async function cleanupResearchFixture(db: Database, fixture: ResearchFixt
   await db`DELETE FROM catalog.resource_versions WHERE id IN ${db(versions)}`;
   await db`DELETE FROM catalog.paper_details WHERE resource_id IN (${fixture.gpuResourceId}, ${fixture.citedResourceId})`;
   await db`DELETE FROM catalog.resources WHERE id IN (${fixture.gpuResourceId}, ${fixture.citedResourceId})`;
+  if (fixture.createdCpu) {
+    await db`DELETE FROM catalog.paper_references WHERE paper_resource_id = ${fixture.cpuResourceId}`;
+    await db`DELETE FROM catalog.paper_details WHERE resource_id = ${fixture.cpuResourceId}`;
+    await db`DELETE FROM catalog.resources WHERE id = ${fixture.cpuResourceId}`;
+  }
   await db`DELETE FROM identity.users WHERE id = ${fixture.userId}`;
 }
 
