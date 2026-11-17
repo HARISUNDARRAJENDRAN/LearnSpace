@@ -22,7 +22,9 @@ const views: { id: View; label: string; icon: typeof CalendarDays }[] = [
 export function PlanCalendar({ version, onChanged }: { version: number; onChanged: () => void }) {
   // The calendar renders in the browser's own time zone, so it waits for the client clock.
   const now = useNow();
-  const [view, setView] = useState<View>("week");
+  // A week of seven columns is unreadable on a phone, so phones open on the day. The server renders the
+  // loading shell whatever the view, so reading the viewport here cannot cause a hydration mismatch.
+  const [view, setView] = useState<View>(() => (typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches ? "day" : "week"));
   const [anchor, setAnchor] = useState<DayKey | null>(null);
   const [items, setItems] = useState<PlanItem[] | null>(null);
   const [failed, setFailed] = useState(false);

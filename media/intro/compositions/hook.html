@@ -1,0 +1,117 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #hook-thumbs .thumb {
+      position: absolute;
+      left: 830px;
+      top: 467px;
+      width: 260px;
+      height: 146px;
+      border-radius: 14px;
+      object-fit: cover;
+      box-shadow: 0 18px 40px -14px rgb(20 50 80 / 35%), 0 0 0 1px rgb(0 0 0 / 6%);
+      opacity: 0;
+    }
+    #hook-strike {
+      position: absolute;
+      left: 0;
+      top: 50%;
+      width: 100%;
+      height: 7px;
+      margin-top: -2px;
+      border-radius: 4px;
+      background: var(--ink);
+      transform-origin: 0 50%;
+      opacity: 0;
+    }
+    #hook-noise {
+      position: relative;
+      color: var(--ink-muted);
+    }
+    #hook-mark {
+      position: absolute;
+      left: 890px;
+      top: 410px;
+      width: 140px;
+      height: 140px;
+      opacity: 0;
+    }
+    #hook-lesson {
+      top: 590px;
+      font-size: 64px;
+    }
+  </style>
+  <div id="root" data-composition-id="hook" data-width="1920" data-height="1080">
+    <div id="hook-thumbs" class="clip" data-start="0" data-duration="3.4" data-layout-allow-overflow data-layout-ignore>
+      <img class="thumb" src="assets/thumbs/t1.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t2.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t3.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t4.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t5.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t6.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t7.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t8.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t9.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t10.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t11.webp" alt="" />
+      <img class="thumb" src="assets/thumbs/t12.webp" alt="" />
+    </div>
+
+    <h1 id="hook-a" class="title center clip" data-start="0" data-duration="1.1">
+      <span class="w">Learn</span> <span class="w accent">anything.</span>
+    </h1>
+    <h1 id="hook-b" class="title center clip" data-start="0.8" data-duration="1.2" data-layout-allow-overlap>
+      <span class="w">Without</span> <span class="w">the</span> <span class="w" id="hook-noise">distractions.<span id="hook-strike"></span></span>
+    </h1>
+
+    <svg id="hook-mark" class="clip" data-start="1.85" data-duration="1.55" viewBox="0 0 32 32" fill="none" aria-label="LearnSpace">
+      <rect width="32" height="32" rx="9" fill="#101416" />
+      <path d="M9.5 9.5v13h13" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M15.5 9.5h7v7" stroke="#00a5ef" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <h2 id="hook-lesson" class="title center clip" data-start="1.95" data-duration="1.3">
+      <span class="w">Just</span> <span class="w">the</span> <span class="w accent">lesson.</span>
+    </h2>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+
+    // Beat A: the promise.
+    // The first frame already holds the promise (it is the poster); "anything" then lights up.
+    tl.set("#hook-a .w", { opacity: 1 }, 0);
+    tl.fromTo("#hook-a .accent", { color: "#090b0c" }, { color: "#0084cc", duration: 0.3, ease: "power2.out" }, 0.3);
+    LS.out(tl, "#hook-a .w", 0.82);
+
+    // Beat B: the internet's noise bursts out around the words, gets struck out, and is pulled away.
+    const rand = LS.rng(7);
+    const thumbs = gsap.utils.toArray("#hook-thumbs .thumb");
+    thumbs.forEach((el, i) => {
+      const a = (i / thumbs.length) * Math.PI * 2 + rand() * 0.35;
+      const r = 470 + rand() * 170;
+      const x = Math.cos(a) * r * 1.45;
+      const y = Math.sin(a) * r * 0.78;
+      const rot = (rand() - 0.5) * 30;
+      const s = 0.75 + rand() * 0.45;
+      tl.fromTo(el, { x: 0, y: 0, scale: 0.2, rotation: 0, opacity: 0 }, { x, y, scale: s, rotation: rot, opacity: 1, duration: 0.55, ease: "expo.out" }, 0.86 + i * 0.025);
+      tl.to(el, { x: x * 1.04, y: y * 1.04, rotation: rot * 1.2, duration: 0.3, ease: "none" }, 1.3 + i * 0.012);
+      tl.to(el, { x: 0, y: 0, scale: 0.05, rotation: rot * 3, opacity: 0, filter: "blur(10px)", duration: 0.38, ease: "power3.in" }, 1.6 + i * 0.012);
+    });
+    LS.words(tl, "#hook-b .w", 0.9, 0.08);
+    tl.fromTo("#hook-strike", { scaleX: 0, opacity: 1 }, { scaleX: 1, opacity: 1, duration: 0.24, ease: "power3.inOut" }, 1.25);
+    LS.out(tl, "#hook-b .w", 1.84);
+
+    // Beat C: what is left is the lesson, under the LearnSpace mark.
+    tl.fromTo("#hook-mark", { scale: 0.2, rotation: -40, opacity: 0 }, { scale: 1, rotation: 0, opacity: 1, duration: 0.45, ease: "back.out(1.7)" }, 1.92);
+    LS.words(tl, "#hook-lesson .w", 2.05, 0.09);
+    LS.out(tl, "#hook-lesson .w", 3.02);
+
+    // Zoom through the white stroke of the mark into the bright workspace; the dark tile clears as it passes.
+    tl.to("#hook-mark rect", { fill: "#f4f8fb", duration: 0.26, ease: "power2.in" }, 3.1);
+    tl.to("#hook-mark", { scale: 95, duration: 0.42, ease: "power3.in", transformOrigin: "29.7% 50%" }, 3.0);
+
+    window.__timelines["hook"] = tl;
+  </script>
+</template>

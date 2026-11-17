@@ -14,13 +14,9 @@
     "test:e2e": "node tests/e2e/run.mjs",
     "test:e2e:production": "node tests/e2e/run.mjs --production --grep-invert \"visual regression\"",
     "test:e2e:visual": "node tests/e2e/run.mjs --production tests/e2e/visual.spec.ts",
-    "benchmark:home": "node scripts/benchmark-home.mjs",
-    "benchmark:source-discovery": "node scripts/benchmark-source-discovery.mjs",
-    "verify:auth-layout": "node scripts/verify-auth-layout.mjs",
     "discovery:import:youtube-dataset": "tsx scripts/import-youtube-dataset.ts",
     "discovery:generate:category-intelligence": "tsx scripts/generate-category-intelligence.ts",
-    "test:recommendations": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/adaptive-discovery.test.ts tests/semantic-discovery.test.ts tests/discover-feed.test.tsx tests/semantic-discovery.integration.test.ts",
-    "benchmark:recommendations": "tsx scripts/benchmark-recommendations.ts"
+    "test:recommendations": "tsx --tsconfig tsconfig.test.json --test --test-concurrency=1 tests/adaptive-discovery.test.ts tests/semantic-discovery.test.ts tests/discover-feed.test.tsx tests/semantic-discovery.integration.test.ts"
   },
   "dependencies": {
     "@fontsource/source-serif-4": "^5.3.0",

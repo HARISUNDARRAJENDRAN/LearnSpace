@@ -6,7 +6,7 @@ const cases = [
 	[Code2, "Self-taught developers", "Turn a backlog of saved tutorials into a plan you actually finish, with coding practice after every lesson."],
 	[GraduationCap, "University students", "Pair lectures with the papers behind them, ask questions mid-video and see what to revise before exams."],
 	[Microscope, "Researchers", "Read papers with a tutor that cites the section it is quoting, then move straight to implementing the idea."],
-	[Briefcase, "Interview prep", "A sprint plan sized to the hours you have, with daily quizzes and coding drills that track your weak spots."],
+	[Briefcase, "Interview prep", "A study plan sized to the hours you have, with a check after every lesson and coding drills that show where you slipped."],
 ] as const;
 
 export function UseCases() {

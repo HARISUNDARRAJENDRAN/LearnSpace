@@ -1,0 +1,51 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #study-chip {
+      border: 2px solid var(--brand);
+      background: rgb(0 165 239 / 18%);
+      border-radius: 8px;
+    }
+  </style>
+  <div id="root" data-composition-id="study" data-width="1920" data-height="1080">
+    <h1 id="study-a" class="title clip" data-start="0" data-duration="1.8">
+      <span class="w">Ask</span> <span class="w accent">Luny</span> <span class="w">about</span> <span class="w">the</span> <span class="w">lesson.</span>
+    </h1>
+    <h1 id="study-b" class="title clip" data-start="1.6" data-duration="2.6">
+      <span class="w">Answers</span> <span class="w">cite</span> <span class="w accent">the</span> <span class="w accent">moment.</span>
+    </h1>
+
+    <div id="study-shot" class="shot clip" data-start="0" data-duration="4.2" data-layout-allow-overflow>
+      <img src="assets/ui/chat.webp" alt="A LearnSpace study session: the lesson beside Luny's answer with timestamps" />
+      <div id="study-chip" class="mark" style="left: 1176px; top: 689px; width: 66px; height: 25px"></div>
+    </div>
+
+    <svg id="study-cursor" class="cursor clip" data-start="0" data-duration="4.2" viewBox="0 0 23 28"><path d="M1.5 1.5v21.2l5.3-5.1 3.5 8.1 3.8-1.6-3.4-7.9h7.4z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round" /></svg>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const whole = LS.focus(800, 500, 0.8, 960, 650);
+    const answer = LS.focus(1370, 615, 1.75, 960, 640);
+
+    LS.words(tl, "#study-a .w", 0.1);
+    tl.fromTo("#study-shot", { ...whole, x: whole.x + 1700, opacity: 1, filter: "blur(12px)" }, { ...whole, filter: "blur(0px)", duration: 0.7, ease: "expo.out" }, 0);
+    tl.to("#study-shot", { ...answer, duration: 0.65, ease: "power2.inOut" }, 1.0);
+    LS.out(tl, "#study-a .w", 1.58);
+    LS.words(tl, "#study-b .w", 1.74);
+
+    // Jump to the cited moment.
+    const chip = LS.at(1209, 701, answer);
+    const press = LS.click(tl, "#study-cursor", { x: 1250, y: 1150 }, { x: chip.x - 2, y: chip.y - 2 }, 2.0, 0.55);
+    tl.fromTo("#study-chip", { opacity: 0 }, { opacity: 1, duration: 0.12 }, press);
+    tl.to("#study-cursor", { opacity: 0, duration: 0.2 }, press + 0.45);
+    tl.to("#study-shot", { ...whole, duration: 0.6, ease: "power2.inOut" }, press + 0.35);
+
+    LS.out(tl, "#study-b .w", 3.84);
+    tl.to("#study-shot", { y: whole.y - 1300, filter: "blur(12px)", duration: 0.36, ease: "power3.in" }, 3.84);
+
+    window.__timelines["study"] = tl;
+  </script>
+</template>

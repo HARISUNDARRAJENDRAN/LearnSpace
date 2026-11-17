@@ -1,0 +1,41 @@
+# file            sound                   extra args (earshot sfx render)
+pop-anything      ui_pop/step
+burst             whoosh_fast/tight       --apex 0.12
+chirp             glitch/chirp
+suck              whoosh_fast/reverse     --apex 0.3
+mark-pop          drip/plink              --pitch E5
+zoom-through      whoosh_big/thump_airy
+rise-screen       swish/soft
+chip-1            ui_pop/blip
+chip-2            ui_pop/boop
+chip-3            ui_pop/blip             --seed 7 --pitch C6
+tunnel            whoosh_fast/whip
+exit-1            swish/flick
+cal-in            swish/bright
+click-1           click/soft
+check-pop         drip/drop
+to-study          whoosh_fast/crisp       --apex 0.13
+punch-1           swish/zing
+click-2           click/snap
+to-notes          whoosh_fast/tight       --seed 3 --apex 0.12
+luny              reverse_swell/breath
+to-practice       whoosh_fast/whip        --seed 5
+click-3           click/soft              --seed 4
+correct           mallet/glock            --pitch E6
+confetti          drip/bubble
+to-code           whoosh_fast/crisp       --seed 6 --apex 0.13
+punch-2           swish/zing              --seed 8
+to-research       whoosh_big/thump
+paper-in          swish/soft              --seed 9
+click-4           click/snap              --seed 10
+to-progress       whoosh_fast/tight       --seed 11 --apex 0.12
+level-pop         ui_pop/wide
+xp                mallet/up4
+verb-1            knock/wood              --pitch G4
+verb-2            knock/wood              --pitch B4 --seed 12
+verb-3            knock/wood              --pitch D5 --seed 13
+riser             riser/build             --dur 1.25
+hit               cut_hit/sub
+sting             logo_sting/soft_bloom
+wipe              swish/flick             --seed 14
+url-pop           ui_pop/soft             --seed 15

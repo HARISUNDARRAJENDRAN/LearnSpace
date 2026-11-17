@@ -274,7 +274,7 @@
 /* The notebook reads as one document: a title, headings over prose, quotes for open questions and claims. */
 .notes-document { width: 100%; max-width: 720px; margin: 0 auto; padding: 4px 2px 0; }
 .notes-title { margin: 0 0 12px; font-size: 26px; font-weight: 700; letter-spacing: -.025em; line-height: 1.25; overflow-wrap: anywhere; }
-.notes-page { display: grid; gap: 8px; margin: 0; padding: 0; }
+.notes-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 0; }
 .notes-block { position: relative; display: flex; align-items: flex-start; gap: 8px; padding: 1px 2px; border-radius: 4px; font-size: 15px; line-height: 1.7; }
 .notes-block.is-fresh { animation: notes-fresh 1600ms ease-out; }
 .notes-block.is-bullet { padding-left: 4px; }

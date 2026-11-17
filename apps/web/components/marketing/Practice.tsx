@@ -1,64 +1,128 @@
-import { Check, Lightbulb, Lock, X } from "lucide-react";
+import { Check, ChevronsRight, CirclePlay, CloudUpload, Lightbulb, RotateCcw, Send } from "lucide-react";
 
-import { CardRow, FeatureCard } from "./primitives";
+import { AppShot, CardRow, FeatureCard } from "./primitives";
+
+// Markup mirrors the app's mastery check (MasteryCheck) and coding workspace (CodingWorkspace), so it renders
+// with session.css and coding.css. The editor itself is Monaco in the app; here its lines are drawn in Monaco's
+// light theme colours.
+
+const options = ["The first `if` branch", "The `elif` branch", "The `else` branch"];
 
 export function PracticeCards() {
 	return (
 		<CardRow>
-			<FeatureCard wash="mint" title="Quiz after every lesson" text="Short checks written from the video you just watched.">
-				<div className="ls-panel ls-panel-float ls-quiz">
-					<div className="ls-panel-head">Question 2 of 5</div>
-					<p className="ls-quiz-question">What is the shape of q · kᵀ for 8 tokens?</p>
-					<span className="ls-option is-wrong">
-						8 × 64
-						<X />
-					</span>
-					<span className="ls-option is-picked">
-						8 × 8
-						<Check />
-					</span>
-				</div>
-			</FeatureCard>
-			<FeatureCard wash="sky" title="Live code editor" text="Write and run real code in the browser, checked against hidden tests.">
-				<div className="ls-editor">
-					<div className="ls-editor-tab">attention.py</div>
-					<pre>
-						<code>
-							<span className="ls-ln">1</span>
-							<span className="ls-kw">def</span> <span className="ls-fn">attention</span>(q, k, v):{"\n"}
-							<span className="ls-ln">2</span>
-							{"    "}d = k.shape[<span className="ls-num">-1</span>]{"\n"}
-							<span className="ls-ln">3</span>
-							{"    "}s = q @ k.T / <span className="ls-fn">sqrt</span>(d){"\n"}
-							<span className="ls-ln">4</span>
-							{"    "}<span className="ls-kw">return</span> <span className="ls-fn">softmax</span>(s) @ v<span className="ls-caret" />
-						</code>
-					</pre>
-					<div className="ls-editor-tests">
-						<span className="is-pass">
-							<Check />3 passed
-						</span>
-						<span className="is-fail">
-							<X />1 failing
-						</span>
+			<FeatureCard wash="mint" title="A check after every lesson" text="Questions written from the video you just watched, with feedback on every answer.">
+				<AppShot scope="video-session" className="ls-shot-mastery is-bleed">
+					<div className="session-tool">
+						<div className="session-panel-bar">
+							<button type="button" className="session-icon-button">
+								<ChevronsRight />
+							</button>
+							<h2 className="session-panel-title">Mastery check</h2>
+							<div className="session-panel-bar-actions">
+								<span className="session-quiz-count">2 / 5</span>
+							</div>
+						</div>
+						<div className="session-tool-body">
+							<div className="session-quiz-question">
+								<p className="session-quiz-prompt">If it’s neither hot nor cold, which branch handles it?</p>
+								<ol className="session-quiz-options">
+									{options.map((option, index) => (
+										<li key={option}>
+											<button type="button" className={index === 2 ? "session-quiz-option is-correct" : "session-quiz-option"}>
+												<span>{String.fromCharCode(65 + index)}</span>
+												<span className="session-quiz-option-text">{option}</span>
+												{index === 2 ? <Check /> : null}
+											</button>
+										</li>
+									))}
+								</ol>
+								<div className="session-quiz-feedback">
+									<strong>Correct</strong>
+									<p>When no earlier condition is true, Python runs the `else` block.</p>
+								</div>
+							</div>
+						</div>
 					</div>
-				</div>
+				</AppShot>
 			</FeatureCard>
-			<FeatureCard wash="sun" title="Hints, one rung at a time" text="The tutor nudges you toward the answer and saves the full solution for last.">
-				<div className="ls-ladder">
-					<span className="ls-hint is-used">
-						<Lightbulb />
-						Hint 1: Check which axis softmax runs over
-					</span>
-					<span className="ls-hint is-current">
-						<Lightbulb />
-						Hint 2: Each row should sum to one. Does yours?
-					</span>
-					<span className="ls-hint is-locked">
-						<Lock />
-						Show the solution
-					</span>
-				</div>
+			<FeatureCard wash="sky" title="A real code editor" text="Write and run code in the browser, then submit it against hidden tests.">
+				<AppShot scope="coding-workspace" className="ls-shot-editor is-bleed is-flush">
+					<section className="coding-main">
+						<div className="coding-editor-bar">
+							<select defaultValue="python">
+								<option value="python">Python</option>
+							</select>
+							<button type="button" className="coding-ghost">
+								<RotateCcw />
+							</button>
+							<span className="coding-spacer" />
+							<button type="button" className="coding-run">
+								<CirclePlay />
+								Run
+							</button>
+							<button type="button" className="coding-submit">
+								<CloudUpload />
+								Submit
+							</button>
+						</div>
+						<pre className="ls-code">
+							<code>
+								<span className="ls-code-ln">1</span>
+								<span className="ls-code-kw">class</span> <span className="ls-code-fn">Solution</span>:{"\n"}
+								<span className="ls-code-ln">2</span>
+								{"    "}
+								<span className="ls-code-kw">def</span> <span className="ls-code-fn">phoneNumbers</span>(self, names, numbers, queries):{"\n"}
+								<span className="ls-code-ln">3</span>
+								{"        "}contacts = <span className="ls-code-fn">dict</span>(<span className="ls-code-fn">zip</span>(names, numbers)){"\n"}
+								<span className="ls-code-ln">4</span>
+								{"        "}
+								<span className="ls-code-kw">return</span> [contacts.get(name, <span className="ls-code-str">""</span>){" "}
+								<span className="ls-code-kw">for</span> name <span className="ls-code-kw">in</span> queries]
+							</code>
+						</pre>
+					</section>
+				</AppShot>
+			</FeatureCard>
+			<FeatureCard wash="sun" title="Hints that cost a little" text="The tutor answers with questions first; each hint you take lowers the most the problem can earn.">
+				<AppShot scope="coding-workspace" className="ls-shot-tutor is-bleed is-flush">
+					<aside className="coding-tutor">
+						<div className="coding-tutor-head">
+							<strong>
+								<span className="coding-live is-on" />
+								Tutor
+							</strong>
+							<span className="coding-credit">Max credit 100%</span>
+						</div>
+						<div className="coding-feed">
+							<div className="coding-turn is-learner">
+								<div>
+									<p>i dont know how to solve this</p>
+								</div>
+							</div>
+							<div className="coding-turn is-tutor">
+								<div>
+									<p>
+										Each name and its phone number are paired by their index in the two arrays. For a query, what should the result be if you
+										can’t find that name in <code>names</code>?
+									</p>
+								</div>
+							</div>
+						</div>
+						<form className="coding-ask">
+							<textarea rows={2} placeholder="Answer the tutor..." />
+							<button type="button">
+								<Send />
+							</button>
+						</form>
+						<div className="coding-hint-bar">
+							<button type="button" className="coding-ghost">
+								<Lightbulb />
+								Hint 1 <small>→ max 80%</small>
+							</button>
+						</div>
+					</aside>
+				</AppShot>
 			</FeatureCard>
 		</CardRow>
 	);

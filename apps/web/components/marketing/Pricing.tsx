@@ -9,7 +9,7 @@ const plans = [
 		period: "forever",
 		description: "Everything you need to start learning with focus.",
 		cta: "Start learning",
-		features: ["Focused discovery feed", "Tutor chat on every video", "Curated playlists", "Learning calendar", "Quizzes after each lesson"],
+		features: ["Focused discovery feed", "Tutor chat on every video", "Learning paths", "Learning calendar", "Quizzes after each lesson"],
 	},
 	{
 		name: "Pro",
@@ -19,9 +19,9 @@ const plans = [
 		cta: "Go Pro",
 		features: [
 			"Everything in Free",
-			"Personal sprint plans",
+			"Goal-based study plans",
 			"Research paper sessions",
-			"Live code editor with hint ladder",
+			"Live code editor with a hinting tutor",
 			"Unlimited study sessions",
 		],
 	},

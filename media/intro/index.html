@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "Geist";
+        src: url("assets/fonts/Geist-Variable.woff2") format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: "Geist Serif";
+        src: url("assets/fonts/GeistSerif-Regular.woff2") format("woff2");
+        font-weight: 400;
+      }
+      /* LearnSpace marketing tokens (apps/web/app/globals.css) */
+      :root {
+        --ground: #f4f8fb;
+        --ink: #090b0c;
+        --ink-muted: #737373;
+        --brand: #00a5ef;
+        --brand-ink: #0084cc;
+        --sky: #9ed4ef;
+        --sky-light: #d1eef9;
+        --font-display: "Geist", "Inter", sans-serif;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--ground);
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+        font-family: var(--font-display);
+        color: var(--ink);
+      }
+      #ground {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(1200px 700px at 50% 115%, var(--sky-light), transparent 70%),
+          radial-gradient(900px 500px at 12% -10%, #e6f4fb, transparent 70%),
+          var(--ground);
+      }
+
+      /* Fades whatever the camera pushes into out from under the titles. */
+      #veil {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 0;
+        height: 260px;
+        z-index: 15;
+        background: linear-gradient(#f4f8fb 62%, rgb(244 248 251 / 0%));
+        pointer-events: none;
+      }
+
+      /* Shared pieces every scene uses */
+      .title {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 74px;
+        text-align: center;
+        font-size: 64px;
+        font-weight: 520;
+        letter-spacing: -0.035em;
+        line-height: 1.1;
+        white-space: nowrap;
+        z-index: 20;
+      }
+      .title.center {
+        top: 486px;
+        font-size: 96px;
+      }
+      .title .w {
+        display: inline-block;
+        opacity: 0;
+      }
+      .accent {
+        color: var(--brand-ink);
+      }
+      /* A captured app screen: 1600×1000 CSS px, the size it was captured at, so overlays use screenshot coordinates. */
+      .shot {
+        position: absolute;
+        left: 160px;
+        top: 40px;
+        width: 1600px;
+        height: 1000px;
+        border-radius: 22px;
+        overflow: hidden;
+        background: #fff;
+        box-shadow:
+          0 0 0 1px rgb(10 30 50 / 8%),
+          0 30px 80px -20px rgb(20 60 90 / 28%),
+          0 12px 30px -12px rgb(20 60 90 / 18%);
+        opacity: 0;
+      }
+      .shot > img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .shot .mark {
+        position: absolute;
+        border-radius: 10px;
+        opacity: 0;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 46px;
+        height: 56px;
+        z-index: 50;
+        opacity: 0;
+        filter: drop-shadow(0 6px 10px rgb(0 0 0 / 25%));
+      }
+    </style>
+    <script>
+      // Camera helpers shared by the scenes. A .shot sits at left 160, top 40 and scales about its centre.
+      window.LS = {
+        /** GSAP vars that put screenshot point (px, py) at frame point (fx, fy) at scale s. */
+        focus(px, py, s, fx = 960, fy = 540) {
+          return { x: fx - 960 - s * (px - 800), y: fy - 540 - s * (py - 500), scale: s };
+        },
+        /** Frame point where screenshot point (px, py) lands under camera vars cam. */
+        at(px, py, cam) {
+          return { x: 960 + cam.scale * (px - 800) + cam.x, y: 540 + cam.scale * (py - 500) + cam.y };
+        },
+        /** Seeded PRNG so every render scatters things the same way. */
+        rng(seed) {
+          return () => {
+            seed |= 0;
+            seed = (seed + 0x6d2b79f5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+        },
+        /** Per-word blur-in for a .title's .w spans. */
+        words(tl, sel, at, gap = 0.07) {
+          tl.fromTo(sel, { opacity: 0, filter: "blur(8px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.16, ease: "power2.out", stagger: gap }, at);
+        },
+        /** Blur-out exit for a title. */
+        out(tl, sel, at) {
+          tl.to(sel, { opacity: 0, filter: "blur(8px)", duration: 0.16, ease: "power2.in" }, at);
+        },
+        /** Cursor glides to (x, y), then presses. Returns the press time. */
+        click(tl, sel, from, to, at, travel = 0.5) {
+          tl.fromTo(sel, { x: from.x, y: from.y, opacity: 0 }, { opacity: 1, duration: 0.12 }, at);
+          tl.to(sel, { x: to.x, y: to.y, duration: travel, ease: "power3.inOut" }, at);
+          tl.to(sel, { scale: 0.82, duration: 0.07, ease: "power2.in", transformOrigin: "0 0" }, at + travel + 0.05);
+          tl.to(sel, { scale: 1, duration: 0.12, ease: "power2.out" }, at + travel + 0.12);
+          return at + travel + 0.12;
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="32"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div id="ground"></div>
+
+      <div id="hook" data-composition-id="hook" data-composition-src="compositions/hook.html" data-start="0" data-duration="3.4" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="discover" data-composition-id="discover" data-composition-src="compositions/discover.html" data-start="3.4" data-duration="4.2" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="plan" data-composition-id="plan" data-composition-src="compositions/plan.html" data-start="7.6" data-duration="2.8" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="study" data-composition-id="study" data-composition-src="compositions/study.html" data-start="10.4" data-duration="4.2" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="notes" data-composition-id="notes" data-composition-src="compositions/notes.html" data-start="14.6" data-duration="2.6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="practice" data-composition-id="practice" data-composition-src="compositions/practice.html" data-start="17.2" data-duration="4.4" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="research" data-composition-id="research" data-composition-src="compositions/research.html" data-start="21.6" data-duration="3.6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="progress" data-composition-id="progress" data-composition-src="compositions/progress.html" data-start="25.2" data-duration="1.6" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="verbs" data-composition-id="verbs" data-composition-src="compositions/verbs.html" data-start="26.8" data-duration="2" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+      <div id="endcard" data-composition-id="endcard" data-composition-src="compositions/endcard.html" data-start="28.8" data-duration="3.2" data-track-index="0" data-track-kind="graphics" data-width="1920" data-height="1080"></div>
+
+      <div id="veil"></div>
+
+      <!-- sfx:begin (generated by scripts/place-sfx.mjs from scripts/cues.json) -->
+      <audio id="sfx-pop-anything" class="clip" src="assets/sfx/pop-anything.wav" data-start="0.308" data-duration="0.187" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-burst" class="clip" src="assets/sfx/burst.wav" data-start="0.835" data-duration="0.504" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-chirp" class="clip" src="assets/sfx/chirp.wav" data-start="0.919" data-duration="0.407" data-volume="0.25" data-track-index="11"></audio>
+      <audio id="sfx-suck" class="clip" src="assets/sfx/suck.wav" data-start="1.613" data-duration="0.773" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-mark-pop" class="clip" src="assets/sfx/mark-pop.wav" data-start="2.024" data-duration="0.252" data-volume="0.6" data-track-index="11"></audio>
+      <audio id="sfx-zoom-through" class="clip" src="assets/sfx/zoom-through.wav" data-start="3.188" data-duration="0.915" data-volume="0.75" data-track-index="10"></audio>
+      <audio id="sfx-rise-screen" class="clip" src="assets/sfx/rise-screen.wav" data-start="3.672" data-duration="0.883" data-volume="0.55" data-track-index="11"></audio>
+      <audio id="sfx-chip-1" class="clip" src="assets/sfx/chip-1.wav" data-start="5.016" data-duration="0.118" data-volume="0.55" data-track-index="10"></audio>
+      <audio id="sfx-chip-2" class="clip" src="assets/sfx/chip-2.wav" data-start="5.204" data-duration="0.195" data-volume="0.55" data-track-index="10"></audio>
+      <audio id="sfx-chip-3" class="clip" src="assets/sfx/chip-3.wav" data-start="5.413" data-duration="0.12" data-volume="0.55" data-track-index="10"></audio>
+      <audio id="sfx-tunnel" class="clip" src="assets/sfx/tunnel.wav" data-start="5.874" data-duration="0.91" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-cal-in" class="clip" src="assets/sfx/cal-in.wav" data-start="7.54" data-duration="0.345" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-click-1" class="clip" src="assets/sfx/click-1.wav" data-start="9.371" data-duration="0.094" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-check-pop" class="clip" src="assets/sfx/check-pop.wav" data-start="9.385" data-duration="0.334" data-volume="0.5" data-track-index="11"></audio>
+      <audio id="sfx-to-study" class="clip" src="assets/sfx/to-study.wav" data-start="10.283" data-duration="0.938" data-volume="0.65" data-track-index="10"></audio>
+      <audio id="sfx-punch-1" class="clip" src="assets/sfx/punch-1.wav" data-start="11.66" data-duration="0.535" data-volume="0.45" data-track-index="10"></audio>
+      <audio id="sfx-click-2" class="clip" src="assets/sfx/click-2.wav" data-start="13.03" data-duration="0.062" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-to-notes" class="clip" src="assets/sfx/to-notes.wav" data-start="14.391" data-duration="0.539" data-volume="0.65" data-track-index="10"></audio>
+      <audio id="sfx-luny" class="clip" src="assets/sfx/luny.wav" data-start="15.192" data-duration="1.235" data-volume="0.45" data-track-index="10"></audio>
+      <audio id="sfx-to-practice" class="clip" src="assets/sfx/to-practice.wav" data-start="17.256" data-duration="0.875" data-volume="0.55" data-track-index="10"></audio>
+      <audio id="sfx-click-3" class="clip" src="assets/sfx/click-3.wav" data-start="18.481" data-duration="0.094" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-correct" class="clip" src="assets/sfx/correct.wav" data-start="18.492" data-duration="0.421" data-volume="0.55" data-track-index="11"></audio>
+      <audio id="sfx-confetti" class="clip" src="assets/sfx/confetti.wav" data-start="18.539" data-duration="0.289" data-volume="0.45" data-track-index="12"></audio>
+      <audio id="sfx-to-code" class="clip" src="assets/sfx/to-code.wav" data-start="19.205" data-duration="1.059" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-punch-2" class="clip" src="assets/sfx/punch-2.wav" data-start="20.219" data-duration="0.545" data-volume="0.45" data-track-index="11"></audio>
+      <audio id="sfx-to-research" class="clip" src="assets/sfx/to-research.wav" data-start="21.471" data-duration="1.03" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-paper-in" class="clip" src="assets/sfx/paper-in.wav" data-start="22.893" data-duration="0.803" data-volume="0.5" data-track-index="10"></audio>
+      <audio id="sfx-click-4" class="clip" src="assets/sfx/click-4.wav" data-start="24.33" data-duration="0.062" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-to-progress" class="clip" src="assets/sfx/to-progress.wav" data-start="25.135" data-duration="0.487" data-volume="0.6" data-track-index="10"></audio>
+      <audio id="sfx-level-pop" class="clip" src="assets/sfx/level-pop.wav" data-start="25.311" data-duration="0.19" data-volume="0.55" data-track-index="11"></audio>
+      <audio id="sfx-xp" class="clip" src="assets/sfx/xp.wav" data-start="25.558" data-duration="0.749" data-volume="0.45" data-track-index="11"></audio>
+      <audio id="sfx-verb-1" class="clip" src="assets/sfx/verb-1.wav" data-start="26.999" data-duration="0.154" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-verb-2" class="clip" src="assets/sfx/verb-2.wav" data-start="27.417" data-duration="0.164" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-verb-3" class="clip" src="assets/sfx/verb-3.wav" data-start="27.84" data-duration="0.151" data-volume="0.7" data-track-index="10"></audio>
+      <audio id="sfx-riser" class="clip" src="assets/sfx/riser.wav" data-start="27.737" data-duration="1.25" data-volume="0.5" data-track-index="11"></audio>
+      <audio id="sfx-hit" class="clip" src="assets/sfx/hit.wav" data-start="28.961" data-duration="0.286" data-volume="1" data-track-index="10"></audio>
+      <audio id="sfx-sting" class="clip" src="assets/sfx/sting.wav" data-start="28.77" data-duration="1.85" data-volume="0.7" data-track-index="12"></audio>
+      <audio id="sfx-wipe" class="clip" src="assets/sfx/wipe.wav" data-start="29.323" data-duration="0.32" data-volume="0.5" data-track-index="10"></audio>
+      <audio id="sfx-url-pop" class="clip" src="assets/sfx/url-pop.wav" data-start="29.958" data-duration="0.176" data-volume="0.45" data-track-index="10"></audio>
+      <!-- sfx:end -->
+    </div>
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

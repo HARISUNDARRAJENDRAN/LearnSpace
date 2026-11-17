@@ -1,0 +1,23 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #verbs-line {
+      font-size: 112px;
+      top: 470px;
+    }
+  </style>
+  <div id="root" data-composition-id="verbs" data-width="1920" data-height="1080">
+    <h1 id="verbs-line" class="title center clip" data-start="0" data-duration="2">
+      <span class="w accent">Discover.</span> <span class="w accent">Study.</span> <span class="w">Master.</span>
+    </h1>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    LS.words(tl, "#verbs-line .w", 0.1, 0.42);
+    LS.out(tl, "#verbs-line .w", 1.78);
+    window.__timelines["verbs"] = tl;
+  </script>
+</template>

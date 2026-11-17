@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import postgres from "postgres";
 import { closeRecommendationRedis, invalidateRecommendations } from "@learnspace/shared/recommendation-cache";
@@ -79,21 +78,15 @@ test("signup → interests → Discover preview → full feed → topic controls
     const second = await (await page.request.get("/api/v1/discovery/explore")).json();
     expect(second.runId).toBe(first.runId);
     expect(JSON.stringify(second)).not.toMatch(/longTermVector|recentVector|positiveWeight|featureSnapshots|"score"/);
-    const httpHits: number[] = [];
     for (let i = 0; i < 20; i++) {
-      const started = performance.now();
       const response = await page.request.get("/api/v1/discovery/explore");
       expect(response.ok()).toBe(true);
       await response.body();
-      httpHits.push(performance.now() - started);
     }
     await invalidateRecommendations(userId);
-    const missStart = performance.now();
     const miss = await page.request.get("/api/v1/discovery/explore");
     expect(miss.ok()).toBe(true);
     await miss.body();
-    await mkdir("../../docs/benchmarks", { recursive: true });
-    await writeFile("../../docs/benchmarks/semantic-http.json", JSON.stringify({ mode: process.env.PLAYWRIGHT_E2E_SERVER ?? "development", cacheHitSamplesMs: httpHits, cacheMissMs: performance.now() - missStart, serverTiming: miss.headers()["server-timing"] }, null, 2));
     await page.getByRole("navigation", { name: "Recommendation topics" }).getByRole("link", { name: "AI / Machine Learning", exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`topic=${ai}`));
     expect((await page.request.get("/api/v1/discovery/explore?topic=invalid")).status()).toBe(400);
@@ -128,7 +121,6 @@ test("signup → interests → Discover preview → full feed → topic controls
       }
     }
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: "../../docs/benchmarks/recommendations-mobile.png", fullPage: true });
     await page.getByRole("link", { name: "Back to Discover" }).click();
     await expect(page).toHaveURL(/\/app\/discover$/);
     expect(errors).toEqual([]);

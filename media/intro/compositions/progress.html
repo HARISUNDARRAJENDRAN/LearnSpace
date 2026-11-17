@@ -1,0 +1,60 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #prog-shot {
+      clip-path: inset(200px 464px 522px 286px round 18px);
+      box-shadow: none;
+    }
+    #prog-bar {
+      position: absolute;
+      left: 303px;
+      top: 371px;
+      width: 815px;
+      height: 8px;
+      border-radius: 4px;
+      background: #eceae6;
+      transform-origin: 100% 50%;
+    }
+    #prog-plate {
+      position: absolute;
+      left: 329px;
+      top: 396px;
+      width: 1265px;
+      height: 435px;
+      border-radius: 34px;
+      background: #fff;
+      box-shadow:
+        0 0 0 1px rgb(10 30 50 / 7%),
+        0 30px 80px -20px rgb(20 60 90 / 28%);
+      opacity: 0;
+    }
+  </style>
+  <div id="root" data-composition-id="progress" data-width="1920" data-height="1080">
+    <h1 id="prog-title" class="title clip" data-start="0" data-duration="1.6">
+      <span class="w">Every</span> <span class="w">study</span> <span class="w">day</span> <span class="w accent">counts.</span>
+    </h1>
+    <div id="prog-plate" class="clip" data-start="0" data-duration="1.6"></div>
+    <div id="prog-shot" class="shot clip" data-start="0" data-duration="1.6" data-layout-allow-overflow>
+      <img src="assets/ui/profile.webp" alt="LearnSpace profile: level, rank and XP" />
+      <!-- covers the XP fill and slides away so the bar fills -->
+      <div id="prog-bar"></div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const card = LS.focus(710, 338, 1.45, 960, 612);
+
+    LS.words(tl, "#prog-title .w", 0.08);
+    tl.fromTo("#prog-plate", { opacity: 0, scale: 1.06, filter: "blur(10px)" }, { opacity: 1, scale: 1, filter: "blur(0px)", duration: 0.35, ease: "power3.out" }, 0);
+    tl.fromTo("#prog-shot", { ...card, scale: card.scale * 1.06, opacity: 0, filter: "blur(10px)" }, { ...card, opacity: 1, filter: "blur(0px)", duration: 0.35, ease: "power3.out" }, 0);
+    tl.fromTo("#prog-bar", { scaleX: 1 }, { scaleX: 0.91, duration: 0.6, ease: "power2.out" }, 0.45);
+
+    LS.out(tl, "#prog-title .w", 1.36);
+    tl.to(["#prog-plate", "#prog-shot"], { opacity: 0, filter: "blur(10px)", duration: 0.2, ease: "power2.in" }, 1.38);
+
+    window.__timelines["progress"] = tl;
+  </script>
+</template>

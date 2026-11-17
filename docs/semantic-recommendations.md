@@ -100,7 +100,7 @@ HNSW fits the existing pgvector installation and incremental catalogue ingestion
 
 ## D. Measured performance
 
-Raw measurements are in `docs/benchmarks/semantic-integration.json`, `semantic-http.json` and `semantic-load.json`. These are local measurements on shared development hardware, not a production latency guarantee.
+These are local measurements on shared development hardware, not a production latency guarantee.
 
 | Measurement | Actual result |
 |---|---:|
@@ -168,10 +168,9 @@ Operational commands use the existing database/worker environment:
 pnpm --filter @learnspace/db db:migrate
 pnpm --filter @learnspace/worker recommendations:backfill --batches=10
 pnpm --filter @learnspace/web test:recommendations
-pnpm --filter @learnspace/web benchmark:recommendations
 ```
 
-Backfill requires `DATABASE_WORKER_URL` and a working `OPENAI_API_KEY`. The scale benchmark refuses nonlocal/non-CI databases and supports `BENCHMARK_INDEX_MEMORY_MB`. Embeddings are nullable throughout rollout. Content metadata changes must update the resource timestamp, as existing ingestion does, so source-hash reconciliation can select changed resources.
+Backfill requires `DATABASE_WORKER_URL` and a working `OPENAI_API_KEY`. Embeddings are nullable throughout rollout. Content metadata changes must update the resource timestamp, as existing ingestion does, so source-hash reconciliation can select changed resources.
 
 `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=false` selects the existing discovery fallback and disables semantic maintenance. Set it consistently for web and worker to roll back behavior without dropping tables or deleting learner evidence. The migration chain can be applied before backfill; old resources remain valid. Leave the additive tables in place for an operational rollback.
 

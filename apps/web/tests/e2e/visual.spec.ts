@@ -49,6 +49,11 @@ test("landing hero visual regression", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-testid=marketing-hero]")).toBeVisible();
     await stabilize(page);
+    // Reduced motion keeps the demo on its poster and, once hydrated, gives it the browser's own controls,
+    // whose buffering bar varies run to run.
+    await page.locator(".ls-demo-video video[controls]").evaluate((video: HTMLVideoElement) => {
+      video.controls = false;
+    });
     await expect(page.locator("[data-testid=marketing-hero]")).toHaveScreenshot(
       `landing-hero-${name}.png`,
       {

@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import type { CompactLearningState } from "@learnspace/shared/recommendation-model";
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import test from "node:test";
 import postgres from "postgres";
 import { sql } from "drizzle-orm";
@@ -24,7 +23,6 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
   const singleWorker = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false });
   const worker = postgres(process.env.DATABASE_WORKER_URL!, { max: 2, prepare: false });
   const users: string[] = [], resources: string[] = [], collections: string[] = [], relationIds: string[] = [];
-  const metrics: Record<string, unknown> = {};
   const provider = { async embedQuery() { return axis(0); }, async embedDocuments(texts: string[]) { return texts.map(() => axis(0)); } };
   const profile = async (id: string) => (await db<{ state: { learning: CompactLearningState; preferences: { conceptIds: string[] } }; revision: number }[]>`SELECT state, revision FROM discovery.learner_profiles WHERE user_id = ${id}`)[0]!;
   const event = async (userId: string, resourceId: string, type: string, payload: Record<string, unknown> = {}) => {
@@ -88,19 +86,17 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.equal((await profile(userId)).state.learning.onboardingVector, null, "invalid query vectors never enter learner state");
     assert.equal((await profile(userId)).revision, metadataOnly.revision, "failed provider retries do not invalidate the feed");
     const beforeRecovery = await getHomeFeed(userId, "discover");
-    const started = performance.now();
     assert.equal(await projectRecommendationProfiles(singleWorker, {
       ...provider,
       async embedQuery() { await singleWorker`SELECT 1`; return axis(0); },
     }, users), 2, "query embeddings run without reserving the only database connection");
-    metrics.profileUpdateTwoUsersMs = performance.now() - started;
     let p = await profile(userId);
     assert.equal(p.revision, metadataOnly.revision + 1, "a recovered onboarding vector revises the profile without new activity");
     assert.deepEqual(p.state.learning.recentInterests, {});
     assert.equal(p.state.learning.onboardingVector?.length, 1536);
     assert.deepEqual(p.state.learning.longTermInterests, {}, "onboarding does not become behavioral evidence");
     assert.equal(await projectRecommendationProfiles(worker, provider, users), 0, "projection is restart-safe");
-    const feed = await getHomeFeed(userId, "discover", { onTiming: (t) => { metrics.cacheMiss = t; } });
+    const feed = await getHomeFeed(userId, "discover");
     assert.notEqual(feed.runId, beforeRecovery.runId, "provider recovery invalidates the metadata-only cached feed");
     assert.ok(feed.sections.recommendedVideos.length >= 6);
     assert.ok(feed.sections.recommendedVideos.length <= 24);
@@ -108,9 +104,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.ok(feed.sections.recommendedVideos.every((c) => !Object.hasOwn(c, "score")));
     const concurrent = await Promise.all(Array.from({ length: 20 }, () => getHomeFeed(userId, "discover")));
     assert.ok(concurrent.every((f) => f.runId === feed.runId));
-    const hits: number[] = [];
-    for (let i = 0; i < 20; i++) await getHomeFeed(userId, "discover", { onTiming: (t) => { assert.equal(t.cacheHit, true); hits.push(Number(t.total)); } });
-    metrics.cacheHitSamplesMs = hits;
+    for (let i = 0; i < 20; i++) await getHomeFeed(userId, "discover", { onTiming: (t) => { assert.equal(t.cacheHit, true); } });
     const noInterests = await getHomeFeed(users[1]!, "discover");
     assert.ok(noInterests.sections.recommendedVideos.length > 0);
     assert.notEqual(noInterests.runId, feed.runId);
@@ -122,9 +116,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.equal((await profile(userId)).revision, p.revision, "an accidental click is neutral");
     assert.equal((await getHomeFeed(userId, "discover")).runId, feed.runId);
     for (let i = 0; i < 20; i++) await event(userId, resources[24 + i % 20]!, "resource.completed", { progressPct: 95, watchedSeconds: 570 });
-    const updateStart = performance.now();
     await projectRecommendationProfiles(worker, provider, [userId]);
-    metrics.profileUpdateTwentyEventsMs = performance.now() - updateStart;
     p = await profile(userId);
     assert.ok((p.state.learning.recentInterests[ai] ?? 0) > (p.state.learning.recentInterests[python] ?? 0) || !p.state.learning.recentInterests[python]);
     assert.ok((p.state.learning.longTermInterests[ai] ?? 0) > 0);
@@ -190,7 +182,6 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     assert.ok(candidates.ids.length <= config.candidateCount);
     assert.equal(new Set(candidates.ids).size, candidates.ids.length);
     assert.equal(candidates.fallback, false);
-    metrics.annMs = candidates.annMs;
     await db`ALTER TABLE discovery.resource_embeddings RENAME TO unavailable_embeddings`;
     try { const fallback = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(1), [ai], false)); assert.equal(fallback.fallback, true); assert.ok(fallback.ids.length > 0); }
     finally { await db`ALTER TABLE discovery.unavailable_embeddings RENAME TO resource_embeddings`; }
@@ -226,8 +217,6 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     const authTest = process.env.AUTH_TEST_MODE; delete process.env.AUTH_TEST_MODE;
     try { const production = await withUserTransaction(userId, (tx) => retrieveRecommendationCandidates(tx, userId, axis(0), [python], false)); assert.ok(production.ids.every((id) => !resources.includes(id))); }
     finally { process.env.AUTH_TEST_MODE = authTest; }
-    await mkdir("../../docs/benchmarks", { recursive: true });
-    await writeFile("../../docs/benchmarks/semantic-integration.json", JSON.stringify(metrics, null, 2));
   } catch (error) { console.error("semantic integration failure", error); throw error; } finally {
     try {
     if (relationIds.length) await db`DELETE FROM knowledge.concept_relations WHERE id = ANY(${relationIds}::uuid[])`;

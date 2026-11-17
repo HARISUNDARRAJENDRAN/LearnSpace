@@ -1,0 +1,48 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #plan-check {
+      background: var(--ink);
+      border-radius: 4px;
+      display: grid;
+      place-items: center;
+    }
+  </style>
+  <div id="root" data-composition-id="plan" data-width="1920" data-height="1080">
+    <h1 id="plan-title" class="title clip" data-start="0" data-duration="2.8">
+      <span class="w">A</span> <span class="w">plan</span> <span class="w">that</span> <span class="w accent">fits</span> <span class="w accent">your</span> <span class="w accent">week.</span>
+    </h1>
+
+    <div id="plan-shot" class="shot clip" data-start="0" data-duration="2.8" data-layout-allow-overflow>
+      <img src="assets/ui/calendar.webp" alt="LearnSpace Home: calendar and to-do list" />
+      <div id="plan-check" class="mark" style="left: 325px; top: 317px; width: 19px; height: 19px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>
+      </div>
+    </div>
+
+    <svg id="plan-cursor" class="cursor clip" data-start="0" data-duration="2.8" viewBox="0 0 23 28"><path d="M1.5 1.5v21.2l5.3-5.1 3.5 8.1 3.8-1.6-3.4-7.9h7.4z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round" /></svg>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const whole = LS.focus(800, 500, 0.8, 960, 650);
+    const todo = LS.focus(430, 330, 1.9, 760, 640);
+
+    LS.words(tl, "#plan-title .w", 0.08);
+    tl.fromTo("#plan-shot", { ...whole, x: whole.x + 1500, rotationY: -24, transformPerspective: 2400, opacity: 1, filter: "blur(12px)" }, { ...whole, rotationY: 0, filter: "blur(0px)", duration: 0.7, ease: "expo.out" }, 0);
+    tl.to("#plan-shot", { ...todo, duration: 0.55, ease: "power2.inOut" }, 0.85);
+
+    // Tick today's first to-do.
+    const box = LS.at(334, 326, todo);
+    const press = LS.click(tl, "#plan-cursor", { x: 1500, y: 1120 }, { x: box.x - 4, y: box.y - 4 }, 1.18, 0.5);
+    tl.fromTo("#plan-check", { opacity: 0, scale: 0.5 }, { opacity: 1, scale: 1, duration: 0.22, ease: "expo.out" }, press);
+
+    LS.out(tl, "#plan-title .w", 2.4);
+    tl.to("#plan-shot", { x: todo.x - 1700, filter: "blur(12px)", duration: 0.36, ease: "power3.in" }, 2.42);
+    tl.to("#plan-cursor", { x: box.x - 1700, opacity: 0, duration: 0.3, ease: "power3.in" }, 2.42);
+
+    window.__timelines["plan"] = tl;
+  </script>
+</template>

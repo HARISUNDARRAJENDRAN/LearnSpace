@@ -78,19 +78,3 @@ source "$HOME/.cargo/env" && pnpm --filter @learnspace/pdf-parser build && pnpm 
 
 Select Node.js 22.x or newer in Vercel Project Settings. The `rust-toolchain.toml` pins Rust 1.98.1 and rustup installs that version when Cargo runs. Building at deploy time avoids stale/native ABI artifacts and keeps the `.node` file out of Git, at the cost of a longer build and a network/toolchain installation step. The host build is not used for Vercel shipping; it only tests local loading. If the build image changes architecture/libc, the explicit target should fail rather than silently producing another binary. Set the function memory and duration limits for worst-case research papers; parser-level byte/page/time limits are additional guards. See Vercel's [build image](https://vercel.com/docs/builds/build-image), [custom build configuration](https://vercel.com/docs/builds/configure-a-build), and [Node.js version](https://vercel.com/docs/functions/runtimes/node-js/node-js-versions) documentation.
 
-## Benchmark reproduction
-
-The fork docs and vendored tests retain the original five-paper corpus, 3 warm-ups, 24 measured rounds, and output-equivalence checks. Our harness additionally records per-document p50/p95/p99, pages/s, CPU time, peak RSS, and five-paper throughput at concurrency 1/4/8, then checks two survey PDFs, an image-only scan, a two-column fixture, and a truncated PDF.
-
-```bash
-python3 docs/benchmarks/pdf-parser/fetch-corpus.py
-python3 docs/benchmarks/pdf-parser/run-bench.py --runs 24 --warmups 3
-```
-
-The benchmark downloads arXiv PDFs to an ignored local corpus directory and builds both parser revisions in a temporary directory outside the repo. It records the resolved upstream SHA, compiler versions, environment, and dependency-lock hashes; the resolved Cargo locks are saved under `docs/benchmarks/pdf-parser/locks/`. To reproduce an existing result, pass its recorded upstream SHA via `--upstream-ref` instead of `main`:
-
-```bash
-python3 docs/benchmarks/pdf-parser/run-bench.py --upstream-ref <sha-from-results> --runs 24 --warmups 3
-```
-
-The script writes measurements to `docs/benchmarks/pdf-parser/results/latest.json`. Do not commit fetched PDFs. The results are machine-specific; no performance gain is assumed.

@@ -1,0 +1,50 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #res-chip {
+      border: 2px solid var(--brand);
+      background: rgb(0 165 239 / 18%);
+      border-radius: 7px;
+    }
+  </style>
+  <div id="root" data-composition-id="research" data-width="1920" data-height="1080">
+    <h1 id="res-title" class="title clip" data-start="0" data-duration="3.6">
+      <span class="w">Follow</span> <span class="w">it</span> <span class="w">into</span> <span class="w accent">the</span> <span class="w accent">papers.</span>
+    </h1>
+
+    <div id="res-home" class="shot clip" data-start="0" data-duration="1.6" data-layout-allow-overflow>
+      <img src="assets/ui/research.webp" alt="LearnSpace Research: papers picked for you" />
+    </div>
+    <div id="res-paper" class="shot clip" data-start="1.1" data-duration="2.5" data-layout-allow-overflow>
+      <img src="assets/ui/paper.webp" alt="A paper open in LearnSpace beside Luny's answer citing its pages" />
+      <div id="res-chip" class="mark" style="left: 1177px; top: 280px; width: 46px; height: 21px"></div>
+    </div>
+
+    <svg id="res-cursor" class="cursor clip" data-start="1.1" data-duration="2.5" viewBox="0 0 23 28"><path d="M1.5 1.5v21.2l5.3-5.1 3.5 8.1 3.8-1.6-3.4-7.9h7.4z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round" /></svg>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const whole = LS.focus(800, 500, 0.8, 960, 650);
+    const read = LS.focus(945, 420, 1.2, 960, 640);
+
+    LS.words(tl, "#res-title .w", 0.1);
+    tl.fromTo("#res-home", { ...whole, scale: 0.68, rotationY: 22, rotationX: 8, transformPerspective: 2400, opacity: 0 }, { ...whole, rotationY: 0, rotationX: 0, opacity: 1, duration: 0.8, ease: "expo.out" }, 0);
+
+    // Open the first paper: the camera dives into its card and the reader builds around it.
+    tl.to("#res-home", { ...LS.focus(560, 415, 3.2), opacity: 0, filter: "blur(12px)", duration: 0.42, ease: "power3.in" }, 1.05);
+    tl.fromTo("#res-paper", { ...read, scale: read.scale * 0.88, opacity: 0, filter: "blur(12px)" }, { ...read, opacity: 1, filter: "blur(0px)", duration: 0.6, ease: "expo.out" }, 1.25);
+
+    const chip = LS.at(1192, 290, read);
+    const press = LS.click(tl, "#res-cursor", { x: 1500, y: 1120 }, { x: chip.x - 2, y: chip.y - 2 }, 2.15, 0.5);
+    tl.fromTo("#res-chip", { opacity: 0 }, { opacity: 1, duration: 0.12 }, press);
+
+    LS.out(tl, "#res-title .w", 3.3);
+    tl.to("#res-paper", { scale: read.scale * 0.6, opacity: 0, filter: "blur(12px)", duration: 0.3, ease: "power3.in" }, 3.3);
+    tl.to("#res-cursor", { opacity: 0, duration: 0.2 }, 3.3);
+
+    window.__timelines["research"] = tl;
+  </script>
+</template>

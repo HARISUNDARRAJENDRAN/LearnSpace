@@ -450,11 +450,16 @@ button.plan-todo-box:active { transform: scale(.88); }
   .plan-body { grid-template-columns: 216px minmax(0, 1fr); }
   .home-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-level { grid-column: 1 / -1; }
+  /* The title takes the row; its time drops under it so the actions keep their space. */
+  .home-next-title { flex-direction: column; gap: 2px; }
 }
 
 @media (max-width: 900px) {
+  /* One column: the calendar first, then the to-do list under it. */
+  .plan-calendar { height: auto; }
   .plan-body { grid-template-columns: minmax(0, 1fr); }
-  .plan-side { display: none; }
+  .plan-main { height: min(620px, 72dvh); }
+  .plan-side { order: 1; }
 }
 
 @media (max-width: 760px) {

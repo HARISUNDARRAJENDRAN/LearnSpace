@@ -3,7 +3,7 @@ import Link from "next/link";
 import { formatLearningDuration } from "../../lib/home/duration";
 import { LEVEL_XP, RANKS, STREAK_BONUS_XP, XP_RULES } from "../../lib/plan/levels";
 import type { LearnerProfile } from "../../lib/profile/service";
-import { Medal } from "../home/HomeCards";
+import { Medal } from "../home/Medal";
 import { LogoutButton } from "./LogoutButton";
 
 type ProfileUser = { displayName: string | null; email: string; createdAt: string };

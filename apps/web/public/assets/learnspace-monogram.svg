@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <title>LearnSpace monogram</title>
+  <title>LearnSpace</title>
   <rect width="32" height="32" rx="9" fill="#101416"/>
-  <path d="M8 7h5v12h11v6H8V7Z" fill="#fff"/>
-  <path d="M16 7h8v5h-8zM16 14h8v3h-8z" fill="#fff"/>
+  <path d="M9.5 9.5v13h13" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15.5 9.5h7v7" stroke="#00a5ef" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

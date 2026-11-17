@@ -1,9 +1,9 @@
-import { CalendarDays, Code2, Compass, ListVideo, MessageCircleQuestionMark } from "lucide-react";
+import { CalendarDays, Code2, Compass, MessageCircleQuestionMark, Route } from "lucide-react";
 
-import { CalendarCards } from "./Calendar";
 import { DiscoveryCards } from "./Discovery";
 import { FeatureTabs } from "./FeatureTabs";
-import { PlaylistCards } from "./Playlists";
+import { PathCards } from "./Paths";
+import { PlanCards } from "./Plan";
 import { PracticeCards } from "./Practice";
 import { Band, Eyebrow } from "./primitives";
 import { TutorCards } from "./Tutor";
@@ -26,20 +26,20 @@ const features = [
 		panel: <TutorCards />,
 	},
 	{
-		id: "playlists",
-		label: "Playlists",
-		icon: <ListVideo aria-hidden="true" />,
-		title: "A plan for your goal, level and hours.",
-		text: "Pick a curated playlist, say where you are and how much time you have. LearnSpace turns it into sprints and days that rebalance as you go.",
-		panel: <PlaylistCards />,
+		id: "paths",
+		label: "Paths",
+		icon: <Route aria-hidden="true" />,
+		title: "A path for every field, in the right order.",
+		text: "Learning paths climb from the concepts you need to the papers that defined each field, with the hours each one really takes.",
+		panel: <PathCards />,
 	},
 	{
-		id: "calendar",
-		label: "Calendar",
+		id: "plan",
+		label: "Plan",
 		icon: <CalendarDays aria-hidden="true" />,
-		title: "Every study day, remembered.",
-		text: "Each day records what you studied, where you were strong and what needs another pass, so you always know what to revisit next.",
-		panel: <CalendarCards />,
+		title: "A plan that fits your week.",
+		text: "Set a goal and LearnSpace fills your calendar with what to watch, read and practice, then checks each to-do against what you actually studied.",
+		panel: <PlanCards />,
 	},
 	{
 		id: "practice",

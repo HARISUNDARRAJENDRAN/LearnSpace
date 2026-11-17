@@ -1,0 +1,98 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #disc-shot .mark {
+      border: 2.5px solid var(--brand);
+      background: rgb(0 165 239 / 12%);
+      border-radius: 13px;
+    }
+    #disc-tunnel {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+    #disc-kinds {
+      z-index: 30;
+      text-shadow: 0 0 24px #f4f8fb, 0 0 12px #f4f8fb;
+    }
+    #disc-tunnel .card {
+      position: absolute;
+      left: 800px;
+      top: 450px;
+      width: 320px;
+      height: 180px;
+      border-radius: 16px;
+      object-fit: cover;
+      box-shadow: 0 20px 50px -18px rgb(20 50 80 / 40%), 0 0 0 1px rgb(0 0 0 / 6%);
+      opacity: 0;
+    }
+    #disc-tunnel .paper {
+      width: 200px;
+      height: 250px;
+      left: 860px;
+      top: 415px;
+      object-fit: cover;
+      object-position: 38% 22%;
+      background: #fff;
+    }
+  </style>
+  <div id="root" data-composition-id="discover" data-width="1920" data-height="1080">
+    <h1 id="disc-title" class="title clip" data-start="0" data-duration="2.6">
+      <span class="w">Only</span> <span class="w">what</span> <span class="w">you</span> <span class="w accent">came</span> <span class="w accent">to</span> <span class="w accent">learn.</span>
+    </h1>
+
+    <div id="disc-shot" class="shot clip" data-start="0" data-duration="2.9" data-layout-allow-overflow>
+      <img src="assets/ui/foryou.webp" alt="LearnSpace Discover: recommended for your interests" />
+      <div id="disc-chip-1" class="mark" style="left: 421px; top: 244px; width: 157px; height: 42px"></div>
+      <div id="disc-chip-2" class="mark" style="left: 1261px; top: 244px; width: 72px; height: 42px"></div>
+      <div id="disc-chip-3" class="mark" style="left: 1337px; top: 244px; width: 94px; height: 42px"></div>
+    </div>
+
+    <div id="disc-tunnel" class="clip" data-start="2.3" data-duration="1.9" data-layout-allow-overflow data-layout-ignore>
+      <img class="card" src="assets/thumbs/t3.webp" alt="" />
+      <img class="card paper" src="assets/ui/paper.webp" alt="" />
+      <img class="card" src="assets/thumbs/t5.webp" alt="" />
+      <img class="card" src="assets/thumbs/t1.webp" alt="" />
+      <img class="card" src="assets/thumbs/t9.webp" alt="" />
+      <img class="card paper" src="assets/ui/paper.webp" alt="" />
+      <img class="card" src="assets/thumbs/t6.webp" alt="" />
+      <img class="card" src="assets/thumbs/t2.webp" alt="" />
+      <img class="card" src="assets/thumbs/t7.webp" alt="" />
+      <img class="card" src="assets/thumbs/t10.webp" alt="" />
+    </div>
+    <h1 id="disc-kinds" class="title center clip" data-start="2.3" data-duration="1.9">
+      <span class="w accent">Videos.</span> <span class="w accent">Papers.</span> <span class="w">Courses.</span>
+    </h1>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const whole = LS.focus(800, 500, 0.8, 960, 650);
+    const chips = LS.focus(880, 280, 1.45, 960, 600);
+
+    LS.words(tl, "#disc-title .w", 0.05);
+    tl.fromTo("#disc-shot", { ...whole, y: whole.y + 420, scale: 0.72, rotationX: 34, transformPerspective: 2200, opacity: 0 }, { ...whole, rotationX: 10, opacity: 1, duration: 0.85, ease: "expo.out" }, 0.05);
+    tl.to("#disc-shot", { ...chips, rotationX: 0, duration: 0.6, ease: "power2.inOut" }, 1.05);
+    ["#disc-chip-1", "#disc-chip-2", "#disc-chip-3"].forEach((id, i) => {
+      tl.fromTo(id, { opacity: 0, scale: 0.86 }, { opacity: 1, scale: 1, duration: 0.24, ease: "expo.out" }, 1.6 + i * 0.2);
+    });
+
+    // Fly into the feed: the screen rushes past and the lessons and papers it found stream toward the camera.
+    LS.out(tl, "#disc-title .w", 2.3);
+    tl.to("#disc-shot", { scale: 2.8, y: chips.y + 500, opacity: 0, filter: "blur(14px)", duration: 0.42, ease: "power3.in" }, 2.32);
+    gsap.utils.toArray("#disc-tunnel .card").forEach((el, i, all) => {
+      const a = (i / all.length) * Math.PI * 2 + 0.3;
+      const x = Math.cos(a) * 1050;
+      const y = Math.sin(a) * 560;
+      const start = 2.36 + i * 0.07;
+      tl.fromTo(el, { x, y, z: -2600, rotationY: -x / 40, transformPerspective: 900, opacity: 0 }, { z: 650, duration: 1.7, ease: "power1.in" }, start);
+      tl.to(el, { opacity: 1, duration: 0.25, ease: "none" }, start);
+    });
+    LS.words(tl, "#disc-kinds .w", 2.6, 0.16);
+    LS.out(tl, "#disc-kinds .w", 3.98);
+
+    window.__timelines["discover"] = tl;
+  </script>
+</template>

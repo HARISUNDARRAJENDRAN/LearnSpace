@@ -3,7 +3,7 @@ import { ArrowRight } from "lucide-react";
 import { Logo } from "./SiteNav";
 
 const columns = [
-	["Features", [["Focused discovery", "#discovery"], ["Real-time tutor", "#tutor"], ["Curated playlists", "#playlists"], ["Learning calendar", "#calendar"], ["Practice", "#practice"]]],
+	["Features", [["Focused discovery", "#discovery"], ["Real-time tutor", "#tutor"], ["Learning paths", "#paths"], ["Study plan", "#plan"], ["Practice", "#practice"]]],
 	["Use cases", [["Developers", "#use-cases"], ["Students", "#use-cases"], ["Researchers", "#use-cases"], ["Interview prep", "#use-cases"]]],
 	["Product", [["Pricing", "#pricing"], ["Log in", "/login"], ["Create account", "/register"]]],
 ] as const;

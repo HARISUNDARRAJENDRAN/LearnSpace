@@ -32,6 +32,18 @@ export function CardRow({ children }: { children: ReactNode }) {
 	);
 }
 
+/**
+ * A slice of the real app, set inside a feature card. `scope` is the app class that defines the
+ * variables its stylesheet reads (for example `research-page`); the slice is static, so nothing in it acts.
+ */
+export function AppShot({ scope, className, children }: { scope: string; className: string; children: ReactNode }) {
+	return (
+		<div className={`ls-shot ${className}`} inert>
+			<div className={`ls-shot-app ${scope}`}>{children}</div>
+		</div>
+	);
+}
+
 export function FeatureCard({ title, text, wash, children }: { title: string; text: string; wash: string; children: ReactNode }) {
 	return (
 		<article className="ls-card">

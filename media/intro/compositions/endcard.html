@@ -1,0 +1,67 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+    }
+    #end-lockup {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 470px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 26px;
+    }
+    #end-mark {
+      width: 112px;
+      height: 112px;
+      opacity: 0;
+    }
+    #end-mark path {
+      stroke-dasharray: 1;
+    }
+    #end-word {
+      font-family: "Geist Serif", serif;
+      font-size: 120px;
+      font-weight: 400;
+      letter-spacing: -0.025em;
+      line-height: 1;
+      clip-path: inset(0 100% 0 0);
+    }
+    #end-url {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 640px;
+      text-align: center;
+      font-size: 34px;
+      font-weight: 450;
+      color: var(--ink-muted);
+      letter-spacing: -0.01em;
+      opacity: 0;
+    }
+  </style>
+  <div id="root" data-composition-id="endcard" data-width="1920" data-height="1080">
+    <div id="end-lockup" class="clip" data-start="0" data-duration="3.2">
+      <svg id="end-mark" viewBox="0 0 32 32" fill="none" aria-label="LearnSpace">
+        <rect width="32" height="32" rx="9" fill="#101416" />
+        <path class="mark-l" d="M9.5 9.5v13h13" stroke="#fff" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" pathLength="1" />
+        <path class="mark-corner" d="M15.5 9.5h7v7" stroke="#00a5ef" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round" pathLength="1" />
+      </svg>
+      <span id="end-word">LearnSpace</span>
+    </div>
+    <div id="end-url" class="clip" data-start="0" data-duration="3.2">learn-space.app</div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    // The tile pops, the L draws itself, then the blue corner closes the frame around it.
+    tl.fromTo("#end-mark", { scale: 0.3, rotation: -20, opacity: 0 }, { scale: 1, rotation: 0, opacity: 1, duration: 0.5, ease: "back.out(1.6)" }, 0.12);
+    tl.fromTo("#end-mark .mark-l", { strokeDashoffset: 1, opacity: 0 }, { strokeDashoffset: 0, opacity: 1, duration: 0.34, ease: "power2.inOut" }, 0.22);
+    tl.fromTo("#end-mark .mark-corner", { strokeDashoffset: 1, opacity: 0 }, { strokeDashoffset: 0, opacity: 1, duration: 0.26, ease: "power3.out" }, 0.5);
+    tl.fromTo("#end-word", { clipPath: "inset(0 100% 0 0)", x: -30 }, { clipPath: "inset(0 0% 0 0)", x: 0, duration: 0.55, ease: "expo.out" }, 0.55);
+    tl.fromTo("#end-url", { opacity: 0, filter: "blur(6px)" }, { opacity: 1, filter: "blur(0px)", duration: 0.3, ease: "power2.out" }, 1.1);
+    window.__timelines["endcard"] = tl;
+  </script>
+</template>
