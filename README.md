@@ -190,7 +190,9 @@ production data is not used.
 ## Production
 
 Production is the web app on Vercel and the discovery worker on Supabase,
-both against one Supabase PostgreSQL project.
+both against one Supabase PostgreSQL project. The code runner has an Azure
+VM of its own (`infra/runner/README.md`). The web app reaches it with
+`RUNNER_URL=https://runner.learn-space.app` and `RUNNER_TOKEN`.
 
 Create the database roles and extensions once, as the database's admin user,
 with a strong password for each role:

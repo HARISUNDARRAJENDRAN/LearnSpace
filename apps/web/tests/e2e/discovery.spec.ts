@@ -227,10 +227,14 @@ test("the last onboarding step plans a first session onto the calendar", async (
   await expect(page.getByRole("heading", { name: "What will you study right now?" })).toHaveCount(0);
   await page.goto("/app");
   const calendar = page.getByRole("region", { name: "Study plan" });
-  await expect(calendar.getByRole("button", { name: /Watch / }).first()).toHaveClass(/kind-watch/);
+  // The session is an event on the time grid (the agent's to-dos, one of them a "Watch ...", sit in the to-do list).
+  await expect(calendar.getByRole("button", { name: /Watch / }).and(calendar.locator(".plan-event")).first()).toHaveClass(/kind-watch/);
+  // The planning agent broke the goal into steps; the fallback would have made the goal itself the only to-do.
+  const todo = calendar.getByRole("button", { name: "Done: Solve one warm-up exercise" }).first();
+  await expect(todo).toBeVisible();
+  await expect(calendar.getByRole("button", { name: "Done: Get comfortable with Python recursion" })).toHaveCount(0);
   // The goal's to-dos are all-day items the learner ticks off on the calendar. A tick is checked against recorded
   // study, so before any study it does not stick, and the learner is told why.
-  const todo = calendar.getByRole("button", { name: /^Done: / }).first();
   await expect(todo).toHaveAttribute("aria-pressed", "false");
   const [tick] = await Promise.all([
     page.waitForResponse((response) => response.request().method() === "PATCH" && new URL(response.url()).pathname.startsWith("/api/v1/plan/")),

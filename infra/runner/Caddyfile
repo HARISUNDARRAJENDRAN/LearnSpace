@@ -1,0 +1,9 @@
+# HTTPS for the code runner; the certificate is issued and renewed automatically (port 80 answers the ACME challenge).
+runner.learn-space.app {
+	encode zstd gzip
+	# Code and test payloads are small; anything larger is refused before it reaches the runner.
+	request_body {
+		max_size 2MB
+	}
+	reverse_proxy runner:4100
+}
