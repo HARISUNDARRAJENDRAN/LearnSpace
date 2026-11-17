@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./paper-ingestion": {
+      "types": "./src/paper-ingestion.ts",
+      "import": "./dist/paper-ingestion.js",
+      "default": "./dist/paper-ingestion.js"
+    },
+    "./embeddings": {
+      "types": "./src/embeddings.ts",
+      "import": "./dist/embeddings.js",
+      "default": "./dist/embeddings.js"
+    }
+  },
   "scripts": {
     "build": "tsc --build",
     "bundle:edge": "node scripts/bundle-edge.mjs",

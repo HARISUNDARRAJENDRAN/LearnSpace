@@ -1,4 +1,5 @@
-import { fork, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type PdfSource = "verified-native" | "untrusted";
@@ -83,8 +84,10 @@ export async function parsePaperPdf(bytes: Uint8Array, opts: ParseOptions): Prom
 function runIsolated(bytes: Uint8Array, trustedResearch: boolean, timeoutMs: number, signal?: AbortSignal): Promise<NativeResult> {
   return new Promise((resolve, reject) => {
     // shortcut: the child shares container memory; the function limit is the hard OOM boundary.
-    const child: ChildProcess = fork(fileURLToPath(new URL("./child.js", import.meta.url)), [], {
-      execArgv: [],
+    // Not `fork(new URL("./child.js", import.meta.url))`: Next's bundler resolves fork() targets and turns that URL into a
+    // client asset, while it maps import.meta.url to this file's real path at runtime. A spawned node with an IPC channel
+    // is what fork() does; next.config traces child.js and the native module into the function.
+    const child: ChildProcess = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "child.js")], {
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       serialization: "advanced",
     });

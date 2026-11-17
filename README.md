@@ -211,16 +211,19 @@ PostgreSQL directly. Apply migrations before each deploy that adds one:
 
 The web app deploys to Vercel from this repository with the project's Root
 Directory set to `apps/web` and its function region set to Mumbai (`bom1`),
-next to the database; `apps/web/vercel.json` builds the workspace packages
-first. Auth rate limits are counted in PostgreSQL, so every function
-instance shares them.
+next to the database; `apps/web/vercel.json` runs `scripts/vercel-build.sh`,
+which installs Rust for the PDF parser's native module and builds the
+workspace packages first. Auth rate limits are counted in PostgreSQL, so
+every function instance shares them. Opening a paper that has not been parsed
+yet parses it in the background of that request (`lib/research/ingestion.ts`).
 
 1. Set the project's environment variables: `DATABASE_URL` and
    `DATABASE_AUTH_URL` (transaction mode), `DB_PREPARED_STATEMENTS=false`,
    `DB_POOL_MAX=3`, `APP_URL`, `GOOGLE_REDIRECT_URI`
    (`$APP_URL/api/auth/google/callback`), `AUTH_SECRET`,
    `AUTH_SECURE_COOKIES=true`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
-   `RESEND_API_KEY`, `EMAIL_FROM`, `EXA_API_KEY`, and optionally
+   `RESEND_API_KEY`, `EMAIL_FROM`, `EXA_API_KEY`, `DATABASE_WORKER_URL`
+   (transaction mode, for paper ingestion), `RUNNER_URL`, `RUNNER_TOKEN`, and optionally
    `OPENAI_API_KEY` with `LEARNSPACE_SEMANTIC_DISCOVERY_ENABLED=true`.
 2. Deploy: `pnpm dlx vercel@65.12.1 deploy --prod` from the repository root.
 
