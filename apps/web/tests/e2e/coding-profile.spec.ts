@@ -61,6 +61,8 @@ test.afterAll(async () => {
   await db.begin(async (tx) => {
     await tx`SELECT id FROM identity.users WHERE id = ${userId} FOR UPDATE`;
     await tx`SELECT id FROM catalog.resources WHERE id IN ${tx(ids)} FOR UPDATE`;
+    // A model invocation still being recorded for one of these runs waits on this lock, then fails against the deleted run.
+    await tx`SELECT id FROM agent.agent_runs WHERE user_id = ${userId} FOR UPDATE`;
     // A recommended lesson has its first problem written ahead; those rows belong to the lesson, not the learner.
     await tx`DELETE FROM practice.coding_problems WHERE resource_id IN ${tx(ids)}`;
     await tx`DELETE FROM practice.coding_mastery WHERE user_id = ${userId}`;

@@ -15,6 +15,8 @@ type Props = {
   onClose: () => void;
   onSwitchMode: (mode: SourceDiscoveryMode) => void;
   triggerRef: RefObject<HTMLElement | null>;
+  /** A topic to search for, filled in when the modal opens (the learner still starts the search). */
+  initialQuery?: string | undefined;
 };
 
 type ErrorBody = { error?: { code?: string; message?: string; detectedMode?: SourceDiscoveryMode } };
@@ -54,7 +56,7 @@ function formatDate(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.getUTCFullYear().toString();
 }
 
-export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, triggerRef }: Props) {
+export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, triggerRef, initialQuery }: Props) {
   const searchRef = useRef<HTMLInputElement>(null);
   const directRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -89,6 +91,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       setAgent(null);
       return;
     }
+    if (initialQuery) setQuery(initialQuery);
     setState("idle");
     setCandidates([]);
     setPreview(null);
@@ -120,7 +123,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       }
       triggerRef.current?.focus();
     };
-  }, [isOpen, triggerRef]);
+  }, [isOpen, triggerRef, initialQuery]);
 
   useEffect(() => {
     if (!isOpen) return;

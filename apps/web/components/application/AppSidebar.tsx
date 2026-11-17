@@ -59,7 +59,10 @@ function isResearchPath(pathname: string): boolean {
   return pathname === "/app/research" || pathname.startsWith("/app/research/") || pathname.startsWith("/app/study/paper/");
 }
 
-function modeFromPath(pathname: string): NavigationMode {
+/** The mode a URL belongs to: Research pages and paper sessions, and the Research views of Sessions and Library. */
+export function modeFromUrl(pathname: string, searchParams: URLSearchParams): NavigationMode {
+  if (pathname === "/app/sessions" && searchParams.get("mode") === "research") return "research";
+  if (pathname === "/app/library" && searchParams.get("view") === "papers") return "research";
   return isResearchPath(pathname) ? "research" : "learn";
 }
 
@@ -74,13 +77,16 @@ export function AppSidebar({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [mode, setMode] = useState<NavigationMode>(() => modeFromPath(pathname));
+  const [mode, setMode] = useState<NavigationMode>(() => modeFromUrl(pathname, searchParams));
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const firstName = user.displayName?.trim().split(/\s+/)[0] || "Learner";
   const modeNavigation = mode === "learn" ? learnNavigation : researchNavigation;
 
+  // Research and Learn pages each belong to their mode (a concept in a research path opens Learn's Discover); the shared
+  // pages (Sessions, Library, Second Brain, Settings) keep the mode the learner chose.
   useEffect(() => {
     if (isResearchPath(pathname)) setMode("research");
+    else if (pathname === "/app" || pathname.startsWith("/app/discover") || pathname.startsWith("/app/study/")) setMode("learn");
   }, [pathname]);
 
   useEffect(() => {

@@ -134,6 +134,14 @@ test("Workflow A — beginner path, cited paper study, notes, save and resume at
   await page.getByRole("link", { name: /ML research foundations \(beginner\)/ }).click();
   await expect(page).toHaveURL(/\/app\/research\/discover\/ml-foundations$/);
   await expect(page.getByRole("heading", { name: "ML research foundations (beginner)" })).toBeVisible();
+  // A path's concept opens Learn mode's Start learning on that concept, without starting a search.
+  const concept = page.locator(".discover-item").filter({ has: page.getByRole("link", { name: "Learn it" }) }).first();
+  const conceptTitle = (await concept.locator("h4").textContent())?.trim() ?? "";
+  await concept.getByRole("link", { name: "Learn it" }).click();
+  await expect(page).toHaveURL(/\/app\/discover\?learn=/);
+  await expect(page.getByRole("textbox", { name: "What do you want to learn?" })).toHaveValue(conceptTitle);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/app\/research\/discover\/ml-foundations$/);
   await page.locator(".discover-item").filter({ hasText: "XGBoost: A Scalable Tree Boosting System" }).getByRole("button", { name: "Study", exact: true }).first().click();
   await expect(page).toHaveURL(/\/app\/study\/paper\/[0-9a-f-]+/);
   const sessionId = page.url().split("/").at(-1)!;
@@ -160,9 +168,9 @@ test("Workflow A — beginner path, cited paper study, notes, save and resume at
   await expect(paperRow).toBeVisible();
   await paperRow.getByRole("button", { name: "Save to library" }).click();
   await expect(paperRow.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("link", { name: "See the full list" }).click();
+  await page.getByLabel("Recently saved").getByRole("link", { name: "See the full list" }).click();
   await expect(page).toHaveURL(/\/app\/library\?view=papers/);
-  const resume = page.locator(".research-library-resume").filter({ hasText: "XGBoost: A Scalable Tree Boosting System" });
+  const resume = page.locator(".watch-later-card").filter({ hasText: "XGBoost: A Scalable Tree Boosting System" }).getByRole("link", { name: "Continue in Sessions" });
   await expect(resume).toBeVisible();
   await resume.click();
   await expect(page).toHaveURL(new RegExp(`/app/study/paper/${sessionId}(?:\\?.*)?$`));

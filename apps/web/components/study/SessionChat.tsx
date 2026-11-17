@@ -440,7 +440,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
           <div className="chat-empty">
             <p className="chat-empty-title">Learn from this {noun}</p>
             <p>{noun === "video" ? "Ask about anything the instructor covers. Answers link to the moment they come from" : "Ask about any idea, equation or reference in the paper. Answers link to the page they come from"}, say plainly when they go beyond the {noun}, and check what stuck as you go. Highlight any part of an answer to ask about just that.</p>
-            <ul className="chat-suggestions">{SKILLS.slice(0, 3).map((skill) => <li key={skill.name}><button type="button" disabled={!ready} onClick={() => void send(skill.prompt, null)}><ArrowUp aria-hidden="true" />{skill.prompt}</button></li>)}</ul>
+            <ul className="chat-suggestions">{SKILLS[noun].slice(0, 3).map((skill) => <li key={skill.name}><button type="button" disabled={!ready} onClick={() => void send(skill.prompt, null)}><ArrowUp aria-hidden="true" />{skill.prompt}</button></li>)}</ul>
           </div>
         ) : visible.map((message) => "invalid" in message ? (
           <article className="chat-message is-assistant" key={message.id}><p className="session-tool-message is-error">This answer couldn&apos;t be displayed.</p></article>

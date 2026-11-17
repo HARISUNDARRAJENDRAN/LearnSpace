@@ -248,7 +248,7 @@ test("E2E B — Research opens a paper session and keeps the save and the readin
   await page.goto("/app/library?view=papers");
   const saved = page.locator("article.research-paper-row").filter({ hasText: "A deterministic Study paper" });
   await expect(saved.getByText("Page 2 · 40% read")).toBeVisible();
-  await expect(page.locator(".research-library-resume").filter({ hasText: "A deterministic Study paper" })).toBeVisible();
+  await expect(page.locator(".watch-later-card").filter({ hasText: "A deterministic Study paper" }).getByRole("link", { name: "Continue in Sessions" })).toBeVisible();
 });
 
 test("E2E D — A mixed collection starts beside the sessions already in progress", async ({ page }) => {

@@ -3,23 +3,29 @@ import test from "node:test";
 import type postgres from "postgres";
 import { cleanPaperAbstract, cleanPaperTitle, fetchCatalogPapers, upsertCatalogPaper, type CatalogPaper } from "./paper-catalog.js";
 
-function inMemoryCatalog(): { tx: postgres.TransactionSql; authors: Array<{ id: string; name: string; orcid: string | null; semanticScholarId: string | null; metadata: Record<string, string> }>; edges: Array<{ paperId: string; authorId: string; ordinal: number }> } {
-  const authors: Array<{ id: string; name: string; orcid: string | null; semanticScholarId: string | null; metadata: Record<string, string> }> = [];
+type MemoryAuthor = { id: string; name: string; normalizedName: string; orcid: string | null; semanticScholarId: string | null; metadata: Record<string, string> };
+
+function inMemoryCatalog(): { tx: postgres.TransactionSql; authors: MemoryAuthor[]; edges: Array<{ paperId: string; authorId: string; ordinal: number }> } {
+  const authors: MemoryAuthor[] = [];
   const edges: Array<{ paperId: string; authorId: string; ordinal: number }> = [];
   let nextId = 0;
   const query = async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const statement = strings.join(" ");
     if (statement.includes("SELECT id::text AS id FROM catalog.authors")) {
-      const match = authors.find((author) => (values[0] && author.orcid === values[0])
-        || (values[2] && author.semanticScholarId === values[2])
-        || (values[4] && author.metadata.openalexId === values[4])
-        || author.metadata.catalogIdentity === values[6]);
+      const [orcid, , semanticScholarId, , openAlexId, , name] = values;
+      const match = authors.find((author) => (orcid && author.orcid === orcid)
+        || (semanticScholarId && author.semanticScholarId === semanticScholarId)
+        || (openAlexId && author.metadata.openalexId === openAlexId)
+        || (name && author.normalizedName === name && (!author.orcid || !orcid)));
       return match ? [{ id: match.id }] : [];
+    }
+    if (statement.includes("UPDATE catalog.authors SET")) {
+      const row = authors.find((author) => author.id === values[5]);
+      if (row) row.orcid ??= values[2] as string | null;
     }
     if (statement.includes("INSERT INTO catalog.authors")) {
       const [normalizedName, name, orcid, semanticScholarId, metadata] = values;
-      const row = { id: `author-${++nextId}`, name: String(name), orcid: orcid as string | null, semanticScholarId: semanticScholarId as string | null, metadata: metadata as Record<string, string> };
-      assert.equal(normalizedName, String(name).toLowerCase().replace(/[^a-z0-9]/g, ""));
+      const row = { id: `author-${++nextId}`, name: String(name), normalizedName: String(normalizedName), orcid: orcid as string | null, semanticScholarId: semanticScholarId as string | null, metadata: metadata as Record<string, string> };
       authors.push(row);
       return [{ id: row.id }];
     }
@@ -85,16 +91,27 @@ test("catalog metadata comes from arXiv and OpenAlex, preserving arXiv author or
   assert.equal(requests.length, 2);
 });
 
-test("catalog upsert keeps same-name authors distinct and reconciles their ordered edges idempotently", async () => {
+test("catalog upsert gives one author per name across papers, keeps ORCID namesakes apart and reconciles edges idempotently", async () => {
   const catalog = inMemoryCatalog();
-  const first = paper("2301.00001", ["Same Name", "Same Name"]);
+  const edgesOf = (paperId: string) => catalog.edges.filter((edge) => edge.paperId === paperId).map((edge) => edge.authorId);
+  // A name listed twice is one author, and a name with no letters is not an author.
+  const first = paper("2301.00001", ["Same Name", "Same Name", ":", "张伟"]);
   await upsertCatalogPaper(catalog.tx, "resource-one", first);
-  const firstAuthorIds = catalog.edges.filter((edge) => edge.paperId === "resource-one").map((edge) => edge.authorId);
-  assert.equal(new Set(firstAuthorIds).size, 2);
+  const firstAuthorIds = edgesOf("resource-one");
+  assert.equal(firstAuthorIds.length, 2);
+  assert.deepEqual(catalog.authors.map((author) => author.normalizedName), ["samename", "张伟"]);
 
   await upsertCatalogPaper(catalog.tx, "resource-one", first);
-  assert.deepEqual(catalog.edges.filter((edge) => edge.paperId === "resource-one").map((edge) => edge.authorId), firstAuthorIds);
+  assert.deepEqual(edgesOf("resource-one"), firstAuthorIds);
 
-  await upsertCatalogPaper(catalog.tx, "resource-two", paper("2301.00002", ["Same Name"]));
-  assert.notEqual(catalog.edges.find((edge) => edge.paperId === "resource-two")?.authorId, firstAuthorIds[0]);
+  // The same person on another paper is the same author, in any script.
+  await upsertCatalogPaper(catalog.tx, "resource-two", paper("2301.00002", ["Same  name", "张伟"]));
+  assert.deepEqual(edgesOf("resource-two"), firstAuthorIds);
+
+  // An ORCID attaches to the unidentified author; a different ORCID under the same name is someone else.
+  const withOrcid = (orcid: string) => ({ ...paper("2301.00003", []), authors: [{ name: "Same Name", openAlexId: null, semanticScholarId: null, orcid }] });
+  await upsertCatalogPaper(catalog.tx, "resource-three", withOrcid("0000-0001"));
+  assert.deepEqual(edgesOf("resource-three"), [firstAuthorIds[0]]);
+  await upsertCatalogPaper(catalog.tx, "resource-four", withOrcid("0000-0002"));
+  assert.notEqual(edgesOf("resource-four")[0], firstAuthorIds[0]);
 });

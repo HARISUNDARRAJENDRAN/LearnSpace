@@ -1354,9 +1354,9 @@ async function createCourseSession(tx: Transaction, userId: string, collection: 
 }
 
 /** Where Sessions opens: the open session the learner was in last, if any. */
-export async function lastSeenSessionRoute(userId: string): Promise<string | null> {
+export async function lastSeenSessionRoute(userId: string, type: "video" | "paper"): Promise<string | null> {
   const sessions = await listStudySessions(userId);
-  const open = sessions.filter((session) => session.route && (session.status === "active" || session.status === "paused"));
+  const open = sessions.filter((session) => session.route && session.activeResource?.type === type && (session.status === "active" || session.status === "paused"));
   return open.toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))[0]?.route ?? null;
 }
 

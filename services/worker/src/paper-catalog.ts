@@ -102,7 +102,7 @@ function cleanDoi(value: unknown): string | null {
 }
 
 function normalizedName(value: string): string {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 }
 
 function mapOpenAlexAuthors(atomAuthors: AtomPaper["authors"], work: OpenAlexWork | undefined): CatalogPaperAuthor[] {
@@ -189,47 +189,53 @@ export async function fetchCatalogPapers(ids: string[], fetcher: typeof fetch = 
   }));
 }
 
-function catalogAuthorIdentity(arxivId: string, ordinal: number): string {
-  return `arxiv:${arxivId}:${ordinal}`;
-}
-
-async function authorId(tx: TransactionSql, author: CatalogPaperAuthor, arxivId: string, ordinal: number): Promise<string> {
+/**
+ * One person is one author: a strong identifier (ORCID, Semantic Scholar, OpenAlex) matches first, then the same name,
+ * unless both carry different ORCIDs.
+ */
+async function authorId(tx: TransactionSql, author: CatalogPaperAuthor): Promise<string> {
+  const name = normalizedName(author.name);
+  // Writers resolving the same name take turns, so concurrent ingestion cannot create one person twice.
+  if (name) await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`catalog.author:${name}`}, 0))`;
   const [existing] = await tx<{ id: string }[]>`
     SELECT id::text AS id FROM catalog.authors
     WHERE (${author.orcid}::text IS NOT NULL AND orcid = ${author.orcid})
        OR (${author.semanticScholarId}::text IS NOT NULL AND semantic_scholar_id = ${author.semanticScholarId})
        OR (${author.openAlexId}::text IS NOT NULL AND metadata->>'openalexId' = ${author.openAlexId})
-       OR metadata->>'catalogIdentity' = ${catalogAuthorIdentity(arxivId, ordinal)}
-    ORDER BY CASE WHEN orcid = ${author.orcid} THEN 0 WHEN semantic_scholar_id = ${author.semanticScholarId} THEN 1 WHEN metadata->>'openalexId' = ${author.openAlexId} THEN 2 ELSE 3 END
+       OR (${name} <> '' AND normalized_name = ${name} AND (orcid IS NULL OR ${author.orcid}::text IS NULL))
+    ORDER BY CASE WHEN orcid = ${author.orcid} THEN 0 WHEN semantic_scholar_id = ${author.semanticScholarId} THEN 1 WHEN metadata->>'openalexId' = ${author.openAlexId} THEN 2 ELSE 3 END, created_at
     LIMIT 1
   `;
+  const metadata = author.openAlexId ? { openalexId: author.openAlexId } : {};
   if (existing) {
-    const metadata = { catalogIdentity: catalogAuthorIdentity(arxivId, ordinal), ...(author.openAlexId ? { openalexId: author.openAlexId } : {}) };
     await tx`
       UPDATE catalog.authors SET
-        preferred_name = ${author.name}, normalized_name = ${normalizedName(author.name)},
+        preferred_name = ${author.name}, normalized_name = ${name},
         orcid = COALESCE(orcid, ${author.orcid}), semantic_scholar_id = COALESCE(semantic_scholar_id, ${author.semanticScholarId}),
-        metadata = metadata || ${tx.json(metadata)}, updated_at = now()
-      WHERE id = ${existing.id} AND (preferred_name IS DISTINCT FROM ${author.name} OR normalized_name IS DISTINCT FROM ${normalizedName(author.name)}
+        metadata = (metadata - 'catalogIdentity') || ${tx.json(metadata)}, updated_at = now()
+      WHERE id = ${existing.id} AND (preferred_name IS DISTINCT FROM ${author.name} OR normalized_name IS DISTINCT FROM ${name}
         OR (orcid IS NULL AND ${author.orcid}::text IS NOT NULL) OR (semantic_scholar_id IS NULL AND ${author.semanticScholarId}::text IS NOT NULL)
-        OR metadata->>'catalogIdentity' IS DISTINCT FROM ${metadata.catalogIdentity}
-        OR (${author.openAlexId}::text IS NOT NULL AND metadata->>'openalexId' IS DISTINCT FROM ${author.openAlexId}))
+        OR metadata ? 'catalogIdentity' OR (${author.openAlexId}::text IS NOT NULL AND metadata->>'openalexId' IS DISTINCT FROM ${author.openAlexId}))
     `;
     return existing.id;
   }
-  const metadata = { catalogIdentity: catalogAuthorIdentity(arxivId, ordinal), ...(author.openAlexId ? { openalexId: author.openAlexId } : {}) };
   const [inserted] = await tx<{ id: string }[]>`
     INSERT INTO catalog.authors (normalized_name, preferred_name, orcid, semantic_scholar_id, metadata)
-    VALUES (${normalizedName(author.name)}, ${author.name}, ${author.orcid}, ${author.semanticScholarId}, ${tx.json(metadata)})
+    VALUES (${name}, ${author.name}, ${author.orcid}, ${author.semanticScholarId}, ${tx.json(metadata)})
     ON CONFLICT DO NOTHING RETURNING id::text AS id
   `;
   if (inserted) return inserted.id;
-  return authorId(tx, { ...author, orcid: null, semanticScholarId: null, openAlexId: null }, arxivId, ordinal);
+  return authorId(tx, { ...author, orcid: null, semanticScholarId: null, openAlexId: null });
 }
 
 /** The worker and backfill both use this one verified arXiv/OpenAlex write path. */
 export async function upsertCatalogPaper(tx: TransactionSql, resourceId: string, paper: CatalogPaper): Promise<void> {
-  const authorIds = await Promise.all(paper.authors.map((author, ordinal) => authorId(tx, author, paper.arxivId, ordinal)));
+  // In order and one at a time: a name listed twice resolves to one author, and a name with no letters is not an author.
+  const authorIds: string[] = [];
+  for (const author of paper.authors.filter(({ name }) => /\p{L}/u.test(name))) {
+    const id = await authorId(tx, author);
+    if (!authorIds.includes(id)) authorIds.push(id);
+  }
   await tx`
     UPDATE catalog.resources SET
       title = ${paper.title}, description = ${paper.abstract}, canonical_url = ${`https://arxiv.org/abs/${paper.arxivId}`},

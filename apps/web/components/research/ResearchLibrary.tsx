@@ -1,6 +1,7 @@
-import { ArrowUpRight, BookOpen } from "lucide-react";
+import { ArrowUpRight, Play } from "lucide-react";
 import Link from "next/link";
 import type { ResearchLibraryData, ResearchLibraryPaper } from "../../lib/research/service";
+import { sessionsHref } from "../application/sessions";
 import { FinishedSessions } from "../library/LibraryPage";
 import { ResearchPaperRow } from "./ResearchPaperRow";
 
@@ -9,6 +10,8 @@ function readingStatus(paper: ResearchLibraryPaper) {
   if (paper.progressPct > 0) return [paper.page ? `Page ${paper.page}` : null, `${Math.round(paper.progressPct)}% read`].filter(Boolean).join(" · ");
   return "Not started";
 }
+
+const lastRead = new Intl.DateTimeFormat("en", { month: "short", day: "numeric" });
 
 /** The Research side of the Library: what the learner is reading, what they saved, and the paper sessions they finished. */
 export function ResearchLibrary({ data }: { data: ResearchLibraryData }) {
@@ -33,14 +36,19 @@ export function ResearchLibrary({ data }: { data: ResearchLibraryData }) {
             <h2 id="research-library-reading">Continue reading<span className="library-count">{reading.length}</span></h2>
             <p>Pick up on the page you left.</p>
           </div>
-          <ul className="research-library-reading">
+          <ul className="watch-later-grid">
             {reading.map((session) => (
-              <li key={session.id}>
-                <Link href={session.route ?? `/app/sessions`} className="research-library-resume">
-                  <BookOpen aria-hidden="true" />
-                  <span><strong>{session.title}</strong><small>{Math.round(session.progressPct)}% read</small></span>
-                  <span className="research-library-progress" aria-hidden="true"><span style={{ width: `${Math.min(100, Math.max(0, session.progressPct))}%` }} /></span>
-                </Link>
+              <li key={session.id} className="watch-later-card">
+                <span className="watch-later-media research-library-media" aria-hidden="true">
+                  <span className="research-paper-page"><span className="research-paper-page-meta">Paper</span><span className="research-paper-page-title">{session.title}</span><span className="research-paper-page-rule" /></span>
+                  <span className="library-media-badge">{Math.round(session.progressPct)}% read</span>
+                  <span className="research-library-progress"><span style={{ width: `${Math.min(100, Math.max(0, session.progressPct))}%` }} /></span>
+                </span>
+                <span className="watch-later-copy">
+                  <strong>{session.title}</strong>
+                  <small>Paper · Last read {lastRead.format(new Date(session.lastActiveAt))}</small>
+                </span>
+                <Link className="watch-later-continue" href={session.route ?? sessionsHref("research")}><Play aria-hidden="true" />Continue in Sessions</Link>
               </li>
             ))}
           </ul>

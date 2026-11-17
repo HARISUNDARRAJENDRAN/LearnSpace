@@ -25,6 +25,7 @@ import { scoreResearchAffinity, type ResearchAffinitySignal } from "./affinity";
 
 // A save alone (6) or a save plus one open (~7.8) is not a favourite; a save plus real reading, or repeated engagement, is.
 const IMPLICIT_FAVORITE_SCORE = 8;
+const FOUNDATIONAL_LIMIT = 60;
 
 type PaperRow = { resource: typeof resources.$inferSelect; paper: typeof paperDetails.$inferSelect };
 export type ResearchPageData = {
@@ -39,11 +40,6 @@ export type ResearchPageData = {
   favoriteAuthors: ResearchAuthorSummary[];
   suggestedAuthors: ResearchAuthorSummary[];
 };
-
-function metadataValue(metadata: Record<string, unknown>, key: string): string | null {
-  const value = metadata[key];
-  return typeof value === "string" ? value : null;
-}
 
 function pushSignal(target: Map<string, ResearchAffinitySignal[]>, authorIds: string[], signal: ResearchAffinitySignal) {
   for (const authorId of authorIds) target.set(authorId, [...(target.get(authorId) ?? []), signal]);
@@ -119,19 +115,26 @@ export async function getResearchPage(userId: string, query = "", options: { tab
     const queryFilter = normalizedQuery.length > 0
       ? or(ilike(resources.title, `%${normalizedQuery}%`), ilike(resources.description, `%${normalizedQuery}%`), ilike(paperDetails.abstract, `%${normalizedQuery}%`))
       : undefined;
-    const paperRows = await tx
-      .select({ resource: resources, paper: paperDetails })
-      .from(resources)
-      .innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
-      .where(and(
-        eq(resources.type, "paper"),
-        or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])),
-        inArray(resources.status, ["pending", "processing", "ready"]),
-        isNull(resources.deletedAt),
-        queryFilter,
-      ))
-      .orderBy(desc(resources.qualityScore), desc(paperDetails.publicationDate), desc(resources.updatedAt))
-      .limit(100);
+    const visiblePaper = and(
+      eq(resources.type, "paper"),
+      or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])),
+      inArray(resources.status, ["pending", "processing", "ready"]),
+      isNull(resources.deletedAt),
+    );
+    // The curriculum's seminal papers are older than most of the feed, so they are read on their own.
+    const [feedRows, foundationalRows] = await Promise.all([
+      tx.select({ resource: resources, paper: paperDetails }).from(resources).innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+        .where(and(visiblePaper, queryFilter))
+        .orderBy(desc(resources.qualityScore), desc(paperDetails.publicationDate), desc(resources.updatedAt))
+        .limit(100),
+      tx.select({ resource: resources, paper: paperDetails }).from(resources).innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+        .where(and(visiblePaper, sql`${resources.metadata}->>'paperClass' = 'foundational'`))
+        // The curated curriculum leads the papers discovery classed as foundational; then the most cited, then the oldest.
+        .orderBy(sql`${resources.metadata} ? 'curriculum' DESC`, sql`${paperDetails.citationCount} DESC NULLS LAST`, asc(paperDetails.publicationDate))
+        .limit(FOUNDATIONAL_LIMIT),
+    ]);
+    const feedIds = new Set(feedRows.map(({ resource }) => resource.id));
+    const paperRows = [...feedRows, ...foundationalRows.filter(({ resource }) => !feedIds.has(resource.id))];
     const summary = await paperSummaries(tx, userId, paperRows);
     const ids = paperRows.map(({ resource }) => resource.id);
     const catalogCounts = ids.length ? await tx.select({
@@ -160,28 +163,30 @@ export async function getResearchPage(userId: string, query = "", options: { tab
     });
     const authorsByAffinity = [...candidateAuthorIds].map(makeAuthor).sort((a, b) => Number(b.followed) - Number(a.followed) || b.affinityScore - a.affinityScore || a.name.localeCompare(b.name));
     const followedAuthorsSummary = follows.map(({ authorId }) => authorRows.find((author) => author.id === authorId) ? makeAuthor(authorId) : null).filter((author): author is ResearchAuthorSummary => author !== null);
-    const foundational = summary.papers.filter((paper) => {
-      const row = paperRows.find((candidate) => candidate.resource.id === paper.resourceId);
-      return row && metadataValue(row.paper.metadata, "paperClass") === "foundational";
-    });
+    const foundationalIds = foundationalRows.map(({ resource }) => resource.id);
+    const foundational = foundationalIds.map((id) => summary.papers.find((paper) => paper.resourceId === id)).filter((paper): paper is ResearchPaper => Boolean(paper));
     const selectedTopic = selectedTopics.find((topic) => topic.id === topicId);
     const rankedIds = normalizedQuery.length ? [] : await rankPaperResourcesForUser(tx, userId, ids);
     const rankedSet = new Set(rankedIds);
     const ordered = [...rankedIds.map((id) => summary.papers.find((paper) => paper.resourceId === id)).filter((paper): paper is ResearchPaper => Boolean(paper)), ...summary.papers.filter((paper) => !rankedSet.has(paper.resourceId))];
     const affinityScore = (paper: ResearchPaper) => Math.max(0, ...paper.authorIds.map((authorId) => affinity.get(authorId) ?? 0));
     ordered.sort((a, b) => Number(b.authorIds.some((id) => followedIds.has(id))) - Number(a.authorIds.some((id) => followedIds.has(id))) || affinityScore(b) - affinityScore(a));
-    let feed = normalizedQuery ? summary.papers : ordered;
+    const inFeed = (paper: ResearchPaper) => feedIds.has(paper.resourceId);
+    let feed = normalizedQuery ? summary.papers.filter(inFeed) : ordered.filter(inFeed);
     if (tab === "foundational") feed = foundational;
     if (tab === "following") feed = feed.filter((paper) => paper.authorIds.some((authorId) => followedIds.has(authorId))).sort((a, b) => affinityScore(b) - affinityScore(a));
     if (selectedTopic) feed = feed.filter((paper) => (summary.conceptsByPaper.get(paper.resourceId) ?? []).some((concept) => concept.id === selectedTopic.id));
-    const recent = [...summary.papers].sort((a, b) => (b.publicationDate ?? "").localeCompare(a.publicationDate ?? ""));
+    const recent = summary.papers.filter(inFeed).sort((a, b) => (b.publicationDate ?? "").localeCompare(a.publicationDate ?? ""));
     const recentSaved = [...summary.papers].filter((paper) => paper.saved).sort((a, b) => (summary.savedAt.get(b.resourceId)?.getTime() ?? 0) - (summary.savedAt.get(a.resourceId)?.getTime() ?? 0));
-    const interestFoundational = topicIds.length ? foundational.filter((paper) => (summary.conceptsByPaper.get(paper.resourceId) ?? []).some(({ id }) => topicIds.includes(id))) : foundational;
+    const matchesTopics = (paper: ResearchPaper) => (summary.conceptsByPaper.get(paper.resourceId) ?? []).some(({ id }) => topicIds.includes(id));
+    const interestFoundational = topicIds.length ? foundational.filter(matchesTopics) : foundational;
     // Explicit follows lead; authors the learner keeps reading (several real signals, recency-weighted) follow them.
     const engagedAuthors = authorsByAffinity.filter((author) => author.source === "engaged");
     const favoriteAuthorsList = [...followedAuthorsSummary, ...engagedAuthors].slice(0, 16);
     const favoriteIds = new Set(favoriteAuthorsList.map(({ authorId }) => authorId));
-    const suggestions = [...new Set(interestFoundational.flatMap((paper) => paper.authorIds))].filter((authorId) => !favoriteIds.has(authorId));
+    // Seminal papers on the learner's topics lead, then the rest of the curriculum.
+    const foundationalPicks = [...interestFoundational, ...foundational.filter((paper) => !interestFoundational.includes(paper))];
+    const suggestions = [...new Set(foundationalPicks.flatMap((paper) => paper.authorIds))].filter((authorId) => !favoriteIds.has(authorId));
     const suggestedAuthors = (suggestions.length ? suggestions.map(makeAuthor) : authorsByAffinity.filter((author) => !favoriteIds.has(author.authorId) && author.paperCount > 0)).slice(0, 12);
     return {
       query: normalizedQuery,
@@ -189,7 +194,7 @@ export async function getResearchPage(userId: string, query = "", options: { tab
       topicId,
       topics: selectedTopics,
       recommended: feed.slice(0, 30),
-      foundational: foundational.slice(0, 12),
+      foundational: foundationalPicks.slice(0, 12),
       recent: recent.slice(0, 12),
       saved: recentSaved.slice(0, 12),
       favoriteAuthors: favoriteAuthorsList,

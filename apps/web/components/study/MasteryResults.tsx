@@ -12,11 +12,13 @@ import { PlaceLink, placeOf } from "./place";
 export type MasteryNext = { course: { completed: number; total: number } | null; nextTitle: string | null };
 
 const BAND = {
-  excellent: { label: "Excellent", line: "You've mastered this lesson.", mood: "🎉" },
-  mastered: { label: "Mastered", line: "You've mastered this lesson.", mood: "🙂" },
+  excellent: { label: "Excellent", line: "You've mastered this", mood: "🎉" },
+  mastered: { label: "Mastered", line: "You've mastered this", mood: "🙂" },
   close: { label: "Almost there", line: "A little more and you're through.", mood: "🙂" },
   review: { label: "Needs review", line: "A few ideas need another look.", mood: "💪" },
 } as const;
+/** A course is made of lessons; a paper set of papers. */
+const UNIT = { video: { one: "lesson", many: "lessons", whole: "Course" }, paper: { one: "paper", many: "papers", whole: "Set" } } as const;
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 const STRIPES = dialStripes(HEAT);
@@ -55,16 +57,19 @@ type Props = {
   onContinue: () => void;
   onRetake: () => void;
   onAnalyse: () => void;
+  material: "video" | "paper";
 };
 
 /**
  * What a scored set says: the score on a dial, the answers and concepts behind it, progress over attempts and the course,
  * where to revise, and a learning analysis written from the learner's own answers, which fills in when it is ready.
  */
-export function MasteryResults({ check, passScore, next, moving, onGo, onReview, onContinue, onRetake, onAnalyse }: Props) {
+export function MasteryResults({ check, passScore, next, moving, onGo, onReview, onContinue, onRetake, onAnalyse, material }: Props) {
+  const unit = UNIT[material];
   const score = check.score ?? 0;
   const passed = check.status === "passed";
   const band = masteryBand(score, passScore);
+  const bandLine = band === "excellent" || band === "mastered" ? `${BAND[band].line} ${unit.one}.` : BAND[band].line;
   const questions = check.questions;
   const credit = (index: number) => questions[index]?.result?.credit ?? 0;
   const correct = questions.filter((_, index) => credit(index) === 1).length;
@@ -100,7 +105,7 @@ export function MasteryResults({ check, passScore, next, moving, onGo, onReview,
     { key: "correct", title: "Correct", value: correct, chip: `of ${questions.length}`, note: "Questions you answered fully right", review: firstWith((value) => value === 1) },
     { key: "partial", title: "Partly right", value: partial, chip: "Half credit", note: "The right idea with a step missing", review: firstWith((value) => value === 0.5) },
     { key: "missed", title: "Missed", value: missed, chip: missed ? "Revise" : "None", note: "Ideas worth another look", review: firstWith((value) => value === 0) },
-    { key: change === null ? "first" : change >= 0 ? "up" : "down", title: "Attempt", value: attempts.length, chip: change === null ? "First try" : trend(change), note: previous === undefined ? "Your first set on this lesson" : `From ${percent(previous)} last time`, review: -1 },
+    { key: change === null ? "first" : change >= 0 ? "up" : "down", title: "Attempt", value: attempts.length, chip: change === null ? "First try" : trend(change), note: previous === undefined ? `Your first set on this ${unit.one}` : `From ${percent(previous)} last time`, review: -1 },
   ];
 
   return <div className="mastery-results">
@@ -124,7 +129,7 @@ export function MasteryResults({ check, passScore, next, moving, onGo, onReview,
         {moving ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}{finished ? "Back to Sessions" : "Continue learning"}
       </button> : <button className="mastery-cta" type="button" onClick={onRetake}><RotateCcw aria-hidden="true" />New set of questions</button>}
       <p className="mastery-verdict">
-        {passed ? finished ? next.course ? "Course complete. Every lesson is mastered." : "Lesson mastered." : `${BAND[band].line} The next lesson is unlocked.` : `${BAND[band].line} You need ${percent(passScore)} to unlock the next lesson.`}
+        {passed ? finished ? next.course ? `${unit.whole} complete. Every ${unit.one} is mastered.` : `${unit.one[0]!.toUpperCase()}${unit.one.slice(1)} mastered.` : `${bandLine} The next ${unit.one} is unlocked.` : `${bandLine} You need ${percent(passScore)} to unlock the next ${unit.one}.`}
       </p>
       {passed && next.nextTitle ? <p className="mastery-next"><ArrowRight aria-hidden="true" /><span>Up next: <MathText text={next.nextTitle} /></span></p> : null}
     </section>
@@ -140,7 +145,7 @@ export function MasteryResults({ check, passScore, next, moving, onGo, onReview,
       </article>)}
       {course ? <article className="mastery-tile is-course" style={{ "--i": 4 } as React.CSSProperties}>
         <header><h3>Course progress</h3></header>
-        <p className="mastery-tile-value"><strong>{course.completed}</strong><span className="mastery-chip">of {course.total} lessons</span></p>
+        <p className="mastery-tile-value"><strong>{course.completed}</strong><span className="mastery-chip">of {course.total} {unit.many}</span></p>
         <span className="mastery-bar" aria-hidden="true"><i style={{ width: `${(course.completed / Math.max(1, course.total)) * 100}%` }} /></span>
       </article> : null}
     </div>

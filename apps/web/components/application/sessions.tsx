@@ -28,6 +28,11 @@ export function sessionIdFromPath(pathname: string): string | null {
   return STUDY_PATH.exec(pathname)?.[1] ?? null;
 }
 
+/** Sessions in one mode: Research resumes papers, Learn resumes videos. */
+export function sessionsHref(mode: "learn" | "research"): string {
+  return mode === "research" ? "/app/sessions?mode=research" : "/app/sessions";
+}
+
 /** The open session the learner was in last, which the Sessions tab opens. */
 export function lastSeenRoute(sessions: StudySessionSummary[]): string | null {
   const open = sessions.filter((session) => session.route && (session.status === "active" || session.status === "paused"));

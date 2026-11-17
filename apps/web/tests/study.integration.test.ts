@@ -131,15 +131,17 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.deepEqual((await listStudySessions(owner.id)).map((session) => [session.id, session.title]), [[studySessionId, "Study video without an ingested version"], [second.sessionId, "Concurrency"]]);
     await assert.rejects(reorderStudySessions(foreign.id, { sessionIds: [second.sessionId] }), (error: unknown) => error instanceof AuthError && error.status === 404);
     // Sessions reopens the session the learner was in last.
-    assert.equal(await lastSeenSessionRoute(owner.id), second.route);
+    assert.equal(await lastSeenSessionRoute(owner.id, "video"), second.route);
+    // Research's Sessions resumes papers only, never a video.
+    assert.equal(await lastSeenSessionRoute(owner.id, "paper"), null);
     await getStudySession(owner.id, studySessionId, { seen: true });
-    assert.equal(await lastSeenSessionRoute(owner.id), first.route);
+    assert.equal(await lastSeenSessionRoute(owner.id, "video"), first.route);
     await getStudySession(owner.id, second.sessionId, { seen: true });
-    assert.equal(await lastSeenSessionRoute(owner.id), second.route);
+    assert.equal(await lastSeenSessionRoute(owner.id, "video"), second.route);
     // Ending one leaves Sessions without it, goes back to the other, and leaves that one as it was.
     await endStudySession(owner.id, second.sessionId);
     assert.deepEqual((await listStudySessions(owner.id)).map((session) => session.id), [studySessionId]);
-    assert.equal(await lastSeenSessionRoute(owner.id), first.route);
+    assert.equal(await lastSeenSessionRoute(owner.id, "video"), first.route);
     await assert.rejects(getStudySession(owner.id, second.sessionId), (error: unknown) => error instanceof AuthError && error.status === 404);
     await assert.rejects(saveStudyWorkspace(owner.id, second.sessionId, { panel: "ai" }), (error: unknown) => error instanceof AuthError && error.status === 404);
     // Two tabs of a learner with an empty Sessions share one session.
@@ -211,7 +213,11 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.equal(collectionDetail.currentItemId, collectionPaperItemId);
     const researchPage = await getResearchPage(owner.id, "related paper");
     assert.deepEqual(new Set(researchPage.recommended.map((paper) => paper.resourceId)), new Set([lowQualityPaperId, highQualityPaperId]));
-    assert.equal(researchPage.foundational.length, 0);
+    assert.equal(researchPage.foundational.some((paper) => paper.resourceId === lowQualityPaperId), false);
+    // Foundational picks are the curriculum's seminal papers, whatever the feed holds, most cited first.
+    await migrator`UPDATE catalog.resources SET metadata = metadata || '{"paperClass":"foundational","curriculum":{"itemIds":[],"trackIds":[]}}'::jsonb WHERE id = ${lowQualityPaperId}`;
+    await migrator`UPDATE catalog.paper_details SET citation_count = 2147483647 WHERE resource_id = ${lowQualityPaperId}`;
+    assert.equal((await getResearchPage(owner.id)).foundational[0]?.resourceId, lowQualityPaperId);
     await assert.rejects(
       () => getCollectionDetail(owner.id, privateForeignCollectionId),
       (error: unknown) => error instanceof AuthError && error.status === 404,

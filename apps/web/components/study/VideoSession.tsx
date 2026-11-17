@@ -450,7 +450,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
             {course ? <span className="session-course-count" title="Lessons completed">{completedCount}/{lessons.length} done</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
             {/* A finished session lives in the Library; there is nothing to end. */}
-            {session.status === "completed" ? null : <EndSession sessionId={session.id} />}
+            {session.status === "completed" ? null : <EndSession sessionId={session.id} mode="learn" />}
           </div>
         </header>
         <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers} style={{ backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`, backgroundPosition: `calc(50% + ${view.x}px) calc(50% + ${view.y}px)` }}>
@@ -470,7 +470,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
       {codePanel && codingEligible ? <div className="coding-overlay" hidden={codePanel.hidden}><CodingWorkspace key={active.resourceId} sessionId={session.id} onSeek={lesson.seek} onClose={collapse} /></div> : null}
       <aside className="session-panel" aria-label="Side panel" data-view={panel ?? undefined} hidden={!panel || panel === "code"} onPointerDown={collapseSidebar}>
         {panel === "ai" || panel === "notes" ? <PanelResizer key={panel} label={panel === "ai" ? "Resize chat" : "Resize notes"} storageKey={`learnspace:${panel === "ai" ? "chat" : "notes"}-width`} /> : null}
-        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} title={active.title} active={panel === "notes"} tutor={{ lesson: lessonState, capture: vision.capture, onControl: applyControl, onTurn, onGo: go, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onVoice: setLunyOn }} onCollapse={collapse} /></div> : null}
+        {notesPanel ? <div className="session-tool-slot" {...notesPanel}><SessionNotes key={active.resourceId} sessionId={session.id} title={active.title} material="video" active={panel === "notes"} tutor={{ lesson: lessonState, capture: vision.capture, onControl: applyControl, onTurn, onGo: go, sharing: vision.sharing, shareError: vision.error, onShare: () => { setFocused(true); void vision.start(); }, onVoice: setLunyOn }} onCollapse={collapse} /></div> : null}
         {checkPanel ? <div className="session-tool-slot" {...checkPanel}><MasteryCheck key={`${active.resourceId}-${watched}`} sessionId={session.id} resourceId={active.resourceId} next={masteryNext} place={{ kind: "video", positionMs: 0 }} onGo={go} onCollapse={collapse} /></div> : null}
         {aiPanel ? <div className="session-tool-slot" {...aiPanel}><SessionChat key={active.resourceId} sessionId={session.id} resource={active} place={{ kind: "video", positionMs: lesson.currentMs }} code={null} onGo={go} onCollapse={collapse} /></div> : null}
       </aside>

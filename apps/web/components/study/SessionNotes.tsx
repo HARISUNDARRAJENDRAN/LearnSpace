@@ -26,11 +26,19 @@ const backoff =(attempt: number) => Math.min(1_000 * 2 ** attempt, RETRY_MAX_MS)
 const transient = (status: number | null) => status === null || status === 408 || status === 429 || status >= 500;
 // While the study guide is being written the page checks back this often; while the transcript is still coming, less often.
 const GUIDE_POLL_MS: Partial<Record<NotesGuideStatus, number>> = { writing: 4_000, waiting: 15_000 };
-const guideNotice: Partial<Record<NotesGuideStatus, string>> = {
-  writing: "Luny is writing your study guide for this video…",
-  waiting: "Your study guide will be written as soon as this video's transcript is ready.",
-  unavailable: "This video has no transcript, so it has no study guide. Talk it through with Luny to build your notes.",
-  failed: "Your study guide couldn't be written just now.",
+const guideNotice: Record<"video" | "paper", Partial<Record<NotesGuideStatus, string>>> = {
+  video: {
+    writing: "Luny is writing your study guide for this video…",
+    waiting: "Your study guide will be written as soon as this video's transcript is ready.",
+    unavailable: "This video has no transcript, so it has no study guide. Talk it through with Luny to build your notes.",
+    failed: "Your study guide couldn't be written just now.",
+  },
+  paper: {
+    writing: "Luny is writing your study guide for this paper…",
+    waiting: "Your study guide will be written as soon as this paper is read in.",
+    unavailable: "LearnSpace has no text for this paper, so it has no study guide. Talk it through with Luny to build your notes.",
+    failed: "Your study guide couldn't be written just now.",
+  },
 };
 const fenced = (text: string) => { const [language = "", ...code] = text.split("\n"); return `\`\`\`${language.trim()}\n${code.join("\n")}\n\`\`\``; };
 
@@ -80,7 +88,7 @@ export type NotesTutor = {
   onVoice?: (on: boolean) => void;
 };
 
-export function SessionNotes({ sessionId, title, active = true, tutor, onCollapse }: { sessionId: string; title: string; active?: boolean; tutor: NotesTutor; onCollapse: () => void }) {
+export function SessionNotes({ sessionId, title, material, active = true, tutor, onCollapse }: { sessionId: string; title: string; material: "video" | "paper"; active?: boolean; tutor: NotesTutor; onCollapse: () => void }) {
   const [notes, setNotes] = useState<NotesView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
@@ -217,7 +225,7 @@ export function SessionNotes({ sessionId, title, active = true, tutor, onCollaps
       {tutor.shareError ? <p className="session-tool-message is-error notes-share" role="alert">{tutor.shareError} <button type="button" onClick={tutor.onShare}>Share this tab</button></p> : null}
       {notes === null && !failed ? <p className="notes-loading" role="status">Opening your page…</p> : <article className="notes-document" aria-busy={guide === "writing"}>
         <h2 className="notes-title">{title}</h2>
-        {guide && guideNotice[guide] ? <p className={`notes-guide is-${guide}`} role="status">{guideNotice[guide]}{guide === "failed" ? <> <button type="button" onClick={writeGuide}>Try again</button></> : null}</p> : null}
+        {guide && guideNotice[material][guide] ? <p className={`notes-guide is-${guide}`} role="status">{guideNotice[material][guide]}{guide === "failed" ? <> <button type="button" onClick={writeGuide}>Try again</button></> : null}</p> : null}
         <NotesEditor blocks={blocks} revision={shown?.revision ?? 0} onOps={(ops) => edit({ ops })} onGo={tutor.onGo} />
       </article>}
       {failed ? <p className="session-tool-message is-error" role="alert">{failed}</p> : null}

@@ -5,6 +5,7 @@ import type { MasteryQuestionView, MasteryView } from "@learnspace/shared/master
 import { Check, LoaderCircle, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { sessionsHref } from "../application/sessions";
 import { LoadingState } from "./LoadingState";
 import { type MasteryNext, MasteryResults } from "./MasteryResults";
 import { MathText } from "./MathText";
@@ -28,8 +29,25 @@ const percent = (score: number) => `${Math.round(score * 100)}%`;
  * marked as it is answered, linking back to the moment it comes from. A failed set is replaced by a fresh one.
  */
 /** `place` is where the learner is, saved as the resume point when they finish the lesson from here. */
+const COPY = {
+  video: {
+    writing: "Writing hard questions from the transcript",
+    unavailable: "This video has no transcript, so it has no mastery check. Finishing it moves you on.",
+    locked: (pass: string) => `Watch the video to the end to unlock its check: hard questions on the whole lesson. Score ${pass} or more to unlock the next video.`,
+    ready: (pass: string) => `Before the next video unlocks, show you've mastered this one: 5 to 10 hard questions on the whole lesson, multiple choice and short written answers. You need ${pass}.`,
+  },
+  paper: {
+    writing: "Writing hard questions from the paper",
+    unavailable: "LearnSpace has no text for this paper, so it has no mastery check. Finishing it moves you on.",
+    locked: (pass: string) => `Read the paper to the end to unlock its check: hard questions on the whole paper. Score ${pass} or more to unlock the next paper.`,
+    ready: (pass: string) => `Before the next paper unlocks, show you've mastered this one: 5 to 10 hard questions on the whole paper, multiple choice and short written answers. You need ${pass}.`,
+  },
+} as const;
+
 export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onCollapse }: { sessionId: string; resourceId: string; next: MasteryNext; place: StudyAnchor; onGo: (place: StudyAnchor) => void; onCollapse: () => void }) {
   const router = useRouter();
+  const material = place.kind === "paper" ? "paper" : "video";
+  const copy = COPY[material];
   const base = `/api/v1/study-sessions/${sessionId}/mastery`;
   const [view, setView] = useState<MasteryView | null>(null);
   const [busy, setBusy] = useState<"writing" | "grading" | null>(null);
@@ -106,7 +124,7 @@ export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onColla
       body: JSON.stringify({ resourceId, progressPct: 100, anchor: place, event: "complete", idempotencyKey: `continue-${scoredId ?? resourceId}` }),
     }).catch(() => null);
     if (next.nextTitle) router.refresh();
-    else router.push("/app/sessions");
+    else router.push(sessionsHref(material === "paper" ? "research" : "learn"));
   };
   const answer = (question: MasteryQuestionView, response: { choice: number } | { text: string }) =>
     void run(question.type === "written" ? "grading" : null, () => request(`${base}/answers`, { checkId: view?.check?.id, questionId: question.id, ...response }));
@@ -115,16 +133,16 @@ export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onColla
   const shell = (body: React.ReactNode, count?: string) => <div className="session-tool">{header(count)}<div className="session-tool-body" data-lenis-prevent>{body}</div></div>;
   const alert = error ? <p className="session-tool-message is-error" role="alert">{error}</p> : null;
 
-  if (busy === "writing" || writing) return shell(<LoadingState label="Writing hard questions from the transcript" />);
+  if (busy === "writing" || writing) return shell(<LoadingState label={copy.writing} />);
   if (!view) return shell(error ? alert : <LoadingState label="Loading the check" />);
   const pass = percent(view.passScore);
   const check = view.check;
 
-  if (view.state === "unavailable") return shell(<div className="session-tool-empty"><p>This video has no transcript, so it has no mastery check. Finishing it moves you on.</p></div>);
-  if (view.state === "locked") return shell(<div className="session-tool-empty"><p>Watch the video to the end to unlock its check: hard questions on the whole lesson. Score {pass} or more to unlock the next video.</p></div>);
+  if (view.state === "unavailable") return shell(<div className="session-tool-empty"><p>{copy.unavailable}</p></div>);
+  if (view.state === "locked") return shell(<div className="session-tool-empty"><p>{copy.locked(pass)}</p></div>);
   if (view.state === "ready" || !check) {
     return shell(<div className="session-tool-empty">
-      <p>Before the next video unlocks, show you&apos;ve mastered this one: 5 to 10 hard questions on the whole lesson, multiple choice and short written answers. You need {pass}.</p>
+      <p>{copy.ready(pass)}</p>
       <button className="session-primary-button" type="button" onClick={start}>Start the check</button>
       {alert}
     </div>);
@@ -134,7 +152,7 @@ export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onColla
   const question = questions[index];
   if (scored && (!question || index >= questions.length)) {
     return shell(<>
-      <MasteryResults check={scored} passScore={view.passScore} next={next} moving={moving} onGo={onGo} onReview={(at) => { setIndex(at); setText(""); }}
+      <MasteryResults material={material} check={scored} passScore={view.passScore} next={next} moving={moving} onGo={onGo} onReview={(at) => { setIndex(at); setText(""); }}
         onContinue={() => void proceed()} onRetake={start} onAnalyse={analyse} />
       {alert}
     </>);

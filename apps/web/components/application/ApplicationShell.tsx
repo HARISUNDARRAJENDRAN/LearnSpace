@@ -2,11 +2,11 @@
 
 import type { StudySessionSummary } from "@learnspace/shared";
 import type { ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
 import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
-import { AppSidebar } from "./AppSidebar";
+import { AppSidebar, modeFromUrl } from "./AppSidebar";
 import { HeaderSearch } from "./HeaderSearch";
 import { SessionsProvider } from "./sessions";
 import { SmoothScroll } from "./SmoothScroll";
@@ -30,7 +30,7 @@ export function ApplicationShell({ user, sessions, children }: { user: Applicati
     searchRef.current?.focus();
   }, []);
   const collapseSidebar = useCallback(() => setSidebarCollapsed(true), []);
-  const searchMode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
+  const searchMode = modeFromUrl(pathname, useSearchParams());
   useEffect(prefetchSpeechModels, []);
 
   return (

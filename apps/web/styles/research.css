@@ -213,15 +213,6 @@
 .paper-reader-ask svg { width: 13px; height: 13px; }
 
 /* Research Library */
-.research-library-reading { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; padding: 0; margin: 0; list-style: none; }
-.research-library-resume { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; align-items: start; padding: 14px 16px; border: 1px solid var(--line, #e5e5e5); border-radius: 14px; color: inherit; text-decoration: none; background: var(--surface, #fff); transition: border-color .15s, transform .15s; }
-.research-library-resume:hover { border-color: var(--r-accent); transform: translateY(-1px); }
-.research-library-resume:focus-visible { outline: 2px solid var(--r-accent); outline-offset: 2px; }
-.research-library-resume > svg { width: 18px; height: 18px; margin-top: 2px; color: var(--r-accent); }
-.research-library-resume strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 14px; line-height: 1.35; }
-.research-library-resume small { display: block; margin-top: 4px; color: var(--muted, #6b6b6b); font-size: 12px; }
-.research-library-progress { grid-column: 1 / -1; height: 4px; border-radius: 99px; background: var(--r-accent-soft); overflow: hidden; }
-.research-library-progress > span { display: block; height: 100%; background: var(--r-accent); }
 
 /* Focus mode: the paper re-typeset as a journal page */
 /* Resolved at the root: the application shell repoints --font-editorial at its sans face. */
@@ -474,3 +465,9 @@ h3.paper-focus-heading { margin: 1em 0 .4em; font-family: inherit; font-size: .9
 .guide-mapping th { color: var(--session-ink-muted); font-size: 12px; font-weight: 500; text-align: left; }
 .guide-mapping th, .guide-mapping td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--session-hairline); vertical-align: top; }
 .guide-gpu { display: grid; gap: 6px; margin-top: 4px; padding: 10px 12px; border: 1px dashed var(--session-line); border-radius: 8px; }
+
+/* Continue reading wears Learn's Library card; a paper's first page stands in for the video thumbnail. */
+.research-library-media { display: grid; place-items: center; background: #eef1f1; }
+.research-library-media .research-paper-page { width: 96px; height: 124px; }
+.research-library-progress { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; background: var(--r-accent-soft); }
+.research-library-progress > span { display: block; height: 100%; background: var(--r-accent); }

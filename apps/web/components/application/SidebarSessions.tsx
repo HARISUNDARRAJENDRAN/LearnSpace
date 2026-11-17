@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useState } from "react";
 import { useCodingEligibility } from "../coding/useCodingEligibility";
 import { sessionParts, TOOL_PARAM } from "../study/tools";
-import { lastSeenRoute, sessionIdFromPath, useSessions } from "./sessions";
+import { lastSeenRoute, sessionIdFromPath, sessionsHref, useSessions } from "./sessions";
 
 /** Sessions shown before "Show more"; the open session is always listed. */
 const VISIBLE_SESSIONS = 6;
@@ -131,7 +131,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
     setMenu(null);
     void attempt(async () => {
       await remove(session.id);
-      if (session.id === activeId) router.push("/app/sessions");
+      if (session.id === activeId) router.push(sessionsHref(mode));
     }, "That session couldn't be ended. Try again.");
   }
 
@@ -144,8 +144,8 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   }
 
   const overviewActive = pathname === "/app/sessions";
-  // Sessions goes straight back to where the learner was; with nothing open it asks for the next video.
-  const resumeHref = lastSeenRoute(sessions) ?? "/app/sessions";
+  // Sessions goes straight back to where the learner was in this mode; with nothing open it asks what to study next.
+  const resumeHref = lastSeenRoute(visible) ?? sessionsHref(mode);
   return (
     <div className={`application-sessions${groupOpen ? " is-open" : ""}`}>
       <div className="application-nav-row">

@@ -80,7 +80,7 @@ function ItemCard({ entry }: { entry: DiscoverItem }) {
 }
 
 function ItemAction({ item, resourceId }: { item: CurriculumItem; resourceId: string | null }) {
-  if (item.type === "concept") return <Link className="discover-item-link" href={`/app/discover?q=${encodeURIComponent(item.title)}`}>Learn it<ArrowUpRight aria-hidden="true" /></Link>;
+  if (item.type === "concept") return <Link className="discover-item-link" href={`/app/discover?learn=${encodeURIComponent(item.title)}`}>Learn it<ArrowUpRight aria-hidden="true" /></Link>;
   if (resourceId) return <StartStudyButton className="discover-item-link is-primary" resourceId={resourceId} origin="research" label="Study" />;
   return <a className="discover-item-link" href={item.url} target="_blank" rel="noreferrer">arXiv<ArrowUpRight aria-hidden="true" /></a>;
 }

@@ -4,7 +4,7 @@ import type { StudyWorkspace } from "@learnspace/shared";
 import { CircleStop, Maximize, Minus, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { useSessions } from "../application/sessions";
+import { sessionsHref, useSessions } from "../application/sessions";
 import type { CanvasRect } from "./CourseGraph";
 
 /** The whiteboard every study session sits on (videos, courses, papers, paper sets). */
@@ -160,7 +160,7 @@ export function savedCanvas(view: CanvasView, focused: boolean): NonNullable<Stu
  * Ends the session: it leaves Sessions and the sidebar, and the learner goes back to the session they were in before it (or
  * the next-video picker). Progress, notes and conversations stay with the material, so studying it again picks them up.
  */
-export function EndSession({ sessionId }: { sessionId: string }) {
+export function EndSession({ sessionId, mode }: { sessionId: string; mode: "learn" | "research" }) {
   const router = useRouter();
   const { remove } = useSessions();
   const [open, setOpen] = useState(false);
@@ -179,7 +179,7 @@ export function EndSession({ sessionId }: { sessionId: string }) {
     try {
       await remove(sessionId);
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-      router.push("/app/sessions");
+      router.push(sessionsHref(mode));
     } catch {
       setState("error");
     }

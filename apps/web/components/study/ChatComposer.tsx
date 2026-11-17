@@ -5,18 +5,32 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MathText } from "./MathText";
 import { useSpeechInput } from "./useSpeechInput";
 
-/** Ready-made asks. A skill fills the input with its prompt; one that ends in a space waits for the learner to finish it. */
-export const SKILLS = [
-  { name: "/explain", desc: "What was just said", prompt: "Explain what was just said" },
-  { name: "/summarize", desc: "What you've watched so far", prompt: "Summarize what I've watched so far" },
+const SHARED_SKILLS = [
   { name: "/quiz", desc: "Check what stuck", prompt: "Quiz me on the main idea" },
-  { name: "/define", desc: "A term the instructor uses", prompt: "Define " },
   { name: "/example", desc: "A worked example", prompt: "Give me a worked example of " },
   { name: "/compare", desc: "Two ideas side by side", prompt: "Compare " },
   { name: "/steps", desc: "How a process works", prompt: "Walk me through how " },
-] as const;
+];
 
-type Skill = (typeof SKILLS)[number];
+/** Ready-made asks for each kind of material. A skill fills the input with its prompt; one that ends in a space waits for the learner to finish it. */
+export const SKILLS = {
+  video: [
+    { name: "/explain", desc: "What was just said", prompt: "Explain what was just said" },
+    { name: "/summarize", desc: "What you've watched so far", prompt: "Summarize what I've watched so far" },
+    SHARED_SKILLS[0]!,
+    { name: "/define", desc: "A term the instructor uses", prompt: "Define " },
+    ...SHARED_SKILLS.slice(1),
+  ],
+  paper: [
+    { name: "/explain", desc: "The page you're on", prompt: "Explain this page" },
+    { name: "/summarize", desc: "What you've read so far", prompt: "Summarize what I've read so far" },
+    SHARED_SKILLS[0]!,
+    { name: "/define", desc: "A term the paper uses", prompt: "Define " },
+    ...SHARED_SKILLS.slice(1),
+  ],
+} as const;
+
+type Skill = (typeof SKILLS)[keyof typeof SKILLS][number];
 const INPUT_ID = "study-question";
 
 /** The `/word` being typed at the end of the draft, if any. */
@@ -63,7 +77,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
   const token = dismissed ? null : slashToken(draft);
   const open = plusOpen || token !== null;
   const query = plusOpen ? "" : token?.query ?? "";
-  const skills = open ? SKILLS.filter((skill) => skill.name.slice(1).startsWith(query)) : [];
+  const skills = open ? SKILLS[noun].filter((skill) => skill.name.slice(1).startsWith(query)) : [];
 
   const resetActive = () => {
     setActive(0);

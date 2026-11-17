@@ -1,9 +1,10 @@
 "use client";
 
 import { AlignJustify, Columns2, LayoutGrid, Menu, Plus } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
+import { modeFromUrl } from "./AppSidebar";
 
 export type ApplicationViewMode = "grid" | "compact" | "list";
 
@@ -18,6 +19,8 @@ function contextLabel(pathname: string): string {
   if (pathname.startsWith("/app/discover")) return "Discover";
   if (pathname.startsWith("/app/sessions")) return "Sessions";
   if (pathname.startsWith("/app/library")) return "Library";
+  if (pathname.startsWith("/app/research/discover")) return "Discover";
+  if (pathname.startsWith("/app/research/authors")) return "Authors";
   if (pathname.startsWith("/app/research")) return "Research";
   if (pathname.startsWith("/app/second-brain")) return "Second Brain";
   if (pathname.startsWith("/app/settings")) return "Settings";
@@ -38,7 +41,16 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange, search }: AppHea
   const router = useRouter();
   const [sourceDiscoveryOpen, setSourceDiscoveryOpen] = useState(false);
   const sourceTriggerRef = useRef<HTMLButtonElement>(null);
-  const mode = pathname.startsWith("/app/research") || pathname.startsWith("/app/study/paper/") ? "research" : "learn";
+  const searchParams = useSearchParams();
+  const mode = modeFromUrl(pathname, searchParams);
+  // `?learn=<topic>` (a research path's concept) opens Start learning on that topic.
+  const learnTopic = searchParams.get("learn")?.trim().slice(0, 200) || undefined;
+  // The dialog follows the parameter, so navigating back past it closes the dialog too.
+  useEffect(() => setSourceDiscoveryOpen(Boolean(learnTopic)), [learnTopic]);
+  const closeSourceDiscovery = () => {
+    setSourceDiscoveryOpen(false);
+    if (learnTopic) router.replace(pathname);
+  };
   const isHome = pathname === "/app";
   const isDiscover = pathname.startsWith("/app/discover");
   const hasShellHeading = isHome || pathname === "/app/sessions" || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings" || pathname === "/app/profile";
@@ -79,7 +91,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange, search }: AppHea
         </div>
       </div>
 
-      <SourceDiscoveryModal key={mode} mode={mode} isOpen={sourceDiscoveryOpen} onClose={() => setSourceDiscoveryOpen(false)} onSwitchMode={(nextMode) => router.push(nextMode === "research" ? "/app/research" : "/app")} triggerRef={sourceTriggerRef} />
+      <SourceDiscoveryModal key={mode} mode={mode} isOpen={sourceDiscoveryOpen} initialQuery={learnTopic} onClose={closeSourceDiscovery} onSwitchMode={(nextMode) => router.push(nextMode === "research" ? "/app/research" : "/app")} triggerRef={sourceTriggerRef} />
     </header>
   );
 }

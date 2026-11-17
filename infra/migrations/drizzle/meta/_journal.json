@@ -344,6 +344,13 @@
       "when": 1794841200000,
       "tag": "0048_paper_references_worker_delete",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794927600000,
+      "tag": "0049_merge_duplicate_authors",
+      "breakpoints": true
     }
   ]
 }

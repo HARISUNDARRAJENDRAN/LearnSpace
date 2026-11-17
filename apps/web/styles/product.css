@@ -10,6 +10,10 @@
   width: min(100% - 32px, 600px);
 }
 
+.sessions-page-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.sessions-page-actions a { display: inline-flex; height: 36px; align-items: center; padding: 0 14px; border: 1px solid var(--line-subtle); border-radius: 8px; color: var(--ink-strong); font-size: 14px; font-weight: 500; text-decoration: none; }
+.sessions-page-actions a:first-child { border-color: var(--ink-strong); background: var(--ink-strong); color: var(--paper); }
+
 .product-page h1,
 .product-page h2,
 .product-page h3 {
