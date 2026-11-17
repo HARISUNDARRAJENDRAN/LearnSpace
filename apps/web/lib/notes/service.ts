@@ -216,8 +216,11 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
     return { video, row, chunks, paper };
   });
   notes.catch(lost);
+  const resourceId = found.then((video) => video.resourceId);
+  // masteryRecord awaits it only after its own query; a failure meanwhile is the notes lane's, reported there.
+  resourceId.catch(() => undefined);
   const talk = readOnly(userId, async (tx) => {
-    const record = turn.record ? await masteryRecord(tx, userId, sessionId, found.then((video) => video.resourceId)) : "";
+    const record = turn.record ? await masteryRecord(tx, userId, sessionId, resourceId) : "";
     const { lines, positionMs } = await recentLines(tx, sessionId, (await found).resourceId, turn.lines);
     return { lines, positionMs, record };
   });
