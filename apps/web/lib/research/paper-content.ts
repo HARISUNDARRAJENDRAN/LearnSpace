@@ -53,7 +53,7 @@ export async function getPaperContent(userId: string, resourceId: string): Promi
   return withUserTransaction(userId, async (tx) => {
     const [row] = await tx.select({ resource: resources, paper: paperDetails, version: resourceVersions })
       .from(resources)
-      .innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+      .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
       .leftJoin(resourceVersions, eq(resourceVersions.id, resources.currentVersionId))
       .where(and(eq(resources.id, resourceId), eq(resources.type, "paper"), isNull(resources.deletedAt), or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"]))))
       .limit(1);
@@ -75,11 +75,11 @@ export async function getPaperContent(userId: string, resourceId: string): Promi
       resourceId,
       title: row.resource.title,
       authors: authorRows.map(({ name }) => name),
-      venue: row.paper.venue,
-      publicationDate: row.paper.publicationDate ? String(row.paper.publicationDate) : null,
-      doi: row.paper.doi,
-      arxivId: row.paper.arxivId,
-      abstract: row.paper.abstract,
+      venue: row.paper?.venue ?? null,
+      publicationDate: row.paper?.publicationDate ? String(row.paper.publicationDate) : null,
+      doi: row.paper?.doi ?? (row.resource.provider === "doi" ? row.resource.externalId : null),
+      arxivId: row.paper?.arxivId ?? (row.resource.provider === "arxiv" ? row.resource.externalId : null),
+      abstract: row.paper?.abstract ?? row.resource.description,
       status: ready ? "ready" : row.version?.processingStatus === "failed" || row.resource.status === "failed" ? "failed" : "preparing",
       blocks,
       references: referenceRows.map((reference) => ({

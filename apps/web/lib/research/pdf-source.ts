@@ -23,13 +23,15 @@ export function arxivPdfUrl(arxivId: string): string | null {
 /** The PDF a learner may read for a catalogue paper they can see: arXiv first (stable, verified), else an allow-listed source URL. */
 export async function paperPdfUrl(userId: string, resourceId: string): Promise<URL> {
   const [row] = await withUserTransaction(userId, (tx) => tx
-    .select({ arxivId: paperDetails.arxivId, pdfSourceUrl: paperDetails.pdfSourceUrl })
+    .select({ provider: resources.provider, externalId: resources.externalId, arxivId: paperDetails.arxivId, pdfSourceUrl: paperDetails.pdfSourceUrl })
     .from(resources)
-    .innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
+    .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
     .where(and(eq(resources.id, resourceId), eq(resources.type, "paper"), isNull(resources.deletedAt), or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"]))))
     .limit(1));
   if (!row) throw new AuthError("PAPER_NOT_FOUND", "This paper is not available.", 404);
-  const candidate = (row.arxivId ? arxivPdfUrl(row.arxivId) : null) ?? row.pdfSourceUrl;
+  // Discovery stores the arXiv ID before the ingestion worker writes paper details.
+  const arxivId = row.arxivId ?? (row.provider === "arxiv" ? row.externalId : null);
+  const candidate = (arxivId ? arxivPdfUrl(arxivId) : null) ?? row.pdfSourceUrl;
   const url = candidate ? trustedPdfUrl(candidate) : null;
   if (!url) throw new AuthError("PAPER_PDF_UNAVAILABLE", "This paper's PDF can only be opened at its source.", 404);
   return url;

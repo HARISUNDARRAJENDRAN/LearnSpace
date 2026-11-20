@@ -123,6 +123,8 @@ test(
   "unseen arXiv and DOI sources create preparing paper resources without duplicate ingestion requests",
   { skip: databaseAvailable ? false : "database URLs are required" },
   async () => {
+    const { paperPdfUrl } = await import("../lib/research/pdf-source");
+    const { getPaperContent } = await import("../lib/research/paper-content");
     const [{ createEmailUser }, { resolveSource }, { startOrResumeStudySession }, { closeDb }] = await Promise.all([
       import("../lib/auth/repository"),
       import("../lib/source-discovery/service"),
@@ -172,6 +174,12 @@ test(
       assert.equal(started.resourceType, "paper");
       assert.equal(started.readiness, "preparing");
       assert.equal(started.route, `/app/study/paper/${sessionId}`);
+      assert.equal((await paperPdfUrl(user.id, arxiv.resourceId)).href, `https://arxiv.org/pdf/${arxivId}`);
+      await assert.rejects(paperPdfUrl(user.id, doi.resourceId), { code: "PAPER_PDF_UNAVAILABLE" });
+      const content = await getPaperContent(user.id, arxiv.resourceId);
+      assert.equal(content.status, "preparing");
+      assert.equal(content.arxivId, arxivId);
+      assert.deepEqual(content.blocks, []);
     } finally {
       globalThis.fetch = originalFetch;
       await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${user.id}`;
