@@ -490,7 +490,7 @@
 }
 
 .ls-hero-header {
-	padding-block: calc(clamp(48px, 11vw, 80px) - 28px) clamp(52px, 12vw, 96px);
+	padding-block: calc(clamp(48px, 11vw, 80px) - 18px) calc(clamp(52px, 12vw, 96px) - 10px);
 	text-align: center;
 }
 
@@ -571,7 +571,7 @@
 
 @media (max-width: 767px) {
 	.ls-hero-header {
-		padding-block: calc(clamp(64px, 18vw, 104px) - 28px) clamp(56px, 13vw, 96px);
+		padding-block: calc(clamp(64px, 18vw, 104px) - 18px) calc(clamp(56px, 13vw, 96px) - 10px);
 		text-align: start;
 	}
 
