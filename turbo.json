@@ -3,7 +3,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**", ".next/**"],
+      "outputs": ["dist/**", ".next/**", "native/*.node"],
       "env": ["DATABASE_URL", "DATABASE_AUTH_URL"]
     },
     "typecheck": {

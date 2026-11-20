@@ -7,3 +7,4 @@ if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
 fi
 export PATH="$HOME/.cargo/bin:$PATH"
 pnpm turbo run build --filter=@learnspace/web
+test -s packages/pdf-parser/native/learnspace_pdf_parser.linux-x64-gnu.node

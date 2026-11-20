@@ -18,7 +18,9 @@ export default async function PaperStudyRoute({ params }: Props) {
     const session = await getStudySession(auth.user.id, sessionId, { seen: true });
     if (session.activeResource?.type === "video") redirect(`/app/study/video/${sessionId}`);
     if (!session.activeResource) notFound();
-    if (session.activeResource.readiness === "preparing") requestPaperIngestion(session.activeResource.resourceId);
+    if (session.activeResource.readiness !== "ready") {
+      await requestPaperIngestion(session.activeResource.resourceId, session.activeResource.readiness === "unavailable");
+    }
     return <PaperSession key={`${session.id}:${session.activeResourceId}`} session={session} active={session.activeResource} />;
   } catch (error) {
     if (error instanceof AuthError && error.status === 404) notFound();

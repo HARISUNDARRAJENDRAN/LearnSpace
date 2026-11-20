@@ -84,14 +84,14 @@ export async function parsePaperPdf(bytes: Uint8Array, opts: ParseOptions): Prom
 function runIsolated(bytes: Uint8Array, trustedResearch: boolean, timeoutMs: number, signal?: AbortSignal): Promise<NativeResult> {
   return new Promise((resolve, reject) => {
     // shortcut: the child shares container memory; the function limit is the hard OOM boundary.
-    // Not `fork(new URL("./child.js", import.meta.url))`: Next's bundler resolves fork() targets and turns that URL into a
-    // client asset, while it maps import.meta.url to this file's real path at runtime. A spawned node with an IPC channel
-    // is what fork() does; next.config traces child.js and the native module into the function.
+    // Next leaves this package external and traces the child script and native module into the function.
     const child: ChildProcess = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "child.js")], {
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
       serialization: "advanced",
     });
     let settled = false;
+    let diagnostic = "";
+    child.stderr?.setEncoding("utf8").on("data", (text: string) => { diagnostic = (diagnostic + text).slice(0, 1000); });
     const finish = (error?: Error, value?: NativeResult) => {
       if (settled) return;
       settled = true;
@@ -109,8 +109,8 @@ function runIsolated(bytes: Uint8Array, trustedResearch: boolean, timeoutMs: num
       else finish(new Error("PDF parser returned an invalid response"));
     });
     child.once("error", (error) => finish(error));
-    child.once("exit", (code) => {
-      if (!settled) finish(new Error(`PDF parser child exited with code ${code}`));
+    child.once("close", (code, childSignal) => {
+      if (!settled) finish(new Error(`PDF parser child exited with ${childSignal ?? `code ${code}`}: ${diagnostic.trim()}`));
     });
     child.send({ bytes: Buffer.from(bytes), trustedResearch, maxPages: MAX_PDF_PAGES }, (error) => {
       if (error) finish(error);
