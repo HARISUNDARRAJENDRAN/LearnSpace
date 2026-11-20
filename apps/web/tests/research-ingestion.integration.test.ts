@@ -6,7 +6,7 @@ import { claimPaperIngestion } from "../lib/research/ingestion";
 
 const databaseAvailable = Boolean(process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_WORKER_URL);
 
-test("Only one request per window claims an unparsed paper, and a parsed or failed paper is never claimed", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
+test("An ingestion claim is exclusive and reopens parser startup failures only", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
   const migrator = postgres(process.env.DATABASE_MIGRATOR_URL!, { max: 1, prepare: false, connect_timeout: 10 });
   const worker = postgres(process.env.DATABASE_WORKER_URL!, { max: 1, prepare: false, connect_timeout: 10 });
   const externalId = `ingestion-claim-${randomUUID()}`;
@@ -26,7 +26,15 @@ test("Only one request per window claims an unparsed paper, and a parsed or fail
 
     const [version] = await migrator<{ id: string }[]>`
       INSERT INTO catalog.resource_versions (resource_id, version_no, source_sha256, raw_object_key, mime_type, byte_size, parser_name, parser_version, processing_status)
-      VALUES (${id}, 1, ${"0".repeat(64)}, ${`external/${id}`}, 'application/pdf', 1, 'test', 'test', 'ready') RETURNING id`;
+      VALUES (${id}, 1, ${"0".repeat(64)}, ${`external/${id}`}, 'application/pdf', 1, 'test', 'test', 'failed') RETURNING id`;
+    await migrator`
+      UPDATE catalog.resource_versions SET failure_code = 'parse_failed', failure_detail = 'PDF parser child exited with code 1'
+      WHERE id = ${version!.id}`;
+    assert.equal(await claimPaperIngestion(worker, id), true, "a parser startup failure can be retried");
+    const [reopened] = await migrator<{ status: string }[]>`SELECT status FROM catalog.resources WHERE id = ${id}`;
+    assert.equal(reopened?.status, "pending");
+    assert.equal(await claimPaperIngestion(worker, id), false, "only one request reopens the paper");
+    await migrator`UPDATE catalog.resource_versions SET processing_status = 'ready' WHERE id = ${version!.id}`;
     await migrator`UPDATE catalog.resources SET status = 'ready', current_version_id = ${version!.id} WHERE id = ${id}`;
     assert.equal(await claimPaperIngestion(worker, id), false, "a parsed paper is not claimed");
   } finally {
