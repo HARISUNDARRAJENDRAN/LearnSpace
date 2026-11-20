@@ -9,6 +9,7 @@ test("renders the LearnSpace landing hero", () => {
 	const markup = renderToStaticMarkup(<Hero />);
 
 	assert.match(markup, /AI-native learning workspace/);
+	assert.doesNotMatch(markup, /ls-demo-toolbar/);
 	assert.match(markup, /Learn anything on the internet,/);
 	assert.match(markup, /without the internet’s distractions\./);
 	assert.match(markup, /Start learning/);

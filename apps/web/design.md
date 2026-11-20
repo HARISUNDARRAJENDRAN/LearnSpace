@@ -33,19 +33,19 @@ Tokens live in [`app/globals.css`](app/globals.css) under `:root` as `--ls-*` va
 | `--ls-dark` | `#22292b` | Dark showcase panel |
 | `--ls-on-dark` | `#fafafa` | Text on `--ls-ink` or `--ls-dark` |
 
-Status colors for product UI: success `#00c758`, warning `#f99c00`, danger `#fb2c36`. Window controls use `#ff6568`, `#fcbb00` and `#00c758`.
+Status colors for product UI: success `#00c758`, warning `#f99c00`, danger `#fb2c36`.
 
 Pastel washes for illustration panels are gradients of the sky, lilac, mint and peach families. Keep them very light so the UI card on top carries the contrast.
 
 ## Typography
 
-Family: `--ls-font-serif` (Geist Serif Regular, a single 400 weight, from the `geist` package) for Display, Heading 2, Heading 3 and page titles; `--ls-font` (Geist Sans, variable 100–900) for everything else; `--ls-font-mono` (Geist Mono, falling back to the system monospace) for code. Never set the serif above 400: it has no bold and the browser would fake one.
+The landing page uses Geist Sans (`--ls-font`, variable 100–900), including the wordmark and product previews.
 
 | Style | Size / line height | Weight | Tracking | Used for |
 | --- | --- | --- | --- | --- |
-| Display (serif) | 36/40 → md 44/48 → xl 48/52 | 400 | -0.02em | Hero headline |
-| Heading 2 (serif) | 30/36 → sm 36/44 → xl 44/48 | 400 | -0.02em | Section headline |
-| Heading 3 (serif) | 24/32 → xl 30/40 | 400 | -0.015em | Sub-block headline |
+| Display | 28–48px / 1.12 | 400 | -0.035em | Hero headline |
+| Heading 2 | 30/36 → sm 36/44 → xl 44/48 | 400 | -0.02em | Section headline |
+| Heading 3 | 24/32 → xl 30/40 | 400 | -0.015em | Sub-block headline |
 | Lead | 16/24 → sm 18/28 → xl 20/30 | 400 | 0 | Introduction statements |
 | Body | 16/24 → xl 18/28 | 400 | 0 | Section descriptions |
 | Caption | 14/20 → xl 16/24 | 400 | 0 | Card captions, footer links (500) |

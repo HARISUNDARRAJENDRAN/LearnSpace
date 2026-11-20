@@ -1,28 +1,8 @@
-import { ArrowRight, ChevronLeft, ChevronRight, RotateCw } from "lucide-react";
+import { ArrowRight, ChevronRight } from "lucide-react";
 
 import { DemoVideo } from "./DemoVideo";
 import { SiteNav } from "./SiteNav";
 import { Sky } from "./Sky";
-
-/** Browser window chrome around the product demo video. */
-function DemoFrame() {
-	return (
-		<div className="ls-demo">
-			<div className="ls-demo-toolbar" aria-hidden="true">
-				<span className="ls-demo-lights">
-					<span />
-					<span />
-					<span />
-				</span>
-				<ChevronLeft />
-				<ChevronRight />
-				<RotateCw />
-				<span className="ls-demo-address">learn-space.app</span>
-			</div>
-			<DemoVideo />
-		</div>
-	);
-}
 
 export function Hero({ authenticated = false }: { authenticated?: boolean }) {
 	const appHref = authenticated ? "/app" : "/register";
@@ -49,7 +29,7 @@ export function Hero({ authenticated = false }: { authenticated?: boolean }) {
 					</a>
 				</header>
 				<div className="ls-hero-stage">
-					<DemoFrame />
+					<DemoVideo />
 				</div>
 				<div className="ls-hero-ring" aria-hidden="true" />
 			</section>

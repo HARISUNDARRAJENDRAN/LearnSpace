@@ -40,6 +40,8 @@ async function stabilize(page: Page) {
 }
 
 test("landing hero visual regression", async ({ page }) => {
+  // The demo reads the motion preference when it mounts.
+  await page.emulateMedia({ reducedMotion: "reduce" });
   for (const [name, viewport] of [
     ["desktop", desktop],
     ["tablet", tablet],
@@ -49,6 +51,9 @@ test("landing hero visual regression", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-testid=marketing-hero]")).toBeVisible();
     await stabilize(page);
+    for (const selector of ["#hero-title", ".ls-h2", ".ls-h3"]) {
+      await expect(page.locator(selector).first()).toHaveCSS("font-family", /^GeistSans,/);
+    }
     // Reduced motion keeps the demo on its poster and, once hydrated, gives it the browser's own controls,
     // whose buffering bar varies run to run.
     await page.locator(".ls-demo-video video[controls]").evaluate((video: HTMLVideoElement) => {
@@ -64,6 +69,29 @@ test("landing hero visual regression", async ({ page }) => {
       },
     );
   }
+});
+
+test("landing demo can enable sound after autoplay is blocked", async ({ page }) => {
+  await page.addInitScript(() => {
+    const play = HTMLMediaElement.prototype.play;
+    let audibleAutoplayBlocked = true;
+    HTMLMediaElement.prototype.play = function () {
+      if (this.muted) audibleAutoplayBlocked = false;
+      if (audibleAutoplayBlocked) {
+        return Promise.reject(new DOMException("Audible autoplay blocked", "NotAllowedError"));
+      }
+      return play.call(this);
+    };
+  });
+
+  await page.goto("/");
+  const video = page.getByLabel("LearnSpace product demo");
+  const sound = page.getByRole("button", { name: "Demo sound" });
+  await expect(video).toHaveJSProperty("muted", true);
+  await expect(video).toHaveJSProperty("paused", false);
+  await sound.click();
+  await expect(video).toHaveJSProperty("muted", false);
+  await expect(sound).toHaveAttribute("aria-pressed", "true");
 });
 
 test.describe("populated Home visual regression", () => {

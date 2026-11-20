@@ -1,6 +1,9 @@
 /* Landing page. Tokens live in app/globals.css; the system is documented in design.md. */
 
 .ls-landing {
+	--ls-font-mono: var(--ls-font);
+	--font-app: var(--ls-font);
+	--font-editorial: var(--ls-font);
 	overflow-x: clip;
 	background: var(--ls-bg);
 	color: var(--ls-ink);
@@ -15,6 +18,10 @@
 .ls-landing :where(ol, ul) {
 	padding: 0;
 	list-style: none;
+}
+
+.ls-landing :where(pre, code) {
+	font-family: inherit;
 }
 
 .ls-landing svg {
@@ -106,7 +113,6 @@
 .ls-h2 {
 	color: var(--ls-ink);
 	font-size: 30px;
-	font-family: var(--ls-font-serif);
 	font-weight: 400;
 	line-height: 36px;
 	letter-spacing: -0.02em;
@@ -115,7 +121,6 @@
 .ls-h3 {
 	color: var(--ls-ink);
 	font-size: 24px;
-	font-family: var(--ls-font-serif);
 	font-weight: 400;
 	line-height: 32px;
 	letter-spacing: -0.015em;
@@ -295,18 +300,11 @@
 	padding: 0 16px;
 }
 
-/* The inline nav sits 5px lower on the sky; the sticky bar keeps its height. */
-.ls-hero .ls-nav-bar {
-	top: 5px;
-}
-
-/* The wordmark is set in the headline serif so the lockup reads as part of the page. */
 .ls-logo {
 	display: inline-flex;
 	align-items: center;
 	gap: 9px;
 	color: var(--ls-ink);
-	font-family: var(--ls-font-serif);
 	font-size: 21px;
 	font-weight: 400;
 	letter-spacing: -0.025em;
@@ -456,11 +454,12 @@
 }
 
 .ls-hero {
+	--ls-hero-inset: clamp(20px, 5.5vw, 60px);
 	position: relative;
 	isolation: isolate;
 	overflow: hidden;
 	border-radius: var(--ls-radius-xl);
-	background: #a4e2f9;
+	background: #b8eaf8;
 	box-shadow: var(--ls-shadow-xl);
 }
 
@@ -481,18 +480,27 @@
 	pointer-events: none;
 }
 
-.ls-hero-header {
+.ls-hero-header,
+.ls-hero-stage {
 	position: relative;
 	z-index: 1;
-	padding: 64px 32px;
+	max-width: calc(1320px + var(--ls-hero-inset) * 2);
+	margin-inline: auto;
+	padding-inline: var(--ls-hero-inset);
+}
+
+.ls-hero-header {
+	padding-block: calc(clamp(48px, 11vw, 80px) - 28px) clamp(52px, 12vw, 96px);
+	text-align: center;
 }
 
 .ls-badge {
-	display: inline-flex;
+	display: flex;
 	align-items: center;
 	gap: 2px;
+	width: fit-content;
 	height: 24px;
-	margin-bottom: 16px;
+	margin: 0 auto 14px;
 	padding: 0 10px;
 	border: 1px solid rgb(9 11 12 / 20%);
 	border-radius: var(--ls-radius-full);
@@ -516,77 +524,21 @@
 
 .ls-hero h1 {
 	margin-bottom: 32px;
-	font-size: 36px;
-	font-family: var(--ls-font-serif);
+	font-size: clamp(28px, 5.6vw, 48px);
 	font-weight: 400;
-	line-height: 40px;
-	letter-spacing: -0.02em;
+	line-height: 1.12;
+	letter-spacing: -0.035em;
 }
 
-.ls-hero-stage {
+.ls-demo-video {
 	position: relative;
-	z-index: 1;
-	padding: 0 16px;
-}
-
-/* One browser window, cut off by the hero's bottom edge. Its surface is the film's own ground, so toolbar and video read as one page. */
-.ls-demo {
-	max-width: 1320px;
-	margin: 0 auto;
+	aspect-ratio: 16 / 9;
 	overflow: hidden;
 	border: 1px solid rgb(255 255 255 / 85%);
 	border-bottom: 0;
 	border-radius: var(--ls-radius-2xl) var(--ls-radius-2xl) 0 0;
 	background: #f4f8fb;
 	box-shadow: var(--ls-shadow-xl);
-}
-
-.ls-demo-toolbar {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	height: 42px;
-	padding: 0 12px;
-	color: rgb(9 11 12 / 45%);
-}
-
-.ls-demo-toolbar svg {
-	width: 18px;
-	height: 18px;
-}
-
-.ls-demo-lights {
-	display: flex;
-	gap: 8px;
-	margin-right: 10px;
-}
-
-.ls-demo-lights span {
-	width: 12px;
-	height: 12px;
-	border-radius: 50%;
-	background: #ff6568;
-	box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 10%);
-}
-
-.ls-demo-lights span:nth-child(2) {
-	background: #fcbb00;
-}
-
-.ls-demo-lights span:nth-child(3) {
-	background: var(--ls-success);
-}
-
-.ls-demo-address {
-	margin-left: 10px;
-	color: var(--ls-ink-muted);
-	font-size: 13px;
-	font-weight: 450;
-}
-
-.ls-demo-video {
-	position: relative;
-	aspect-ratio: 16 / 9;
 }
 
 .ls-demo-video video {
@@ -597,8 +549,8 @@
 
 .ls-demo-sound {
 	position: absolute;
+	top: 12px;
 	right: 12px;
-	bottom: 12px;
 	display: grid;
 	place-items: center;
 	width: 36px;
@@ -617,10 +569,14 @@
 	height: 18px;
 }
 
-@media (min-width: 640px) {
+@media (max-width: 767px) {
 	.ls-hero-header {
-		padding-inline: 0;
-		text-align: center;
+		padding-block: calc(clamp(64px, 18vw, 104px) - 28px) clamp(56px, 13vw, 96px);
+		text-align: start;
+	}
+
+	.ls-badge {
+		margin-inline: 0;
 	}
 }
 
@@ -632,31 +588,11 @@
 	.ls-hero {
 		border-radius: var(--ls-radius-2xl);
 	}
-
-	.ls-hero h1 {
-		font-size: 44px;
-		line-height: 48px;
-	}
-
-	.ls-hero-stage {
-		padding: 0 32px;
-	}
 }
 
 @media (min-width: 1024px) {
 	.ls-hero {
 		border-radius: var(--ls-radius-3xl);
-	}
-
-	.ls-hero-stage {
-		padding: 0 60px;
-	}
-}
-
-@media (min-width: 1280px) {
-	.ls-hero h1 {
-		font-size: 48px;
-		line-height: 52px;
 	}
 }
 
@@ -807,7 +743,6 @@
 
 .ls-loop-core small {
 	color: var(--ls-ink-muted);
-	font-family: var(--ls-font-mono);
 	font-size: 10.5px;
 }
 
@@ -865,7 +800,6 @@
 
 .ls-loop-num {
 	color: var(--ls-ink-subtle);
-	font-family: var(--ls-font-mono);
 	font-size: 11px;
 	transition: color 300ms;
 }
@@ -1052,7 +986,7 @@
 	box-shadow: none;
 	animation: none;
 	color: #17171a;
-	font-family: var(--font-app), Inter, system-ui, sans-serif;
+	font-family: inherit;
 	font-size: 13px;
 	font-feature-settings: normal;
 	line-height: 1.45;
@@ -1095,7 +1029,8 @@
 	padding: 12px 12px 12px 0;
 	background: #fff;
 	color: #000;
-	font: 12px/18px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+	font-size: 12px;
+	line-height: 18px;
 	white-space: pre;
 }
 
@@ -1613,12 +1548,7 @@
 	}
 
 	.ls-hero h1 {
-		font-size: clamp(28px, 8.5vw, 32px);
-		line-height: 1.18;
-	}
-
-	.ls-hero-header {
-		padding: 48px 24px 40px;
+		text-wrap: balance;
 	}
 
 	.ls-frame.ls-intro {
