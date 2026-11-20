@@ -24,6 +24,11 @@ npx hyperframes@0.9.61 render -q delivery -f 30 -o renders/learnspace-intro.mp4
 ffmpeg -i renders/learnspace-intro.mp4 -c:v libx264 -preset slow -crf 23 -pix_fmt yuv420p -movflags +faststart \
   -c:a aac -b:a 128k ../../apps/web/public/media/learnspace-intro.mp4
 ffmpeg -i renders/learnspace-intro.mp4 -frames:v 1 -c:v libwebp -quality 85 ../../apps/web/public/media/learnspace-intro-poster.webp
+
+# Render the separate mobile composition and its matching poster.
+node scripts/render-portrait.mjs
 ```
+
+The mobile composition lives in `portrait.html`. Its UI illustrations are laid out as single column cards, with their own typography and interaction states. The render script uses the web workspace's Playwright Chromium and FFmpeg.
 
 Set `DO_NOT_TRACK=1` to keep the HyperFrames CLI from sending usage telemetry.

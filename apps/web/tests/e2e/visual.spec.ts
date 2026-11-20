@@ -51,6 +51,10 @@ test("landing hero visual regression", async ({ page }) => {
     await page.goto("/", { waitUntil: "domcontentloaded" });
     await expect(page.locator("[data-testid=marketing-hero]")).toBeVisible();
     await stabilize(page);
+    const video = page.getByLabel("LearnSpace product demo");
+    const portrait = name === "mobile";
+    await expect(video).toHaveJSProperty("videoWidth", portrait ? 720 : 1920);
+    await expect(video).toHaveJSProperty("videoHeight", portrait ? 960 : 1080);
     for (const selector of ["#hero-title", ".ls-h2", ".ls-h3"]) {
       await expect(page.locator(selector).first()).toHaveCSS("font-family", /^GeistSans,/);
     }
@@ -69,6 +73,8 @@ test("landing hero visual regression", async ({ page }) => {
       },
     );
   }
+  await page.setViewportSize(desktop);
+  await expect(page.getByLabel("LearnSpace product demo")).toHaveJSProperty("videoWidth", 1920);
 });
 
 test("landing demo can enable sound after autoplay is blocked", async ({ page }) => {

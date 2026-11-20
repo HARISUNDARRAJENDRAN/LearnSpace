@@ -3,6 +3,8 @@
 import { Volume2, VolumeX } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+const portraitQuery = "(max-width: 767px)";
+
 export function DemoVideo() {
 	const video = useRef<HTMLVideoElement>(null);
 	const [muted, setMuted] = useState(false);
@@ -12,14 +14,32 @@ export function DemoVideo() {
 		const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 		setReduceMotion(reduce);
 		const element = video.current;
-		if (reduce || !element) return;
+		if (!element) return;
 
-		void element.play().catch((error: DOMException) => {
-			if (error.name !== "NotAllowedError" || !element.paused || element.muted) return;
-			element.muted = true;
-			setMuted(true);
-			void element.play().catch(() => {});
-		});
+		const portrait = window.matchMedia(portraitQuery);
+		const updatePoster = () => {
+			element.poster = portrait.matches
+				? "/media/learnspace-intro-portrait-poster.webp"
+				: "/media/learnspace-intro-poster.webp";
+		};
+		const play = () => {
+			if (reduce) return;
+			void element.play().catch((error: DOMException) => {
+				if (error.name !== "NotAllowedError" || !element.paused || element.muted) return;
+				element.muted = true;
+				setMuted(true);
+				void element.play().catch(() => {});
+			});
+		};
+		const onResize = () => {
+			updatePoster();
+			element.load();
+			play();
+		};
+		updatePoster();
+		play();
+		portrait.addEventListener("change", onResize);
+		return () => portrait.removeEventListener("change", onResize);
 	}, []);
 
 	const toggleSound = () => {
@@ -46,6 +66,7 @@ export function DemoVideo() {
 				controls={reduceMotion}
 				aria-label="LearnSpace product demo"
 			>
+				<source src="/media/learnspace-intro-portrait.mp4" media={portraitQuery} type="video/mp4" />
 				<source src="/media/learnspace-intro.mp4" type="video/mp4" />
 			</video>
 			{reduceMotion ? null : (
