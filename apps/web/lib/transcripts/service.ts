@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { withUserTransaction } from "@learnspace/db";
 import { resourceVersions, resources, transcriptRequests, transcriptSubmissions, videoDetails } from "@learnspace/db/schema";
+import { youtubeIdFromUrl } from "@learnspace/shared";
 import { normalizeSegments, type TranscriptStatus, type TranscriptSubmission } from "@learnspace/shared/transcripts";
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
@@ -13,15 +14,17 @@ export async function transcriptStatus(userId: string, resourceId: string): Prom
   return withUserTransaction(userId, async (tx) => {
     // RLS limits this to videos the learner can see.
     const [video] = await tx
-      .select({ youtubeId: videoDetails.youtubeId, versionStatus: resourceVersions.processingStatus })
+      .select({ youtubeId: videoDetails.youtubeId, canonicalUrl: resources.canonicalUrl, versionStatus: resourceVersions.processingStatus })
       .from(resources)
-      .innerJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
+      .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
       .leftJoin(resourceVersions, eq(resourceVersions.id, resources.currentVersionId))
-      .where(and(eq(resources.id, resourceId), isNull(resources.deletedAt)))
+      .where(and(eq(resources.id, resourceId), eq(resources.type, "video"), isNull(resources.deletedAt)))
       .limit(1);
     if (!video) throw new AuthError("RESOURCE_NOT_FOUND", "That video is not available.", 404);
+    const youtubeId = video.youtubeId ?? youtubeIdFromUrl(video.canonicalUrl ?? "");
+    if (!youtubeId) throw new AuthError("RESOURCE_NOT_FOUND", "That video is not available.", 404);
     if (video.versionStatus === "ready") return { status: "ready" };
-    await tx.insert(transcriptRequests).values({ resourceId, youtubeId: video.youtubeId }).onConflictDoNothing();
+    await tx.insert(transcriptRequests).values({ resourceId, youtubeId }).onConflictDoNothing();
     // A signature about to expire is useless to a browser, so the signer gets the video again.
     await tx.update(transcriptRequests)
       .set({ status: "queued", captionUrl: null, attempts: 0, requestedAt: sql`now()`, updatedAt: sql`now()` })
@@ -47,8 +50,8 @@ export async function submitTranscript(userId: string, resourceId: string, input
       .select({ status: transcriptRequests.status, language: transcriptRequests.language, durationMs: videoDetails.durationMs })
       .from(transcriptRequests)
       .innerJoin(resources, eq(resources.id, transcriptRequests.resourceId))
-      .innerJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
-      .where(eq(transcriptRequests.resourceId, resourceId))
+      .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
+      .where(and(eq(transcriptRequests.resourceId, resourceId), eq(resources.type, "video"), isNull(resources.deletedAt)))
       .limit(1);
     // Only captions for a URL the signer handed out are accepted, in the language it chose.
     if (request?.status !== "signed") throw new AuthError("TRANSCRIPT_NOT_REQUESTED", "This video is not waiting for captions.", 409);

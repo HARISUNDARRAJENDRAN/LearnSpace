@@ -57,6 +57,7 @@ import {
   studyWorkspaceSchema,
   reorderStudySessionsRequestSchema,
   updateStudySessionRequestSchema,
+  youtubeIdFromUrl,
 } from "@learnspace/shared";
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull, max, ne, notInArray, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
@@ -240,7 +241,7 @@ function parsedProgressStatus(value: string | null | undefined): StudyResourcePr
 function resourceReadiness(resource: ResourceRecord, bindingVersionId: string | null): StudyResourceReadiness {
   const type = studyType(resource.type);
   if (!type || resource.deletedAt || resource.status === "failed" || resource.status === "archived") return "unavailable";
-  if (type === "video" && !resource.video?.youtubeId && resource.status !== "pending") return "unavailable";
+  if (type === "video" && !resource.video?.youtubeId) return "unavailable";
   if (bindingVersionId && resource.versionId === bindingVersionId && resource.versionStatus === "ready") return "ready";
   if (!bindingVersionId && resource.versionId && resource.versionStatus === "ready") return "ready";
   return parsedReadiness("preparing");
@@ -258,12 +259,15 @@ function resourceFromRow(row: {
   versionStatus: string | null;
 }): ResourceRecord {
   const type = studyType(row.resource.type);
+  const canonicalUrl = type ? safeSourceUrl(row.resource.canonicalUrl, type) : null;
+  // Direct imports have a YouTube URL as soon as Discover saves them.
+  const youtubeId = type === "video" ? row.video?.youtubeId ?? youtubeIdFromUrl(canonicalUrl ?? "") : null;
   return {
     id: row.resource.id,
     type: row.resource.type,
     title: row.resource.title,
     description: row.resource.description,
-    canonicalUrl: type ? safeSourceUrl(row.resource.canonicalUrl, type) : null,
+    canonicalUrl,
     visibility: row.resource.visibility,
     status: row.resource.status,
     deletedAt: row.resource.deletedAt,
@@ -271,8 +275,8 @@ function resourceFromRow(row: {
     qualityScore: row.resource.qualityScore,
     versionId: row.versionId,
     versionStatus: row.versionStatus,
-    video: row.video
-      ? { youtubeId: row.video.youtubeId, durationMs: row.video.durationMs, channelTitle: row.video.channelTitle }
+    video: youtubeId
+      ? { youtubeId, durationMs: row.video?.durationMs ?? null, channelTitle: row.video?.channelTitle ?? null }
       : null,
     paper: row.paper
       ? {

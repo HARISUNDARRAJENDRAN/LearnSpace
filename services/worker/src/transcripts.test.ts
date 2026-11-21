@@ -60,8 +60,11 @@ test("upkeep publishes a video's first learner download, and Firecrawl fills vid
   try {
     for (const userId of users) await migrator`INSERT INTO identity.users (id, email, email_verified, status, display_name) VALUES (${userId}, ${`${userId}@example.test`}, true, 'active', 'Transcript Test')`;
     for (const [name, id] of Object.entries(videos)) {
-      await migrator`INSERT INTO catalog.resources (id, type, provider, external_id, title, visibility, status) VALUES (${id}, 'video', 'youtube', ${`yt-${id}`}, ${`Transcript ${name}`}, 'public', 'ready')`;
-      await migrator`INSERT INTO catalog.video_details (resource_id, youtube_id) VALUES (${id}, ${id.slice(0, 11)})`;
+      const youtubeId = id.slice(0, 11);
+      const imported = name === "lonely";
+      await migrator`INSERT INTO catalog.resources (id, owner_user_id, type, provider, external_id, canonical_url, title, visibility, status)
+        VALUES (${id}, ${imported ? users[0]! : null}, 'video', 'youtube', ${youtubeId}, ${`https://www.youtube.com/watch?v=${youtubeId}`}, ${`Transcript ${name}`}, ${imported ? "private" : "public"}, ${imported ? "pending" : "ready"})`;
+      if (!imported) await migrator`INSERT INTO catalog.video_details (resource_id, youtube_id) VALUES (${id}, ${youtubeId})`;
     }
     await migrator`INSERT INTO ops.transcript_requests (resource_id, youtube_id, status, caption_url, language, expires_at, attempts) VALUES (${videos.agreed}, ${videos.agreed.slice(0, 11)}, 'signed', 'https://www.youtube.com/api/timedtext?v=x', 'en', now() + interval '1 hour', 1), (${videos.lonely}, ${videos.lonely.slice(0, 11)}, 'signed', 'https://www.youtube.com/api/timedtext?v=y', 'en', now() + interval '1 hour', 1)`;
     await migrator`INSERT INTO ops.transcript_requests (resource_id, youtube_id, requested_at, updated_at) VALUES (${videos.stale}, ${videos.stale.slice(0, 11)}, now() - interval '3 minutes', now() - interval '3 minutes')`;

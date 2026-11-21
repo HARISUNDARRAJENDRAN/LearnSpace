@@ -9,27 +9,29 @@ const databaseAvailable = Boolean(
 );
 
 test(
-  "an unseen direct YouTube source is deduplicated, queued for ingestion, and starts preparing Study",
+  "an unseen YouTube source starts a playable Study session and accepts captions before metadata ingestion",
   { skip: databaseAvailable ? false : "database URLs are required" },
   async () => {
-    const [{ createEmailUser }, { resolveSource }, { startOrResumeStudySession }, { closeDb }] = await Promise.all([
+    const [{ createEmailUser }, { resolveSource }, { getStudySession, startOrResumeStudySession }, { submitTranscript, transcriptStatus }, { closeDb }] = await Promise.all([
       import("../lib/auth/repository"),
       import("../lib/source-discovery/service"),
       import("../lib/study/service"),
+      import("../lib/transcripts/service"),
       import("@learnspace/db"),
     ]);
     const migrator = postgres(process.env.DATABASE_MIGRATOR_URL as string, { max: 1, prepare: false, connect_timeout: 10 });
     const email = `source-import-${randomUUID()}@example.test`;
     const user = await createEmailUser({ email, displayName: "Source Import Test", passwordHash: await hashPassword("source-import-password-123") });
-    const youtubeId = "aB3dE5fG7hJ";
+    const youtubeId = `v${randomUUID().replaceAll("-", "").slice(0, 10)}`;
     const url = `https://www.youtube.com/watch?v=${youtubeId}`;
+    const captionUrl = `https://www.youtube.com/api/timedtext?v=${youtubeId}&fmt=json3`;
     const originalFetch = globalThis.fetch;
     let providerCalls = 0;
     globalThis.fetch = (async (input) => {
       const requestUrl = String(input);
       assert.match(requestUrl, /^https:\/\/www\.youtube\.com\/oembed/);
       providerCalls += 1;
-      return new Response(JSON.stringify({ title: "An unseen imported lesson", thumbnail_url: "https://i.ytimg.com/vi/aB3dE5fG7hJ/hqdefault.jpg", author_name: "Import Lab" }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ title: "An unseen imported lesson", thumbnail_url: `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`, author_name: "Import Lab" }), { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 
     let resourceId = "";
@@ -69,6 +71,15 @@ test(
       assert.equal(started.resourceType, "video");
       assert.equal(started.readiness, "preparing");
       assert.equal(started.route, `/app/study/video/${sessionId}`);
+      const session = await getStudySession(user.id, sessionId);
+      assert.equal(session.activeResource?.video?.youtubeId, youtubeId);
+      assert.equal((await transcriptStatus(user.id, resourceId)).status, "queued");
+      const [request] = await migrator`UPDATE ops.transcript_requests
+        SET status = 'signed', caption_url = ${captionUrl}, language = 'en', expires_at = now() + interval '1 hour'
+        WHERE resource_id = ${resourceId} RETURNING youtube_id`;
+      assert.equal(request?.youtube_id, youtubeId);
+      assert.deepEqual(await transcriptStatus(user.id, resourceId), { status: "signed", captionUrl, language: "en" });
+      assert.deepEqual(await submitTranscript(user.id, resourceId, { language: "en", segments: [[0, 1_000, "Hello"]] }), { status: "submitted" });
       const bindings = await migrator<{ binding_status: string; resource_version_id: string | null }[]>`
         SELECT binding_status, resource_version_id
         FROM study.session_resources
