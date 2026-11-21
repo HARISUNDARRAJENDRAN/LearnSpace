@@ -10,12 +10,23 @@ export function usePaperContent(resourceId: string) {
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setContent(null);
     setFailed(false);
-    fetch(`/api/v1/papers/${resourceId}/content`, { signal: controller.signal, cache: "no-store" })
-      .then(async (response) => { if (!response.ok) throw new Error(String(response.status)); setContent(await response.json() as PaperContent); })
-      .catch(() => { if (!controller.signal.aborted) setFailed(true); });
-    return () => controller.abort();
+    const read = async () => {
+      try {
+        const response = await fetch(`/api/v1/papers/${resourceId}/content`, { signal: controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error(String(response.status));
+        const paper = await response.json() as PaperContent;
+        if (controller.signal.aborted) return;
+        setContent(paper);
+        if (paper.status === "preparing") timer = setTimeout(read, 4_000);
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    };
+    void read();
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [resourceId]);
   const sections = useMemo<PaperSection[]>(() => (content?.blocks ?? []).flatMap((block) => block.type === "heading" && block.sectionId && block.page
     ? [{ id: block.sectionId, title: block.content, depth: block.headingPath.length, page: block.page }]

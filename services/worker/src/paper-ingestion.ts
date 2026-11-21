@@ -36,7 +36,7 @@ export type Passage = {
   metadata: JsonValue;
 };
 type DownloadedPdf = { bytes: Uint8Array; url: URL; downloadedAt: string; durationMs: number };
-type PaperRow = { id: string; pdf_source_url: string | null; arxiv_id: string | null; title: string; status: string; metadata: Record<string, unknown> };
+type PaperRow = { id: string; has_details: boolean; pdf_source_url: string | null; arxiv_id: string | null; title: string; status: string; metadata: Record<string, unknown> };
 type VersionRow = { id: string; processing_status: string; processing_attempts: number; lease_expires_at: Date | null; retry_after: Date | null; metadata: Record<string, unknown>; resource_metadata: Record<string, unknown>; refreshReady?: boolean };
 type IngestionDeps = {
   fetchPdf?: (url: URL) => Promise<DownloadedPdf>;
@@ -647,6 +647,12 @@ async function attemptPaper(sql: SqlClient, paper: PaperRow, provider: Embedding
     console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, status: "failed", error }));
     return { status: "failed", error };
   }
+  // A discovered copy has its own resource, even when another copy already owns the unique arXiv ID.
+  if (!paper.has_details) await sql`
+    INSERT INTO catalog.paper_details (resource_id, abstract, venue, pdf_source_url)
+    SELECT id, description, 'arXiv', ${startUrl.href} FROM catalog.resources
+    WHERE id = ${paper.id} AND provider = 'arxiv'
+    ON CONFLICT (resource_id) DO NOTHING`;
   let download: DownloadedPdf;
   try { download = await (deps.fetchPdf ?? ((url) => downloadPaperPdf(url, fetch, deps.now)))(startUrl); }
   catch (error) {
@@ -735,10 +741,11 @@ async function countBBoxPassages(sql: SqlClient, versionId: string): Promise<num
 
 async function nextPaper(sql: SqlClient): Promise<PaperRow | null> {
   const [row] = await sql<PaperRow[]>`
-    SELECT r.id, p.pdf_source_url, p.arxiv_id, r.title, r.status, r.metadata
-    FROM catalog.resources r JOIN catalog.paper_details p ON p.resource_id = r.id
+    SELECT r.id, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url, COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id, r.title, r.status, r.metadata
+    FROM catalog.resources r LEFT JOIN catalog.paper_details p ON p.resource_id = r.id
     LEFT JOIN catalog.resource_versions current ON current.id = r.current_version_id
     WHERE r.type = 'paper' AND r.deleted_at IS NULL AND r.status = 'pending'
+      AND (p.resource_id IS NOT NULL OR r.provider = 'arxiv')
       AND coalesce((r.metadata->'paperIngestion'->>'attempts')::int, 0) < ${MAX_ATTEMPTS}
       AND (r.metadata->'paperIngestion'->>'retryAfter' IS NULL OR (r.metadata->'paperIngestion'->>'retryAfter')::timestamptz <= now())
       AND (
@@ -757,8 +764,10 @@ async function nextPaper(sql: SqlClient): Promise<PaperRow | null> {
 
 export async function ingestPaperById(sql: SqlClient, resourceId: string, provider: EmbeddingProvider | null, deps: IngestionDeps = {}) {
   const [paper] = await sql<PaperRow[]>`
-    SELECT r.id, p.pdf_source_url, p.arxiv_id, r.title, r.status, r.metadata FROM catalog.resources r
-    JOIN catalog.paper_details p ON p.resource_id = r.id WHERE r.id = ${resourceId} AND r.type = 'paper'`;
+    SELECT r.id, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url, COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id, r.title, r.status, r.metadata
+    FROM catalog.resources r LEFT JOIN catalog.paper_details p ON p.resource_id = r.id
+    WHERE r.id = ${resourceId} AND r.type = 'paper' AND r.deleted_at IS NULL
+      AND (p.resource_id IS NOT NULL OR r.provider = 'arxiv')`;
   return paper ? attemptPaper(sql, paper, provider, deps) : { status: "skipped" as const };
 }
 

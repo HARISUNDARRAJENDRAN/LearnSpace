@@ -157,8 +157,7 @@ test("paper ingestion does not repeat parse or embedding for a hash and only pub
   };
   let failEmbedding = false;
   try {
-    await migrator`INSERT INTO catalog.resources (id, type, provider, external_id, title, visibility, status) VALUES (${resourceId}, 'paper', 'ingestion-test', ${resourceId}, 'Paper ingestion integration', 'private', 'pending')`;
-    await migrator`INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, pdf_source_url) VALUES (${resourceId}, ${arxivId}, 'test abstract', ${`https://arxiv.org/pdf/${arxivId}`})`;
+    await migrator`INSERT INTO catalog.resources (id, type, provider, external_id, title, visibility, status) VALUES (${resourceId}, 'paper', 'arxiv', ${arxivId}, 'Paper ingestion integration', 'private', 'pending')`;
     let failedDownloads = 0;
     const failedDownload = () => ingestPaperById(worker, resourceId, provider, {
       fetchPdf: async () => { failedDownloads += 1; throw new Error("temporary download failure"); },
@@ -222,10 +221,9 @@ test("paper ingestion does not repeat parse or embedding for a hash and only pub
     failEmbedding = false;
     await migrator`INSERT INTO catalog.resources (id, type, provider, external_id, title, visibility, status) VALUES
       (${queueInvalidId}, 'paper', 'ingestion-test', ${queueInvalidId}, 'Unsupported paper source', 'private', 'pending'),
-      (${queueValidId}, 'paper', 'ingestion-test', ${queueValidId}, 'Next paper after a bad source', 'private', 'pending')`;
+      (${queueValidId}, 'paper', 'arxiv', ${queueArxivId}, 'Next paper after a bad source', 'private', 'pending')`;
     await migrator`INSERT INTO catalog.paper_details (resource_id, arxiv_id, abstract, pdf_source_url) VALUES
-      (${queueInvalidId}, NULL, 'test abstract', 'https://example.org/paper.pdf'),
-      (${queueValidId}, ${queueArxivId}, 'test abstract', ${`https://arxiv.org/pdf/${queueArxivId}`})`;
+      (${queueInvalidId}, NULL, 'test abstract', 'https://example.org/paper.pdf')`;
     await migrator`UPDATE catalog.resources SET updated_at = '1970-01-01' WHERE id = ${queueInvalidId}`;
     await migrator`UPDATE catalog.resources SET updated_at = '1970-01-02' WHERE id = ${queueValidId}`;
     const upkeep = await paperIngestionUpkeep(worker, provider, 2, {
