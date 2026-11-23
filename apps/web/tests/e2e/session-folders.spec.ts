@@ -1,0 +1,190 @@
+import { createHash, randomUUID } from "node:crypto";
+import { join } from "node:path";
+import { expect, test } from "@playwright/test";
+import postgres from "postgres";
+
+const materials = [
+  { title: "JEPA research session", type: "paper", question: "How does JEPA predict representations?" },
+  { title: "Dreamer research session", type: "paper", question: "What does Dreamer learn in its latent world?" },
+  { title: "World models lecture", type: "video", question: "How does planning use the world model?" },
+] as const;
+
+test("folders keep paper and video sessions together across modes, tabs, and browser sessions", async ({ page, browser, baseURL }) => {
+  const url = process.env.DATABASE_MIGRATOR_URL;
+  if (!url || !baseURL) throw new Error("Folder E2E requires the test database and application URL");
+  const db = postgres(url, { max: 1 });
+  const userId = randomUUID();
+  const token = randomUUID() + randomUUID();
+  const fixtures = materials.map((item) => ({ ...item, resourceId: randomUUID(), sessionId: randomUUID(), threadId: randomUUID() }));
+  const resourceIds = fixtures.map((item) => item.resourceId);
+  const sessionIds = fixtures.map((item) => item.sessionId);
+  const screenshots = process.env.LEARNSPACE_FOLDER_SCREENSHOTS;
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("console", (event) => { if (event.type() === "error" && /hydrat/i.test(event.text())) errors.push(event.text()); });
+  const context = page.context();
+  await context.addCookies([{ name: "learnspace_session", value: token, url: baseURL, httpOnly: true, sameSite: "Lax" }]);
+  await page.route("https://www.youtube.com/iframe_api", (route) => route.abort());
+  try {
+    await db`INSERT INTO identity.users (id, email, display_name, email_verified, status) VALUES (${userId}, ${`folders-e2e-${userId}@example.test`}, 'Researcher', true, 'active')`;
+    await db`INSERT INTO identity.user_settings (user_id, onboarding_completed_at, first_application_visit_at) VALUES (${userId}, now(), now())`;
+    await db`INSERT INTO identity.auth_sessions (user_id, rotation_family_id, refresh_token_hash, expires_at)
+      VALUES (${userId}, ${randomUUID()}, ${createHash("sha256").update(token).digest("hex")}, now() + interval '1 day')`;
+    for (const fixture of fixtures) {
+      const video = fixture.type === "video";
+      const externalId = video ? `f${userId.replaceAll("-", "").slice(0, 10)}` : fixture.resourceId;
+      const source = video ? `https://www.youtube.com/watch?v=${externalId}` : "https://arxiv.org/abs/2301.00001";
+      await db`INSERT INTO catalog.resources (id, type, provider, external_id, title, canonical_url, visibility, status)
+        VALUES (${fixture.resourceId}, ${fixture.type}, ${video ? "youtube" : "arxiv"}, ${externalId}, ${fixture.title}, ${source}, 'public', 'ready')`;
+      if (video) await db`INSERT INTO catalog.video_details (resource_id, youtube_id, duration_ms) VALUES (${fixture.resourceId}, ${externalId}, 300000)`;
+      else await db`INSERT INTO catalog.paper_details (resource_id, arxiv_id) VALUES (${fixture.resourceId}, ${externalId})`;
+      await db`INSERT INTO study.study_sessions (id, user_id, title, mode, active_resource_id, active_anchor)
+        VALUES (${fixture.sessionId}, ${userId}, ${fixture.title}, ${video ? "guided_learning" : "research"}, ${fixture.resourceId},
+          ${db.json(video ? { kind: "video", positionMs: 78000 } : { kind: "paper", page: 4 })})`;
+      await db`INSERT INTO study.session_resources (study_session_id, resource_id, role, added_by, binding_status, last_anchor)
+        VALUES (${fixture.sessionId}, ${fixture.resourceId}, 'primary', 'user', 'preparing',
+          ${db.json(video ? { kind: "video", positionMs: 78000 } : { kind: "paper", page: 4 })})`;
+      await db`INSERT INTO study.tutor_threads (id, user_id, study_session_id, resource_id, mode)
+        VALUES (${fixture.threadId}, ${userId}, ${fixture.sessionId}, ${fixture.resourceId}, 'test')`;
+      await db`INSERT INTO study.tutor_messages (thread_id, actor_type, content_text) VALUES (${fixture.threadId}, 'user', ${fixture.question})`;
+      await db`INSERT INTO study.video_notes (user_id, resource_id, revision, blocks) VALUES (${userId}, ${fixture.resourceId}, 1,
+        ${db.json([{ id: "project-note", type: "paragraph", text: `Notes from ${fixture.title}`, by: "you", rev: 1, done: false }])})`;
+    }
+    const video = fixtures[2]!;
+    await db`INSERT INTO study.session_transcript (study_session_id, user_id, resource_id, speaker, text)
+      VALUES (${video.sessionId}, ${userId}, ${video.resourceId}, 'you', 'Compare rollout error to the paper.')`;
+    await db`UPDATE study.study_sessions SET workspace = '{"code":{"language":"python","code":"print(42)"}}' WHERE id = ${video.sessionId}`;
+
+    await page.goto("/app/sessions?mode=research");
+    const main = page.locator(".session-folders-page");
+    await expect(main.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await expect(main.getByRole("link", { name: "Continue last session" })).toBeVisible();
+    await expect(main.getByRole("link", { name: fixtures[0]!.title }).first()).toBeVisible();
+    const create = page.getByRole("complementary", { name: "Application navigation" }).getByRole("button", { name: "New folder", exact: true });
+    await create.click();
+    await expect(page.getByRole("textbox", { name: "Folder name" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(create).toBeFocused();
+    await main.getByRole("button", { name: "New folder", exact: true }).click();
+    await page.getByRole("textbox", { name: "Folder name" }).fill("World Models Research");
+    await page.getByRole("textbox", { name: "Description" }).fill("Compare representation learning, imagination, and model-based planning.");
+    await page.getByRole("button", { name: "Create folder", exact: true }).click();
+    await expect(main.getByRole("heading", { name: "World Models Research" })).toBeVisible();
+    const folderUrl = page.url();
+    const folderId = new URL(folderUrl).pathname.split("/").at(-1);
+    await expect(main.getByText("This folder is empty.", { exact: false })).toBeVisible();
+
+    await main.getByRole("button", { name: "Add content", exact: true }).first().click();
+    const picker = page.getByRole("dialog", { name: "Add content" });
+    for (const fixture of fixtures.filter((item) => item.type === "paper")) {
+      await picker.getByRole("button", { name: `Add ${fixture.title}`, exact: true }).click();
+      await expect(picker.getByRole("button", { name: `${fixture.title} added` })).toBeDisabled();
+    }
+    await picker.getByRole("button", { name: "Videos", exact: true }).click();
+    await picker.getByRole("searchbox", { name: "Search videos" }).fill(video.title);
+    await picker.getByRole("button", { name: "Search", exact: true }).click();
+    await picker.getByRole("button", { name: `Add ${video.title}`, exact: true }).first().click();
+    await expect(picker.getByRole("button", { name: `${video.title} added` }).first()).toBeDisabled();
+    await picker.getByRole("button", { name: "Done" }).click();
+    await expect(main.getByText(/2 papers · 1 video · 2 sessions/)).toBeVisible();
+    await main.getByRole("button", { name: "Start or resume" }).click();
+    await expect(page).toHaveURL(new RegExp(`/study/video/${video.sessionId}\\?folder=${folderId}`));
+    await page.getByRole("link", { name: "Back to folder" }).click();
+    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
+    const disclosure = page.getByRole("button", { name: /^(Expand|Collapse) World Models Research$/ });
+    await expect(disclosure).toBeVisible();
+    if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
+    const tree = page.locator(".application-folder-children");
+    for (const fixture of fixtures) await expect(tree.getByRole("link", { name: fixture.title, exact: true })).toBeVisible();
+    if (screenshots) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.screenshot({ path: join(screenshots, "world-models-folder.png"), animations: "disabled" });
+    }
+
+    await page.getByRole("button", { name: "Switch mode (currently research)" }).click();
+    await page.getByRole("menuitemradio", { name: "Learn" }).click();
+    await expect(page).toHaveURL(new RegExp(`/folders/${folderId}$`));
+    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
+    await page.reload();
+    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
+
+    await main.getByRole("link", { name: "AI threads" }).click();
+    await main.getByRole("button", { name: fixtures[1]!.question }).click();
+    const history = page.getByRole("dialog", { name: fixtures[1]!.title });
+    await expect(history.locator("details[open] ol")).toContainText(fixtures[1]!.question);
+    await expect(history.getByText(fixtures[0]!.question)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await main.getByRole("button", { name: "Voice transcript" }).click();
+    await expect(page.getByRole("dialog", { name: video.title }).locator("details[open] ol")).toContainText("Compare rollout error to the paper.");
+    await page.keyboard.press("Escape");
+
+    await main.getByRole("link", { name: "Notes & guides" }).click();
+    await expect(main.getByText(`Notes from ${video.title}`)).toBeVisible();
+    const videoRow = main.locator(".session-folder-entry").filter({ hasText: video.title });
+    await videoRow.getByRole("button", { name: "Preview notes" }).click();
+    await expect(page.getByRole("dialog", { name: video.title }).getByText(`Notes from ${video.title}`)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await main.getByRole("link", { name: "Other artifacts" }).click();
+    await main.getByRole("button", { name: "Code draft" }).click();
+    await expect(page.getByRole("dialog", { name: video.title }).getByText("print(42)")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await main.getByRole("link", { name: "Overview" }).click();
+    await videoRow.getByRole("link", { name: "Continue" }).click();
+    await expect(page).toHaveURL(new RegExp(`/study/video/${video.sessionId}\\?folder=${folderId}`));
+    await page.getByRole("link", { name: "Back to folder" }).click();
+    await expect(main.getByRole("heading", { name: "World Models Research" })).toBeVisible();
+
+    const fresh = await browser.newContext({ storageState: await context.storageState(), viewport: { width: 390, height: 1000 }, reducedMotion: "reduce" });
+    try {
+      const mobile = await fresh.newPage();
+      await mobile.goto(folderUrl);
+      await expect(mobile.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
+      expect(await mobile.locator(".session-folders-page").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      if (screenshots) await mobile.screenshot({ path: join(screenshots, "world-models-mobile.png"), animations: "disabled" });
+    } finally { await fresh.close(); }
+
+    const otherTab = await context.newPage();
+    await otherTab.goto(folderUrl);
+    await expect(otherTab.getByText(/3 sessions/)).toBeVisible();
+    const api = `**/api/v1/session-folders/${folderId}`;
+    await page.route(api, async (route) => {
+      if (route.request().method() !== "PATCH") await route.continue();
+      else await route.fulfill({ status: 409, json: { error: { message: "Simulated concurrent update." } } });
+    });
+    await videoRow.getByRole("button", { name: `Options for ${video.title}` }).click();
+    await page.getByRole("button", { name: "Unfile session" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "Simulated concurrent update." })).toBeVisible();
+    await expect(main.getByText(/3 sessions/)).toBeVisible();
+    await page.unroute(api);
+    await page.getByRole("button", { name: "Unfile session" }).click();
+    await expect(otherTab.getByText(/2 sessions/)).toBeVisible();
+    await otherTab.close();
+
+    await main.getByRole("button", { name: "Folder options", exact: true }).click();
+    await page.getByRole("button", { name: "Delete folder…", exact: true }).click();
+    await page.getByRole("button", { name: "Delete folder", exact: true }).click();
+    await expect(page).toHaveURL(/\/app\/sessions$/);
+    expect(await db`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${userId}`).toEqual([{ count: 3 }]);
+    expect(await db`SELECT count(*)::int AS count FROM study.video_notes WHERE user_id = ${userId}`).toEqual([{ count: 3 }]);
+    expect(errors).toEqual([]);
+  } finally {
+    await db`DELETE FROM study.session_folders WHERE user_id = ${userId}`;
+    await db`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
+    await db`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
+    await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
+    await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
+    await db`DELETE FROM study.tutor_messages WHERE thread_id IN ${db(fixtures.map((item) => item.threadId))}`;
+    await db`DELETE FROM study.tutor_threads WHERE user_id = ${userId}`;
+    await db`DELETE FROM study.session_transcript WHERE user_id = ${userId}`;
+    await db`DELETE FROM study.video_notes WHERE user_id = ${userId}`;
+    await db`DELETE FROM study.session_resources WHERE study_session_id IN ${db(sessionIds)}`;
+    await db`DELETE FROM study.study_sessions WHERE user_id = ${userId}`;
+    await db`DELETE FROM catalog.video_details WHERE resource_id IN ${db(resourceIds)}`;
+    await db`DELETE FROM catalog.paper_details WHERE resource_id IN ${db(resourceIds)}`;
+    await db`DELETE FROM catalog.resources WHERE id IN ${db(resourceIds)}`;
+    await db`DELETE FROM identity.users WHERE id = ${userId}`;
+    await db.end();
+  }
+});

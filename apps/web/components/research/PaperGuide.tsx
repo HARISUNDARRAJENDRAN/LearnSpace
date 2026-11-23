@@ -17,9 +17,9 @@ const LINE_COLORS = ["var(--guide-line-1)", "var(--guide-line-2)", "var(--guide-
 const formatValue = (value: number) => Math.abs(value) >= 1e5 || (value !== 0 && Math.abs(value) < 1e-3) ? value.toExponential(2) : Number(value.toPrecision(4)).toLocaleString();
 
 /** The pages a claim comes from, each opening the paper there. */
-function Anchors({ anchors, onGo }: { anchors: PaperCitationAnchor[]; onGo: (place: StudyAnchor) => void }) {
+function Anchors({ anchors, onGo }: { anchors: PaperCitationAnchor[]; onGo?: ((place: StudyAnchor) => void) | undefined }) {
   const pages = [...new Map(anchors.map((anchor) => [anchor.page, anchor])).values()];
-  return <span className="guide-anchors">{pages.map((anchor) => <button key={anchor.page} type="button" className="tutor-cite" title={`Read p. ${anchor.page}`} onClick={() => onGo(anchor)}><FileText aria-hidden="true" />p. {anchor.page}</button>)}</span>;
+  return <span className="guide-anchors">{pages.map((anchor) => onGo ? <button key={anchor.page} type="button" className="tutor-cite" title={`Read p. ${anchor.page}`} onClick={() => onGo(anchor)}><FileText aria-hidden="true" />p. {anchor.page}</button> : <span key={anchor.page}>p. {anchor.page}</span>)}</span>;
 }
 
 /** A question to answer before the answer is shown. */
@@ -114,8 +114,11 @@ export function PaperGuide({ sessionId, onGo, onCollapse }: { sessionId: string;
   if (!view || view.status === "pending") return shell(<LoadingState label="Building a hands-on guide to the paper's core idea" />);
   if (view.status === "failed" || !view.guide) return shell(<div className="session-tool-empty"><p>No guide could be built and checked for this paper yet.</p><button className="session-primary-button" type="button" onClick={() => void retry()}>Try again</button></div>);
 
-  const guide = view.guide;
-  return shell(<article className="paper-guide">
+  return shell(<PaperGuideContents guide={view.guide} onGo={onGo} />);
+}
+
+export function PaperGuideContents({ guide, onGo }: { guide: ResearchGuide; onGo?: (place: StudyAnchor) => void }) {
+  return <article className="paper-guide">
     <header className="guide-head">
       <p className="guide-eyebrow">Project &amp; intuition guide</p>
       <h2>{guide.title}</h2>
@@ -154,5 +157,5 @@ export function PaperGuide({ sessionId, onGo, onCollapse }: { sessionId: string;
     </Section>
     <Section title="Takeaways"><ul className="guide-list">{guide.takeaways.map((item, index) => <li key={index}><MathText text={item.text} /> <Anchors anchors={item.anchors} onGo={onGo} /></li>)}</ul></Section>
     {/* biome-ignore-end lint/suspicious/noArrayIndexKey: see above. */}
-  </article>);
+  </article>;
 }

@@ -4,3 +4,4 @@ export * from "./sessions.js";
 export * from "./tutor.js";
 export * from "./mastery.js";
 export * from "./notes.js";
+export * from "./folders.js";

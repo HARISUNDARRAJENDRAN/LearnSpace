@@ -48,6 +48,9 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "catalog.resource_concepts": ["resource_concepts_visible_policy", "resource_concepts_worker_policy", "resource_concepts_curated_worker_delete"],
   "study.learning_goals": ["learning_goals_owner_policy"],
   "study.study_sessions": ["study_sessions_owner_policy", "study_sessions_worker_policy"],
+  "study.session_folders": ["session_folders_owner_select", "session_folders_owner_insert", "session_folders_owner_update", "session_folders_owner_delete"],
+  "study.session_folder_memberships": ["session_folder_memberships_owner_select", "session_folder_memberships_owner_insert", "session_folder_memberships_owner_update", "session_folder_memberships_owner_delete"],
+  "study.session_folder_resources": ["session_folder_resources_owner_select", "session_folder_resources_owner_insert", "session_folder_resources_owner_update", "session_folder_resources_owner_delete"],
   "study.session_resources": ["session_resources_owner_policy", "session_resources_worker_policy"],
   "study.session_context_snapshots": ["session_snapshots_owner_policy", "session_snapshots_worker_policy"],
   "study.session_checkpoints": ["session_checkpoints_owner_policy", "session_checkpoints_worker_policy"],
@@ -219,7 +222,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 91, `expected 91 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 94, `expected 94 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count

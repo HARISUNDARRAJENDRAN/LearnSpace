@@ -323,3 +323,36 @@ export const idempotencyRequestContract = z.object({
 
 export type ActivityEventContract = z.infer<typeof activityEventContract>;
 export type IdempotencyRequestContract = z.infer<typeof idempotencyRequestContract>;
+
+export const sessionFolderIdSchema = z.string().uuid();
+const folderFields = z.object({
+  title: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(1000).nullable(),
+});
+export const createSessionFolderSchema = folderFields.extend({
+  description: folderFields.shape.description.optional(),
+  sessionId: studySessionIdSchema.optional(),
+  fromFolderId: sessionFolderIdSchema.nullable().optional(),
+}).strict().refine(({ sessionId, fromFolderId }) => Boolean(sessionId) === (fromFolderId !== undefined));
+const resourceId = startStudySessionRequestSchema.shape.resourceId;
+const reorderFolderItem = { direction: z.enum(["up", "down"]) };
+export const changeSessionFolderSchema = z.discriminatedUnion("action", [
+  folderFields.extend({ action: z.literal("edit") }).strict(),
+  z.object({ action: z.literal("move-session"), sessionId: studySessionIdSchema, fromFolderId: sessionFolderIdSchema.nullable() }).strict(),
+  z.object({ action: z.literal("unfile-session"), sessionId: studySessionIdSchema }).strict(),
+  z.object({ action: z.literal("save-resource"), resourceId }).strict(),
+  z.object({ action: z.literal("remove-resource"), resourceId }).strict(),
+  z.object({ action: z.literal("start-resource"), resourceId, idempotencyKey: startStudySessionRequestSchema.shape.idempotencyKey, moveFrom: z.object({ folderId: sessionFolderIdSchema, sessionId: studySessionIdSchema }).strict().optional() }).strict(),
+  z.object({ action: z.literal("reorder-folder"), ...reorderFolderItem }).strict(),
+  z.object({ action: z.literal("reorder-session"), sessionId: studySessionIdSchema, ...reorderFolderItem }).strict(),
+  z.object({ action: z.literal("reorder-resource"), resourceId, ...reorderFolderItem }).strict(),
+]);
+export const sessionFolderDetailsQuerySchema = z.object({
+  section: z.enum(["overview", "papers", "videos", "threads", "notes", "artifacts"]).default("overview"),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+}).strict();
+export const studySessionsQuerySchema = z.object({ shelf: z.enum(["open", "ended"]).default("open") }).strict();
+export const folderSessionCandidatesQuerySchema = z.object({ q: z.string().trim().max(120).default("") }).strict();
+export type CreateSessionFolder = z.infer<typeof createSessionFolderSchema>;
+export type ChangeSessionFolder = z.infer<typeof changeSessionFolderSchema>;
+export type SessionFolderDetailsQuery = z.infer<typeof sessionFolderDetailsQuerySchema>;

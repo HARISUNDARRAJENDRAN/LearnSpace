@@ -604,7 +604,12 @@ function requestHash(input: StartStudySessionRequest): string {
   return createHash("sha256").update(JSON.stringify(input)).digest("hex");
 }
 
-async function startOrResumeInTransaction(tx: Transaction, userId: string, input: StartStudySessionRequest): Promise<StartStudySessionResponse> {
+export async function startOrResumeInTransaction(
+  tx: Transaction,
+  userId: string,
+  input: StartStudySessionRequest,
+  onStart?: (result: StartStudySessionResponse) => Promise<void>,
+): Promise<StartStudySessionResponse> {
   const normalized = startStudySessionRequestSchema.parse(input);
   const scope = `study.start:${userId}`;
   const hash = requestHash(normalized);
@@ -707,6 +712,7 @@ async function startOrResumeInTransaction(tx: Transaction, userId: string, input
       .onConflictDoUpdate({ target: [collectionEnrollments.userId, collectionEnrollments.collectionId], set: { currentItemId: normalized.collectionItemId, status: "active", updatedAt: new Date() } });
   }
   const response = responseFor(session.id, resource, resourceReadiness(resource, activated.resourceVersionId), resumed);
+  await onStart?.(response);
   await tx.execute<IdempotencyResult>(sql`
     SELECT status, response_body
     FROM ops.complete_idempotency(
@@ -1178,12 +1184,12 @@ export async function recordStudyQuestion(tx: Transaction, input: { userId: stri
  * The learner's open sessions in their sidebar order (ones they never moved first, newest first, then the order they chose),
  * or, for the Library, their finished sessions, most recently finished first.
  */
-export async function listStudySessions(userId: string, shelf: "open" | "library" = "open"): Promise<StudySessionSummary[]> {
+export async function listStudySessions(userId: string, shelf: "open" | "library" | "ended" = "open"): Promise<StudySessionSummary[]> {
   return withUserTransaction(userId, async (tx) => {
     const sessions = shelf === "open"
       ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"])))
         .orderBy(sql`${studySessions.position} ASC NULLS FIRST`, desc(studySessions.createdAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS)
-      : await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), eq(studySessions.status, "completed")))
+      : await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), eq(studySessions.status, shelf === "library" ? "completed" : "abandoned")))
         .orderBy(desc(studySessions.endedAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS);
     const ids = sessions.map((session) => session.id);
     if (ids.length === 0) return [];
@@ -1358,12 +1364,6 @@ async function createCourseSession(tx: Transaction, userId: string, collection: 
 }
 
 /** Where Sessions opens: the open session the learner was in last, if any. */
-export async function lastSeenSessionRoute(userId: string, type: "video" | "paper"): Promise<string | null> {
-  const sessions = await listStudySessions(userId);
-  const open = sessions.filter((session) => session.route && session.activeResource?.type === type && (session.status === "active" || session.status === "paused"));
-  return open.toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))[0]?.route ?? null;
-}
-
 /** Renames a session; the title is the learner's from then on. */
 export async function renameStudySession(userId: string, sessionId: string, input: unknown): Promise<void> {
   const { title } = updateStudySessionRequestSchema.parse(input);

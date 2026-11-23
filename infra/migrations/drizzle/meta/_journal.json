@@ -351,6 +351,13 @@
       "when": 1794927600000,
       "tag": "0049_merge_duplicate_authors",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1795419433246,
+      "tag": "0050_session_folders",
+      "breakpoints": true
     }
   ]
 }

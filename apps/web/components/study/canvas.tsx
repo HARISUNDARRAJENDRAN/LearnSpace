@@ -4,6 +4,7 @@ import type { StudyWorkspace } from "@learnspace/shared";
 import { CircleStop, Maximize, Minus, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useFolderReturn } from "../folders/StudyFolderAction";
 import { sessionsHref, useSessions } from "../application/sessions";
 import type { CanvasRect } from "./CourseGraph";
 
@@ -157,11 +158,11 @@ export function savedCanvas(view: CanvasView, focused: boolean): NonNullable<Stu
 }
 
 /**
- * Ends the session: it leaves Sessions and the sidebar, and the learner goes back to the session they were in before it (or
- * the next-video picker). Progress, notes and conversations stay with the material, so studying it again picks them up.
+ * Ends the session and returns to the folder or Sessions dashboard. Study history stays with the original session.
  */
 export function EndSession({ sessionId, mode }: { sessionId: string; mode: "learn" | "research" }) {
   const router = useRouter();
+  const returnToFolder = useFolderReturn();
   const { remove } = useSessions();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<"idle" | "ending" | "error">("idle");
@@ -179,7 +180,7 @@ export function EndSession({ sessionId, mode }: { sessionId: string; mode: "lear
     try {
       await remove(sessionId);
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-      router.push(sessionsHref(mode));
+      router.push(returnToFolder ?? sessionsHref(mode));
     } catch {
       setState("error");
     }

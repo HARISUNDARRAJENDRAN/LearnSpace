@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
+import { lastSeenRoute } from "../components/application/sessions";
 import { AuthError } from "../lib/auth/errors";
 
 const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_URL);
@@ -9,7 +10,7 @@ const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.D
 test("StudySession starts provisionally, switches resources in place, and preserves meaningful progress", { skip: databaseAvailable ? false : "database URLs are required" }, async () => {
   const migratorUrl = process.env.DATABASE_MIGRATOR_URL;
   if (!migratorUrl) throw new Error("DATABASE_MIGRATOR_URL is required");
-  const [{ closeDb }, { createEmailUser }, { addCourseToLibrary, getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, endStudySession, getStudySession, lastSeenSessionRoute, listStudySessions, pauseSession, renameStudySession, reorderStudySessions, saveStudyWorkspace, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
+  const [{ closeDb }, { createEmailUser }, { addCourseToLibrary, getCollectionDetail, getLibraryPage }, { getResearchPage }, { attachSessionResource, endStudySession, getStudySession, listStudySessions, pauseSession, renameStudySession, reorderStudySessions, saveStudyWorkspace, startOrResumeStudySession, updateStudyProgress }] = await Promise.all([
     import("@learnspace/db"),
     import("../lib/auth/repository"),
     import("../lib/library/service"),
@@ -130,18 +131,19 @@ test("StudySession starts provisionally, switches resources in place, and preser
     await reorderStudySessions(owner.id, { sessionIds: [studySessionId, second.sessionId] });
     assert.deepEqual((await listStudySessions(owner.id)).map((session) => [session.id, session.title]), [[studySessionId, "Study video without an ingested version"], [second.sessionId, "Concurrency"]]);
     await assert.rejects(reorderStudySessions(foreign.id, { sessionIds: [second.sessionId] }), (error: unknown) => error instanceof AuthError && error.status === 404);
-    // Sessions reopens the session the learner was in last.
-    assert.equal(await lastSeenSessionRoute(owner.id, "video"), second.route);
+    // Continue last session uses the activity time recorded by the study route.
+    const lastRoute = async (type: "paper" | "video") => lastSeenRoute((await listStudySessions(owner.id)).filter((session) => session.activeResource?.type === type));
+    assert.equal(await lastRoute("video"), second.route);
     // Research's Sessions resumes papers only, never a video.
-    assert.equal(await lastSeenSessionRoute(owner.id, "paper"), null);
+    assert.equal(await lastRoute("paper"), null);
     await getStudySession(owner.id, studySessionId, { seen: true });
-    assert.equal(await lastSeenSessionRoute(owner.id, "video"), first.route);
+    assert.equal(await lastRoute("video"), first.route);
     await getStudySession(owner.id, second.sessionId, { seen: true });
-    assert.equal(await lastSeenSessionRoute(owner.id, "video"), second.route);
-    // Ending one leaves Sessions without it, goes back to the other, and leaves that one as it was.
+    assert.equal(await lastRoute("video"), second.route);
+    // Ending a session leaves the other one as the current resume option.
     await endStudySession(owner.id, second.sessionId);
     assert.deepEqual((await listStudySessions(owner.id)).map((session) => session.id), [studySessionId]);
-    assert.equal(await lastSeenSessionRoute(owner.id, "video"), first.route);
+    assert.equal(await lastRoute("video"), first.route);
     await assert.rejects(getStudySession(owner.id, second.sessionId), (error: unknown) => error instanceof AuthError && error.status === 404);
     await assert.rejects(saveStudyWorkspace(owner.id, second.sessionId, { panel: "ai" }), (error: unknown) => error instanceof AuthError && error.status === 404);
     // Two tabs of a learner with an empty Sessions share one session.

@@ -4,6 +4,7 @@ import type { StudySessionSummary } from "@learnspace/shared";
 import type { ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
+import { SessionFoldersProvider } from "../folders/state";
 import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
 import { AppSidebar, modeFromUrl } from "./AppSidebar";
@@ -35,6 +36,7 @@ export function ApplicationShell({ user, sessions, children }: { user: Applicati
 
   return (
     <SessionsProvider initial={sessions}>
+    <SessionFoldersProvider>
     <div className={`application-page${sidebarCollapsed ? " is-sidebar-collapsed" : ""}${pathname.startsWith("/app/discover") ? " application-page--discover" : ""}`} data-view={viewMode}>
       <AppSidebar
         user={user}
@@ -50,6 +52,7 @@ export function ApplicationShell({ user, sessions, children }: { user: Applicati
       </div>
       <SmoothScroll />
     </div>
+    </SessionFoldersProvider>
     </SessionsProvider>
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { StudyFolderAction, StudyFolderBreadcrumb } from "../folders/StudyFolderAction";
 import type { LessonControl } from "@learnspace/shared/notes";
 import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView, StudyTool, StudyWorkspace } from "@learnspace/shared";
 import { Code, Crosshair, Expand, ListChecks, NotebookPen, Shrink, Sparkles, Video, Workflow } from "lucide-react";
@@ -437,7 +438,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
       <div className="session-pane">
         <header className="session-topbar">
           <nav className="session-crumbs" aria-label="Breadcrumb">
-            <Link href="/app" aria-label="Back to Home" title="Home"><Video aria-hidden="true" /></Link>
+            <StudyFolderBreadcrumb><Link href="/app" aria-label="Back to Home" title="Home"><Video aria-hidden="true" /></Link></StudyFolderBreadcrumb>
             <span aria-hidden="true">/</span>
             {course ? <><span className="session-crumb-course" title={course.title}>{course.title}</span><span aria-hidden="true">/</span></> : null}
             <h1 title={active.title}>{active.title}</h1>
@@ -447,6 +448,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
               <legend className="sr-only">Study tools</legend>
               {tools.filter(({ view: tool }) => tool !== "code" || codingEligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
+            <StudyFolderAction session={session} />
             {course ? <span className="session-course-count" title="Lessons completed">{completedCount}/{lessons.length} done</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
             {/* A finished session lives in the Library; there is nothing to end. */}

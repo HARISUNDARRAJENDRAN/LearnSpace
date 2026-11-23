@@ -216,6 +216,7 @@ test("E2E player error — unavailable embeds keep the StudySession usable", asy
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open on YouTube" })).toBeVisible();
   await page.goto("/app/sessions");
+  await page.getByRole("link", { name: "Continue last session" }).click();
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
 });
 

@@ -14,6 +14,7 @@ import "../styles/discover.css";
 import "../styles/source-discovery.css";
 import "../styles/product.css";
 import "../styles/library.css";
+import "../styles/session-folders.css";
 import "../styles/research.css";
 import "../styles/study.css";
 import "@xyflow/react/dist/base.css";

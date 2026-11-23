@@ -289,9 +289,9 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Study plan" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent study", exact: true })).toBeVisible();
-  // With no session in progress, Sessions asks for the next video rather than showing an empty page.
+  // With no session in progress, the dashboard offers a way to start a new one.
   await page.goto("/app/sessions");
-  await expect(page.getByRole("heading", { name: "What will you study right now?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Unfiled sessions" })).toBeVisible();
   await page.goto("/app");
   const browserErrors: string[] = [];
   const pageErrors: string[] = [];

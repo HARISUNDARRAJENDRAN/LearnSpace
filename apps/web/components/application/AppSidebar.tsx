@@ -61,7 +61,7 @@ function isResearchPath(pathname: string): boolean {
 
 /** The mode a URL belongs to: Research pages and paper sessions, and the Research views of Sessions and Library. */
 export function modeFromUrl(pathname: string, searchParams: URLSearchParams): NavigationMode {
-  if (pathname === "/app/sessions" && searchParams.get("mode") === "research") return "research";
+  if ((pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) && searchParams.get("mode") === "research") return "research";
   if (pathname === "/app/library" && searchParams.get("view") === "papers") return "research";
   return isResearchPath(pathname) ? "research" : "learn";
 }
@@ -87,7 +87,8 @@ export function AppSidebar({
   useEffect(() => {
     if (isResearchPath(pathname)) setMode("research");
     else if (pathname === "/app" || pathname.startsWith("/app/discover") || pathname.startsWith("/app/study/")) setMode("learn");
-  }, [pathname]);
+    else if (pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) setMode(modeFromUrl(pathname, searchParams));
+  }, [pathname, searchParams]);
 
   useEffect(() => {
     if (!modeMenuOpen) return;
@@ -148,6 +149,13 @@ export function AppSidebar({
   function selectMode(nextMode: NavigationMode) {
     setMode(nextMode);
     setModeMenuOpen(false);
+    if (pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) {
+      const params = new URLSearchParams(searchParams);
+      if (nextMode === "research") params.set("mode", "research");
+      else params.delete("mode");
+      router.push(params.size ? `${pathname}?${params}` : pathname);
+      return;
+    }
     router.push(nextMode === "research" ? "/app/research" : "/app");
   }
 

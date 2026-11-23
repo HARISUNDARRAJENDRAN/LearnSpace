@@ -1,5 +1,6 @@
 "use client";
 
+import { StudyFolderAction, StudyFolderBreadcrumb } from "../folders/StudyFolderAction";
 import type { StudyAnchor, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import type { LessonControl } from "@learnspace/shared/notes";
 import { BookOpenText, Code, Crosshair, Expand, FileText, Lightbulb, ListChecks, NotebookPen, Shrink, Sparkles, Workflow } from "lucide-react";
@@ -218,7 +219,7 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
       <div className="session-pane">
         <header className="session-topbar">
           <nav className="session-crumbs" aria-label="Breadcrumb">
-            <Link href="/app/research" aria-label="Back to Research" title="Research"><FileText aria-hidden="true" /></Link>
+            <StudyFolderBreadcrumb><Link href="/app/research" aria-label="Back to Research" title="Research"><FileText aria-hidden="true" /></Link></StudyFolderBreadcrumb>
             <span aria-hidden="true">/</span>
             {session.course ? <><span className="session-crumb-course" title={session.course.title}>{session.course.title}</span><span aria-hidden="true">/</span></> : null}
             <h1 title={active.title}>{active.title}</h1>
@@ -228,6 +229,7 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
               <legend className="sr-only">Study tools</legend>
               {tools.filter(({ view: tool }) => tool !== "code" || codingEligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
+            <StudyFolderAction session={session} />
             {course ? <span className="session-course-count" title="Papers read">{doneCount}/{papers.length} read</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={focusMode} aria-label="Focus mode" title="Focus mode: the paper re-typeset for reading" onClick={() => setFocusMode(true)}><BookOpenText aria-hidden="true" /></button>
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => (document.fullscreenElement ? void document.exitFullscreen() : void sessionRef.current?.requestFullscreen())}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
