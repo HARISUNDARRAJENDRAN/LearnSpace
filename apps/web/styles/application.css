@@ -833,6 +833,7 @@ span.application-session-toggle svg { width: 12px; height: 12px; }
 .application-page.is-sidebar-collapsed .application-recent-link > span:last-child,
 .application-page.is-sidebar-collapsed .application-nav-section-heading > span:first-child,
 .application-page.is-sidebar-collapsed .application-recent-list,
+.application-page.is-sidebar-collapsed .application-folder-tree,
 .application-page.is-sidebar-collapsed .application-nav-disclosure,
 .application-page.is-sidebar-collapsed .application-sessions > .application-disclosure,
 .application-page.is-sidebar-collapsed .application-profile-copy {
