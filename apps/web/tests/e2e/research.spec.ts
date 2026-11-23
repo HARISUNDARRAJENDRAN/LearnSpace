@@ -130,7 +130,7 @@ async function tabTo(page: Page, matches: (active: { name: string | null; text: 
 
 test("Workflow A — beginner path, cited paper study, notes, save and resume at the same place", async ({ page }) => {
   await page.goto("/app/research/discover");
-  await expect(page.getByRole("heading", { name: /Read the papers that built the field/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Learning paths", exact: true })).toBeVisible();
   await page.getByRole("link", { name: /ML research foundations \(beginner\)/ }).click();
   await expect(page).toHaveURL(/\/app\/research\/discover\/ml-foundations$/);
   await expect(page.getByRole("heading", { name: "ML research foundations (beginner)" })).toBeVisible();

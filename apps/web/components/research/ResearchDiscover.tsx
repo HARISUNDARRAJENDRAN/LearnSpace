@@ -33,9 +33,8 @@ export function ResearchDiscover({ data }: { data: ResearchDiscoverData }) {
   const featured = data.tracks.find(({ track }) => track.id === data.recommendedTrackId) ?? null;
   return <main className="research-page discover-page">
     <header className="discover-intro">
-      <p className="discover-eyebrow">Learning paths</p>
-      <h1>Read the papers that built the field, in the order that makes them click.</h1>
-      <p>Each path climbs from the concepts you need to the papers that defined the idea, with the sections worth your time and what each one teaches.</p>
+      <h1>Learning paths</h1>
+      <p>Study foundational papers in order, with guided reading for each concept.</p>
     </header>
     {featured ? <section className="discover-featured" aria-labelledby="discover-featured-title">
       <div>

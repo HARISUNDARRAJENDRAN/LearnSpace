@@ -203,7 +203,7 @@ test.describe("Research visual regression", () => {
       });
 
       await page.goto("/app/research/discover", { waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("heading", { name: /Read the papers that built the field/ })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Learning paths", exact: true })).toBeVisible();
       await stabilize(page);
       await expect(page).toHaveScreenshot(`research-discover-${name}.png`, {
         animations: "disabled",
