@@ -1,6 +1,6 @@
 "use client";
 
-import type { ChangeSessionFolder, SessionFolderDetailsQuery, StartStudySessionResponse } from "@learnspace/shared";
+import type { ChangeSessionFolder, SessionFolderDetailsQuery, SourcePreview, StartStudySessionResponse } from "@learnspace/shared";
 import { ArrowLeft, ArrowRight, Code2, FileText, FolderClosed, MessageSquare, Mic, MoreHorizontal, NotebookPen, Plus, Video } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import type { SessionFolderDetails } from "../../lib/folders/details";
 import { sessionsHref, useSessions } from "../application/sessions";
 import { SessionFolder, type SessionHistoryTab } from "../library/LibraryPage";
+import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
 import { AddFolderContent } from "./AddFolderContent";
 import { FolderDialog, FolderOptions, MoveSessionDialog, SessionFolderItemOptions } from "./FolderDialogs";
 import { folderHref, folderRequest, FolderRequestError, folderSessionHref, useSessionFolders } from "./state";
@@ -56,7 +57,8 @@ export function FolderDashboard({ folderId, mode, query }: { folderId: string; m
   const { refresh: refreshSessions } = useSessions();
   const { change, pending, revision, folders } = useSessionFolders();
   const [view, setView] = useState<{ url: string; data?: SessionFolderDetails; error?: FolderRequestError } | null>(null);
-  const [add, setAdd] = useState(false);
+  const [add, setAdd] = useState<"discovery" | "library" | null>(null);
+  const addTrigger = useRef<HTMLButtonElement>(null);
   const [options, setOptions] = useState(false);
   const [itemOptions, setItemOptions] = useState<{ id: string; title: string; kind: "session" | "resource" } | null>(null);
   const [move, setMove] = useState<Session | null>(null);
@@ -213,7 +215,7 @@ export function FolderDashboard({ folderId, mode, query }: { folderId: string; m
           <p className="session-folder-meta">{data.counts.papers} {data.counts.papers === 1 ? "paper" : "papers"} · {data.counts.videos} {data.counts.videos === 1 ? "video" : "videos"} · {data.counts.sessions} {data.counts.sessions === 1 ? "session" : "sessions"} · Updated {date.format(new Date(data.updatedAt))}</p>
         </div>
         <div className="session-folder-actions">
-          <button className="is-primary" type="button" onClick={() => setAdd(true)}><Plus aria-hidden="true" />Add content</button>
+          <button className="is-primary" type="button" onClick={(event) => { addTrigger.current = event.currentTarget; setAdd("discovery"); }}><Plus aria-hidden="true" />Add content</button>
           <button className="session-folder-icon" type="button" aria-label="Folder options" onClick={() => setOptions(true)}><MoreHorizontal aria-hidden="true" /></button>
         </div>
       </header>
@@ -245,7 +247,7 @@ export function FolderDashboard({ folderId, mode, query }: { folderId: string; m
         <FolderClosed aria-hidden="true" />
         <p>{query.page > 1 ? "No items on this page." : selectedSection?.empty}</p>
         {query.page > 1 ? <Link href={pageHref(query.section)}>Back to first page</Link>
-          : query.section === "overview" || query.section === "papers" || query.section === "videos" ? <button type="button" onClick={() => setAdd(true)}>Add content</button>
+          : query.section === "overview" || query.section === "papers" || query.section === "videos" ? <button type="button" onClick={(event) => { addTrigger.current = event.currentTarget; setAdd("discovery"); }}>Add content</button>
           : <Link href={folderUrl}>View study sessions</Link>}
       </div>}
       {query.page > 1 || data.hasMore ? <nav className="session-folder-pagination" aria-label="Folder pages">
@@ -255,7 +257,26 @@ export function FolderDashboard({ folderId, mode, query }: { folderId: string; m
       </nav> : null}
       {options ? <FolderOptions folder={data} onClose={() => setOptions(false)} onDeleted={() => router.push(sessionsHref(mode))} /> : null}
     </>}
-    {add ? <AddFolderContent folderId={folderId} onClose={() => setAdd(false)} /> : null}
+    {add === "discovery" ? <SourceDiscoveryModal
+      mode={query.section === "papers" ? "research" : query.section === "videos" ? "learn" : mode}
+      isOpen
+      onClose={() => setAdd(null)}
+      triggerRef={addTrigger}
+      onBrowseLibrary={() => setAdd("library")}
+      onSaveSource={async ({ resourceId, sourceUrl }, sourceMode) => {
+        if (!resourceId && sourceUrl) {
+          const { preview } = await folderRequest<{ preview: SourcePreview }>("/api/v1/source-discovery/resolve", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: sourceMode, url: sourceUrl, correlationId: crypto.randomUUID() }),
+          });
+          resourceId = preview.resourceId;
+        }
+        if (!resourceId) throw new Error("This source is unavailable.");
+        await change(folderId, { action: "save-resource", resourceId });
+      }}
+    /> : null}
+    {add === "library" ? <AddFolderContent folderId={folderId} onClose={() => setAdd(null)} /> : null}
     {move ? <MoveSessionDialog session={move} onClose={() => setMove(null)} /> : null}
     {itemOptions ? <SessionFolderItemOptions title={itemOptions.title} onClose={() => { setItemOptions(null); setError(""); }}>
       {itemOptions.kind === "session" ? <button type="button" onClick={() => {

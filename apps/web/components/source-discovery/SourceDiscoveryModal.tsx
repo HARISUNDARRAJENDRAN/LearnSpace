@@ -3,20 +3,24 @@
 import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
 import { ArrowRight, FileText, Link2, LoaderCircle, Search, Sparkles, Video, X } from "lucide-react";
 import Image from "next/image";
-import { type FormEvent, type RefObject, useEffect, useRef, useState } from "react";
+import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { StartStudyButton } from "../study/StudyActions";
 
 type ModalState = "idle" | "searching" | "results" | "resolving_url" | "preview" | "mode_mismatch" | "error";
 
+type SaveSource = (source: { resourceId?: string | undefined; sourceUrl?: string | undefined }, mode: SourceDiscoveryMode) => Promise<void>;
+
 type Props = {
   mode: SourceDiscoveryMode;
   isOpen: boolean;
   onClose: () => void;
-  onSwitchMode: (mode: SourceDiscoveryMode) => void;
+  onSwitchMode?: (mode: SourceDiscoveryMode) => void;
   triggerRef: RefObject<HTMLElement | null>;
   /** A topic to search for, filled in when the modal opens (the learner still starts the search). */
   initialQuery?: string | undefined;
+  onSaveSource?: SaveSource;
+  onBrowseLibrary?: () => void;
 };
 
 type ErrorBody = { error?: { code?: string; message?: string; detectedMode?: SourceDiscoveryMode } };
@@ -56,8 +60,12 @@ function formatDate(value: string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.getUTCFullYear().toString();
 }
 
-export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, triggerRef, initialQuery }: Props) {
+export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwitchMode, triggerRef, initialQuery, onSaveSource, onBrowseLibrary }: Props) {
+  const [folderMode, setFolderMode] = useState(initialMode);
+  const titleId = useId();
+  const mode = onSaveSource ? folderMode : initialMode;
   const searchRef = useRef<HTMLInputElement>(null);
+  const lastResolvedUrl = useRef("");
   const directRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const requestRef = useRef<AbortController | null>(null);
@@ -178,9 +186,10 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
     }
   }
 
-  async function resolveUrl(value: string) {
+  async function resolveUrl(value: string, sourceMode = mode) {
     const url = value.trim();
     if (!url) return;
+    lastResolvedUrl.current = url;
     requestRef.current?.abort();
     const controller = new AbortController();
     requestRef.current = controller;
@@ -193,7 +202,7 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
       const response = await fetch("/api/v1/source-discovery/resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, url, correlationId: crypto.randomUUID() }),
+        body: JSON.stringify({ mode: sourceMode, url, correlationId: crypto.randomUUID() }),
         signal: controller.signal,
       });
       const body = await (response.ok ? response.json() as Promise<{ preview?: SourcePreview }> : readError(response));
@@ -335,9 +344,27 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
     }
   }
 
+  function selectSource(next: SourceDiscoveryMode) {
+    requestRef.current?.abort();
+    requestVersion.current += 1;
+    setFolderMode(next);
+    setRankingIntent("best_match");
+    setState("idle");
+    setCandidates([]);
+    setPreview(null);
+    setError(null);
+    setRunId(null);
+    setAgent(null);
+  }
+
   function switchMode() {
     if (!detectedMode) return;
-    onSwitchMode(detectedMode);
+    if (onSaveSource) {
+      selectSource(detectedMode);
+      void resolveUrl(lastResolvedUrl.current || query, detectedMode);
+    } else {
+      onSwitchMode?.(detectedMode);
+    }
   }
 
   if (!isOpen) return null;
@@ -351,17 +378,23 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
   const content = (
     <div className="source-discovery-overlay" role="presentation">
       <button className="source-discovery-backdrop" type="button" onClick={onClose} aria-label="Close source discovery" />
-      <section ref={dialogRef} className="source-discovery-dialog" data-source-discovery-dialog role="dialog" aria-modal="true" aria-labelledby="source-discovery-title">
+      <section ref={dialogRef} className="source-discovery-dialog" data-source-discovery-dialog role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <button className="source-discovery-close" type="button" onClick={onClose} aria-label="Close source discovery"><X aria-hidden="true" /></button>
         <header className="source-discovery-header">
-          <h2 id="source-discovery-title">{research ? "Research any topic from" : "Learn any topic from"}<br /><span>{headingEnd}</span></h2>
+          <h2 id={titleId}>{onSaveSource ? "Add content" : <>{research ? "Research any topic from" : "Learn any topic from"}<br /><span>{headingEnd}</span></>}</h2>
         </header>
         <div className="source-discovery-body">
           <form className="source-discovery-search" onSubmit={(event) => void submitSearch(event)}>
             <input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={research ? "What do you want to research?" : "What do you want to learn?"} aria-label={research ? "What do you want to research?" : "What do you want to learn?"} autoComplete="off" />
             <div className="source-discovery-search-footer">
               <fieldset className="source-discovery-pills" aria-label="Search source and ranking">
-                <span className="source-discovery-pill">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />} {research ? "Papers" : "YouTube"}</span>
+                {onSaveSource ? <label className="source-discovery-pill source-discovery-select">
+                  <span className="sr-only">Source type</span>
+                  <select value={mode} onChange={(event) => selectSource(event.target.value as SourceDiscoveryMode)}>
+                    <option value="research">Papers</option>
+                    <option value="learn">YouTube</option>
+                  </select>
+                </label> : <span className="source-discovery-pill">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />} {research ? "Papers" : "YouTube"}</span>}
                 <label className="source-discovery-pill source-discovery-select"><span className="sr-only">Ranking</span><select value={rankingIntent} onChange={(event) => setRankingIntent(event.target.value as SourceRankingIntent)}><option value="best_match">Best match</option>{research ? <><option value="foundational">Foundational</option><option value="recent">Recent</option></> : <><option value="beginner_friendly">Beginner friendly</option><option value="in_depth">In-depth</option><option value="practical">Practical</option></>}</select></label>
               </fieldset>
               <button className="source-discovery-submit" type="submit" aria-label={research ? "Search papers" : "Search videos"} disabled={state === "searching" || state === "resolving_url"}><Search aria-hidden="true" /></button>
@@ -370,14 +403,15 @@ export function SourceDiscoveryModal({ mode, isOpen, onClose, onSwitchMode, trig
 
           <div className={`source-discovery-lower ${state === "results" || state === "searching" ? "is-results" : ""}`}>
             {state === "searching" && candidates.length === 0 ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>{research ? "Finding relevant papers…" : "Searching YouTube for the best lessons…"}</p><span>{research ? "Searching Exa for papers…" : "Running several searches and checking each video's length, audience and availability…"}</span></div> : null}
-            {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{agent ? <AgentStatus agent={agent} count={candidates.length} /> : null}{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} />)}{state === "searching" && !agent ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}{state === "results" && error ? <div className="source-discovery-more source-discovery-more-error" role="alert"><span>{error}</span><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}</> : <div className="source-discovery-empty-results"><p>{error ?? (research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic.")}</p><span>Try making the topic more specific.</span></div>}</div> : null}
-            {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} /> : null}
-            {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? "Research" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
-            {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void submitSearch()}>Try again</button></div> : null}
+            {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{agent ? <AgentStatus agent={agent} count={candidates.length} /> : null}{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} onSaveSource={onSaveSource} />)}{state === "searching" && !agent ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}{state === "results" && error ? <div className="source-discovery-more source-discovery-more-error" role="alert"><span>{error}</span><button type="button" onClick={() => void (directOpen ? resolveUrl(directUrl) : submitSearch())}>Try again</button></div> : null}</> : <div className="source-discovery-empty-results"><p>{error ?? (research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic.")}</p><span>Try making the topic more specific.</span></div>}</div> : null}
+            {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} onSaveSource={onSaveSource} /> : null}
+            {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{onSaveSource ? "Use the matching source type to preview this link." : detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? onSaveSource ? "Papers" : "Research" : onSaveSource ? "YouTube" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
+            {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void (directOpen ? resolveUrl(directUrl) : submitSearch())}>Try again</button></div> : null}
             {state === "idle" && !directOpen ? <div className="source-discovery-empty"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><button className="source-discovery-direct-trigger" type="button" onClick={() => { setDirectOpen(true); window.requestAnimationFrame(() => directRef.current?.focus()); }}>{directLabel}</button></div> : null}
             {state === "resolving_url" ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>Resolving your source…</p><span>Checking the provider and preparing a preview…</span></div> : null}
             {directOpen && state !== "preview" && state !== "mode_mismatch" && state !== "error" && state !== "resolving_url" ? <div className="source-discovery-direct-form"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><div className="source-discovery-url-input"><Link2 aria-hidden="true" /><input ref={directRef} value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void resolveUrl(directUrl); } }} placeholder={research ? "Paste an arXiv or DOI URL" : "Paste a YouTube URL"} aria-label={directLabel} type="url" /><button type="button" onClick={() => void resolveUrl(directUrl)} aria-label="Resolve source"><ArrowRight aria-hidden="true" /></button></div></div> : null}
           </div>
+          {onBrowseLibrary ? <button className="source-discovery-direct-trigger" type="button" onClick={onBrowseLibrary}>Browse LearnSpace</button> : null}
         </div>
       </section>
     </div>
@@ -403,7 +437,7 @@ function compactCount(value: number): string {
   return String(value);
 }
 
-function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string; onStart: () => void }) {
+function ResultRow({ candidate, mode, startLabel, onStart, onSaveSource }: { candidate: SourceDiscoveryCandidate; mode: SourceDiscoveryMode; startLabel: string; onStart: () => void; onSaveSource?: SaveSource | undefined }) {
   const paper = candidate as PaperPresentation;
   const duration = formatDuration(candidate.durationMs);
   const sourceProps = candidate.sourceOrigin === "external_refresh" && candidate.canonicalUrl
@@ -425,11 +459,35 @@ function ResultRow({ candidate, mode, startLabel, onStart }: { candidate: Source
       <p>{[candidate.author, mode === "research" ? paper.venue : views, mode === "learn" ? duration : formatDate(candidate.publishedAt)].filter(Boolean).join(" · ")}</p>
       <span className="source-discovery-why">{tags.map((tag) => <em key={tag}>{tag}</em>)}<span>{candidate.reason}</span></span>
     </div>
-    <StartStudyButton {...sourceProps} {...(candidate.recommendationRunId === undefined ? {} : { recommendationRunId: candidate.recommendationRunId })} origin={mode === "research" ? "research" : "discover"} label={startLabel} className="source-discovery-start" onClick={onStart} />
+    {onSaveSource ? <SaveSourceButton save={() => onSaveSource(sourceProps, mode)} /> : <StartStudyButton {...sourceProps} {...(candidate.recommendationRunId === undefined ? {} : { recommendationRunId: candidate.recommendationRunId })} origin={mode === "research" ? "research" : "discover"} label={startLabel} className="source-discovery-start" onClick={onStart} />}
   </article>;
 }
 
-function Preview({ preview, label, onStart }: { preview: SourcePreview; label: string; onStart: () => void }) {
+function Preview({ preview, label, onStart, onSaveSource }: { preview: SourcePreview; label: string; onStart: () => void; onSaveSource?: SaveSource | undefined }) {
   const metadata = preview.mode === "research" ? [preview.authors.length > 0 ? preview.authors.slice(0, 2).join(", ") : null, preview.year?.toString(), preview.venue ?? (preview.arxivId ? "arXiv" : null)].filter(Boolean).join(" · ") : [preview.author, formatDuration(preview.durationMs)].filter(Boolean).join(" · ");
-  return <div className="source-discovery-preview"><div className="source-discovery-preview-media">{preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt="" width={180} height={101} unoptimized /> : preview.mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-preview-copy"><span className="source-discovery-kicker">Review source</span><h3>{preview.title}</h3><p>{metadata}</p>{preview.description ? <span>{preview.description}</span> : null}</div><StartStudyButton resourceId={preview.resourceId} origin={preview.mode === "research" ? "research" : "discover"} label={label} className="source-discovery-start" onClick={onStart} /></div>;
+  return <div className="source-discovery-preview"><div className="source-discovery-preview-media">{preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt="" width={180} height={101} unoptimized /> : preview.mode === "research" ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><div className="source-discovery-preview-copy"><span className="source-discovery-kicker">Review source</span><h3>{preview.title}</h3><p>{metadata}</p>{preview.description ? <span>{preview.description}</span> : null}</div>{onSaveSource ? <SaveSourceButton key={preview.resourceId} save={() => onSaveSource(preview, preview.mode)} /> : <StartStudyButton resourceId={preview.resourceId} origin={preview.mode === "research" ? "research" : "discover"} label={label} className="source-discovery-start" onClick={onStart} />}</div>;
+}
+
+function SaveSourceButton({ save }: { save: () => Promise<void> }) {
+  const [status, setStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState("");
+
+  async function add() {
+    setStatus("saving");
+    setError("");
+    try {
+      await save();
+      setStatus("saved");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not add this source.");
+      setStatus("idle");
+    }
+  }
+
+  return <div className="source-discovery-save">
+    <button className="source-discovery-start" type="button" disabled={status !== "idle"} onClick={() => void add()}>
+      {status === "saved" ? "Added" : status === "saving" ? "Adding…" : "Add to folder"}
+    </button>
+    {error ? <p role="alert">{error}</p> : null}
+  </div>;
 }

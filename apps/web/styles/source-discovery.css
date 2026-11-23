@@ -271,7 +271,7 @@
   .source-discovery-body { padding: 0 18px 20px; }
   .source-discovery-result { grid-template-columns: 92px minmax(0, 1fr); gap: 11px; }
   .source-discovery-thumbnail { width: 92px; height: 58px; }
-  .source-discovery-start { grid-column: 2; justify-self: start; }
+  .source-discovery-start, .source-discovery-save { grid-column: 2; justify-self: start; }
   .source-discovery-preview { grid-template-columns: 100px minmax(0, 1fr); gap: 13px; padding: 20px; }
   .source-discovery-preview-media { width: 100px; height: 66px; }
   .source-discovery-preview .source-discovery-start { grid-column: 2; }

@@ -75,6 +75,25 @@ test("folders keep paper and video sessions together across modes, tabs, and bro
     await expect(main.getByText("This folder is empty.", { exact: false })).toBeVisible();
 
     await main.getByRole("button", { name: "Add content", exact: true }).first().click();
+    const discovery = page.getByRole("dialog", { name: "Add content" });
+    await discovery.getByLabel("Source type").selectOption("research");
+    await expect(discovery.getByRole("button", { name: "arXiv / DOI" })).toBeVisible();
+    await discovery.getByLabel("Source type").selectOption("learn");
+    await expect(discovery.getByRole("button", { name: "YouTube URL" })).toBeVisible();
+    const youtubeUrl = `https://www.youtube.com/watch?v=f${userId.replaceAll("-", "").slice(0, 10)}`;
+    await page.route("**/api/v1/source-discovery/resolve", async (route) => {
+      expect(route.request().postDataJSON()).toMatchObject({ mode: "learn", url: youtubeUrl });
+      await route.fulfill({ json: { preview: {
+        resourceId: video.resourceId, mode: "learn", provider: "youtube", title: video.title,
+        canonicalUrl: youtubeUrl, durationMs: 300000,
+      } } });
+    });
+    await discovery.getByRole("button", { name: "YouTube URL" }).click();
+    await discovery.getByRole("textbox", { name: "YouTube URL" }).fill(youtubeUrl);
+    await discovery.getByRole("button", { name: "Resolve source" }).click();
+    await discovery.getByRole("button", { name: "Add to folder" }).click();
+    await expect(discovery.getByRole("button", { name: "Added", exact: true })).toBeDisabled();
+    await discovery.getByRole("button", { name: "Browse LearnSpace" }).click();
     const picker = page.getByRole("dialog", { name: "Add content" });
     for (const fixture of fixtures.filter((item) => item.type === "paper")) {
       await picker.getByRole("button", { name: `Add ${fixture.title}`, exact: true }).click();
