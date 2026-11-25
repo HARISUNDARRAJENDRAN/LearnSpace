@@ -45,7 +45,7 @@ type YouTubePlayerOptions = {
   height: string;
   width: string;
   videoId: string;
-  playerVars: { playsinline: 1; rel: 0; modestbranding: 1; fs: 0 };
+  playerVars: { playsinline: 1; rel: 0; modestbranding: 1; fs: 1 };
   events: { onReady: (event: YouTubeReadyEvent) => void; onStateChange: (event: YouTubeStateEvent) => void; onError: (event: { data: number }) => void };
 };
 type YouTubeApi = { Player: new (element: HTMLElement, options: YouTubePlayerOptions) => YouTubePlayer };
@@ -129,8 +129,7 @@ function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onC
         height: "100%",
         width: "100%",
         videoId: resource.video?.youtubeId ?? "",
-        // YouTube's own fullscreen would take only the iframe; the session's fullscreen keeps the study tools beside it.
-        playerVars: { playsinline: 1, rel: 0, modestbranding: 1, fs: 0 },
+        playerVars: { playsinline: 1, rel: 0, modestbranding: 1, fs: 1 },
         events: {
           onReady: ({ target }) => {
             playerRef.current = target;
