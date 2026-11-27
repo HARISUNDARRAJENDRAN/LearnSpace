@@ -22,7 +22,7 @@
 
 /* The shell header gives way to the session's own bar; while the sidebar is a drawer it stays for the menu. */
 @media (min-width: 801px) {
-  .application-main:has(.video-session) .application-header { display: none; }
+  .application-main:has(.video-session, .folder-workspace) .application-header { display: none; }
 }
 
 .session-pane {
@@ -862,7 +862,7 @@ button.chat-context-chip:hover { background: rgba(0, 0, 0, .07); }
 }
 
 @media (max-width: 800px) {
-  .video-session { height: calc(100dvh - 72px); }
+  .video-session, .folder-workspace { height: calc(100dvh - 72px); }
 }
 
 @media (max-width: 640px) {

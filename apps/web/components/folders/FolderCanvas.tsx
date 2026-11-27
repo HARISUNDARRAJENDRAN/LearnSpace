@@ -1,7 +1,7 @@
 "use client";
 
 import type { SourcePreview, StudyAnchor } from "@learnspace/shared";
-import { MoreHorizontal, Play, Plus } from "lucide-react";
+import { FolderClosed, ListChecks, MoreHorizontal, NotebookPen, Play, Plus, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -21,7 +21,11 @@ import { folderRequest, FolderRequestError, folderSessionHref, useSessionFolders
 const SessionChat = dynamic(() => import("../study/SessionChat").then((module) => module.SessionChat));
 const SessionNotes = dynamic(() => import("../study/SessionNotes").then((module) => module.SessionNotes));
 const MasteryCheck = dynamic(() => import("../study/MasteryCheck").then((module) => module.MasteryCheck));
-const tools = [{ id: "chat", label: "AI Chat" }, { id: "notes", label: "Notes" }, { id: "practice", label: "Mastery Check" }] as const;
+const tools = [
+  { id: "notes", label: "Notes", Icon: NotebookPen },
+  { id: "practice", label: "Check", Icon: ListChecks },
+  { id: "chat", label: "AI", Icon: Sparkles },
+] as const;
 const noAction = () => undefined;
 
 function LoadTranscript({ id }: { id: string }) {
@@ -176,21 +180,20 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
   const collapse = () => selectTool(null);
   const place = { kind: "paper", page: 1 } as const;
   return <main className="folder-workspace" aria-labelledby="folder-title">
-    <header className="folder-workspace-header">
-      <div><h1 id="folder-title">{folder?.title ?? "Learning Canvas"}</h1>{folder?.description ? <p>{folder.description}</p> : null}</div>
-      {folder ? <div className="session-folder-actions">
-        <button className="is-primary" type="button" onClick={(event) => { addTrigger.current = event.currentTarget; setAdd("discovery"); }}><Plus aria-hidden="true" />Add content</button>
-        <button className="session-folder-icon" type="button" aria-label="Folder options" onClick={() => setOptions(true)}><MoreHorizontal aria-hidden="true" /></button>
+    <header className="session-topbar">
+      <div className="session-crumbs"><FolderClosed aria-hidden="true" /><h1 id="folder-title" title={folder?.title}>{folder?.title ?? "Learning Canvas"}</h1></div>
+      {folder ? <div className="session-actions">
+        <fieldset className="session-tools">
+          <legend className="sr-only">Folder tools</legend>
+          {tools.map(({ id, label, Icon }) => <button key={id} className={tool === id ? "is-active" : ""} type="button" aria-pressed={tool === id} title={label} onClick={() => (tool === id ? collapse() : selectTool(id))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
+        </fieldset>
+        <button className="session-icon-button" type="button" ref={addTrigger} aria-label="Add content" title="Add content" onClick={() => setAdd("discovery")}><Plus aria-hidden="true" /></button>
+        <button className="session-icon-button" type="button" aria-label="Folder options" title="Folder options" onClick={() => setOptions(true)}><MoreHorizontal aria-hidden="true" /></button>
       </div> : null}
     </header>
     {loadError ? <p role="alert" className="session-folder-error">{loadError} <button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></p> : null}
     {error && !itemOptions ? <p role="alert" className="session-folder-error">{error}</p> : null}
-    {folder ? <>
-      <nav className="folder-workspace-tools" aria-label="Folder tools">
-        <button type="button" aria-pressed={tool === null} onClick={collapse}>Learning Canvas</button>
-        {tools.map((item) => <button key={item.id} type="button" aria-pressed={tool === item.id} onClick={() => selectTool(item.id)}>{item.label}</button>)}
-      </nav>
-      <div className="folder-workspace-body">
+    {folder ? <div className="folder-workspace-body">
         <FolderBoard materials={materials} disabled={opening || pending} onOpen={(item) => void open(item)}
           onOptions={(item) => { setError(""); setItemOptions(item); }} />
         {tool || chatOpened ? <aside className="folder-workspace-panel" aria-label={tools.find((item) => item.id === tool)?.label} hidden={!tool}>
@@ -211,8 +214,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
           </> : <p className="folder-canvas-empty">Add material to start taking notes.</p> : null}
           {tool === "practice" ? <MasteryCheck sessionId={folderId} resourceId={folderId} folder readySources={readySources} next={{ course: null, nextTitle: null }} place={place} onGo={noAction} onCollapse={collapse} /> : null}
         </aside> : null}
-      </div>
-    </> : !loadError ? <p role="status">Opening folder…</p> : null}
+      </div> : !loadError ? <p role="status">Opening folder…</p> : null}
     {options && folder ? <FolderOptions folder={folder} onClose={() => setOptions(false)} onDeleted={() => router.push(studyHomeHref(mode))} /> : null}
     {add === "discovery" ? <SourceDiscoveryModal mode={mode} isOpen onClose={() => setAdd(null)} triggerRef={addTrigger}
       onBrowseLibrary={() => setAdd("library")} onSaveSource={async ({ resourceId, sourceUrl }, sourceMode) => {

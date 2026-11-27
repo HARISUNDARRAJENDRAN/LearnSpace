@@ -95,7 +95,7 @@
 .application-folder-heading {
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
   padding-inline: 9px 3px;
   color: #626262;
   font-size: .75rem;
@@ -104,36 +104,16 @@
 .folder-workspace {
   display: flex;
   flex-direction: column;
-  height: calc(100dvh - 78px);
+  height: 100dvh;
   min-height: 460px;
-  padding: 12px clamp(12px, 2vw, 28px) 16px;
+  background: var(--session-canvas);
   color: var(--sf-ink);
 }
-.folder-workspace-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.folder-workspace-header h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.125rem, 3vw, 1.625rem); font-weight: 650; line-height: 1.25; }
-.folder-workspace-header p { margin: 4px 0 0; color: #6b6968; font-size: .875rem; }
-.folder-workspace-tools { display: flex; flex-wrap: wrap; gap: 4px; padding-block: 5px 9px; }
-.folder-workspace-tools button {
-  min-height: 34px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #595755;
-  font: inherit;
-  cursor: pointer;
-}
-.folder-workspace-tools button:hover,
-.folder-workspace-tools button[aria-pressed="true"] { background: #eaeae8; color: #17171a; }
-.folder-workspace-tools button[aria-pressed="true"] { border-color: #dedcd8; font-weight: 650; }
-.folder-workspace-body { position: relative; display: flex; flex: 1; min-height: 0; gap: 8px; }
-.folder-workspace-board { display: flex; flex: 1; min-width: 0; overflow: hidden; border: 1px solid var(--session-hairline); border-radius: 9px; }
+.folder-workspace > .session-topbar { flex: 0 0 48px; }
+.folder-workspace .session-crumbs > svg { flex: none; color: #3f9a64; }
+.folder-workspace > .session-folder-error { margin: 0 !important; padding: 8px 16px; }
+.folder-workspace-body { position: relative; display: flex; flex: 1; min-height: 0; }
+.folder-workspace-board { display: flex; flex: 1; min-width: 0; overflow: hidden; }
 .folder-workspace-board .session-canvas { flex: 1; background-color: var(--session-canvas); }
 .folder-canvas-empty { margin: 0; padding: 20px; font-size: .875rem; color: #595755; }
 .folder-resource-frame { --frame-hue: 8; }
@@ -142,7 +122,6 @@
 .folder-resource-node .home-thumbnail-placeholder svg, .folder-resource-video-empty svg { width: 76px; height: 76px; }
 .folder-resource-options { position: absolute; z-index: 2; top: 14px; right: 14px; display: grid; width: 72px; height: 72px; place-items: center; padding: 0; border: 0; border-radius: 12px; background: #fff; color: #222; cursor: pointer; }
 .folder-resource-options svg { width: 38px; height: 38px; }
-.folder-workspace-header button svg { width: 16px; height: 16px; }
 .folder-workspace-panel {
   display: flex;
   flex-direction: column;
@@ -168,15 +147,13 @@
 }
 @media (max-width: 740px) {
   .folder-workspace-panel { position: absolute; inset: 0; }
-  .folder-workspace-header { align-items: start; }
-  .folder-workspace-header .session-folder-actions { flex: none; }
 }
 
 .application-sessions-trigger { width: 100%; border: 0; background: transparent; text-align: left; font-family: inherit; cursor: pointer; }
 .application-sessions-chevron { width: 14px; height: 14px; margin-left: auto; color: #626262; }
 .application-sessions-trigger[aria-expanded="true"] .application-sessions-chevron { transform: rotate(90deg); }
-.application-folder-add { display: grid; flex: none; width: 27px; height: 27px; place-items: center; padding: 0; border: 1px solid #dededb; border-radius: 6px; color: #292927; background: #fff; cursor: pointer; }
-.application-folder-add svg { width: 16px; height: 16px; }
+.application-folder-add { display: grid; flex: none; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: 6px; color: #292927; background: transparent; cursor: pointer; }
+.application-folder-add svg { width: 15px; height: 15px; }
 .application-folder-add:hover { background: #eaeae8; }
 .application-page.is-sidebar-collapsed .application-sessions-trigger > :is(span:nth-child(2), .application-sessions-chevron) { display: none; }
 .application-ended-sessions { font-size: 12px; padding: 0 8px; }

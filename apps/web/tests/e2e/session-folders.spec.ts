@@ -81,7 +81,7 @@ test("folders open a shared canvas for papers and videos across modes and browse
     const board = main.getByRole("region", { name: "Learning Canvas" });
     await expect(board.getByText("Add a YouTube video or research paper to start studying.")).toBeVisible();
     await expect(main.getByRole("link", { name: "Overview" })).toHaveCount(0);
-    await main.getByRole("button", { name: "AI Chat" }).click();
+    await main.getByRole("button", { name: "AI", exact: true }).click();
     await expect(main.getByText("Ask about your folder")).toBeVisible();
 
     await main.getByRole("button", { name: "Add content", exact: true }).first().click();
@@ -130,9 +130,9 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await main.getByLabel("Notes for").selectOption(video.resourceId);
     await expect(main.getByText(`Notes from ${video.title}`)).toBeVisible();
     await expect(main.getByText(`Notes from ${fixtures[0]!.title}`)).toHaveCount(0);
-    await main.getByRole("button", { name: "Mastery Check", exact: true }).click();
-    await expect(main.getByRole("complementary", { name: "Mastery Check" })).toBeVisible();
-    await main.getByRole("button", { name: "Learning Canvas", exact: true }).click();
+    await main.getByRole("button", { name: "Check", exact: true }).click();
+    await expect(main.getByRole("complementary", { name: "Check" })).toBeVisible();
+    await main.getByRole("button", { name: "Check", exact: true }).click();
     await card(video.title).click();
     await expect(page).toHaveURL(new RegExp(`/study/video/${video.sessionId}\\?folder=${folderId}`));
     await page.getByRole("link", { name: "Back to folder" }).click();
