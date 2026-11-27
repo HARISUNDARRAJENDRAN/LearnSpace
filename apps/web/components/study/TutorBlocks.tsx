@@ -9,6 +9,7 @@ import { PlaceIcon, placeLabel, placeOf } from "./place";
 
 /** Everything a block may do. Each action is an app-owned request the server authorizes; blocks carry no URLs or code. */
 export type TutorActions = {
+  citations: boolean;
   go: (place: StudyAnchor) => void;
   source?: (id: string, place: StudyAnchor | null) => void;
   answer: (messageId: string, blockId: string, choice: number) => void;
@@ -22,6 +23,7 @@ export type TutorActions = {
 type BlockProps<T extends TutorBlockView["type"]> = { block: Extract<TutorBlockView, { type: T }>; message: TutorMessageView; actions: TutorActions };
 
 function Cites({ src, message, actions }: { src: number[]; message: TutorMessageView; actions: TutorActions }) {
+  if (!actions.citations) return null;
   // A transcript without timestamps has no moment to jump to, so its passages get no pill.
   const sources = src.flatMap((index) => message.sources[index] && (message.sources[index].resource || placeOf(message.sources[index].startMs, message.sources[index].anchor)) ? [message.sources[index]] : [])
     // Passages on one page read as one pill.
@@ -31,6 +33,7 @@ function Cites({ src, message, actions }: { src: number[]; message: TutorMessage
 }
 
 function Cite({ source, actions }: { source: TutorSource; actions: TutorActions }) {
+  if (!actions.citations) return null;
   const place = placeOf(source.startMs, source.anchor);
   const resource = source.resource;
   if (resource) {

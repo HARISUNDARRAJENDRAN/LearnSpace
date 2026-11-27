@@ -78,11 +78,28 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await expect(main.getByRole("heading", { name: "World Models Research" })).toBeVisible();
     const folderUrl = page.url();
     const folderId = new URL(folderUrl).pathname.split("/").at(-1);
+    if (!folderId) throw new Error("Folder route has no id");
+    const folderThreadId = randomUUID();
+    await db`INSERT INTO study.study_sessions (id, user_id, title, mode, metadata)
+      VALUES (${folderId}, ${userId}, 'World Models Research', 'guided_learning', '{"folderWorkspace":true}') ON CONFLICT DO NOTHING`;
+    await db`INSERT INTO study.tutor_threads (id, user_id, study_session_id, mode) VALUES (${folderThreadId}, ${userId}, ${folderId}, 'folder_tutor')`;
+    await db`INSERT INTO study.tutor_messages (thread_id, actor_type, content_text, content)
+      VALUES (${folderThreadId}, 'user', 'What connects these materials?', '{}'),
+        (${folderThreadId}, 'assistant', 'They share a predictive-learning objective.', ${db.json({
+          outcome: "answer",
+          blocks: [{ type: "text", id: "b0", text: "They share a predictive-learning objective.", src: [0], basis: "source" }],
+          sources: [{ chunkId: randomUUID(), startMs: null, endMs: null, excerpt: "Grounded evidence", resource: { id: fixtures[0]!.resourceId, title: "Hidden citation title" } }],
+          followUps: [], interactions: {},
+        })})`;
     const board = main.getByRole("region", { name: "Learning Canvas" });
     await expect(board.getByText("Add a YouTube video or research paper to start studying.")).toBeVisible();
     await expect(main.getByRole("link", { name: "Overview" })).toHaveCount(0);
+    await main.getByRole("button", { name: "Notes", exact: true }).click();
+    await expect(main.getByText("Add material to start taking notes.")).toBeVisible();
     await main.getByRole("button", { name: "AI", exact: true }).click();
     await expect(main.getByText("Ask about your folder")).toBeVisible();
+    await expect(main.getByText("They share a predictive-learning objective.")).toBeVisible();
+    await expect(main.locator(".folder-workspace-panel .tutor-cite, .folder-workspace-panel .chat-sources-toggle")).toHaveCount(0);
 
     await main.getByRole("button", { name: "Add content", exact: true }).first().click();
     const discovery = page.getByRole("dialog", { name: "Add content" });
@@ -130,6 +147,12 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await main.getByLabel("Notes for").selectOption(video.resourceId);
     await expect(main.getByText(`Notes from ${video.title}`)).toBeVisible();
     await expect(main.getByText(`Notes from ${fixtures[0]!.title}`)).toHaveCount(0);
+    await main.getByRole("button", { name: "AI", exact: true }).click();
+    await expect.poll(() => card(video.title).evaluate((element) => {
+      const cardBox = element.getBoundingClientRect();
+      const canvasBox = element.closest(".session-canvas")?.getBoundingClientRect();
+      return Boolean(canvasBox && cardBox.right > canvasBox.left && cardBox.left < canvasBox.right && cardBox.bottom > canvasBox.top && cardBox.top < canvasBox.bottom);
+    })).toBe(true);
     await main.getByRole("button", { name: "Check", exact: true }).click();
     await expect(main.getByRole("complementary", { name: "Check" })).toBeVisible();
     await main.getByRole("button", { name: "Check", exact: true }).click();
@@ -192,7 +215,7 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
     await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
-    await db`DELETE FROM study.tutor_messages WHERE thread_id IN ${db(fixtures.map((item) => item.threadId))}`;
+    await db`DELETE FROM study.tutor_messages WHERE thread_id IN (SELECT id FROM study.tutor_threads WHERE user_id = ${userId})`;
     await db`DELETE FROM study.tutor_threads WHERE user_id = ${userId}`;
     await db`DELETE FROM study.session_transcript WHERE user_id = ${userId}`;
     await db`DELETE FROM study.video_notes WHERE user_id = ${userId}`;

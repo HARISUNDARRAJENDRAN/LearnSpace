@@ -277,6 +277,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
   }
 
   const actions: TutorActions = {
+    citations: !folder,
     ...(onSource ? { source: onSource } : {}),
     go: onGo,
     answer: (messageId, blockId, choice) => void act({ action: "answer", messageId, blockId, choice }),
@@ -410,7 +411,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
           {message.status === "completed" && message.text ? (
             <div className="chat-message-actions">
               <button className="session-icon-button" type="button" aria-label="Copy answer" title="Copy" onClick={() => void navigator.clipboard?.writeText(message.text)}><Copy aria-hidden="true" /></button>
-              <AnswerSources message={message} onGo={onGo} {...(onSource ? { onSource } : {})} />
+              {folder ? null : <AnswerSources message={message} onGo={onGo} {...(onSource ? { onSource } : {})} />}
             </div>
           ) : null}
           {message === visible.at(-1) && message.followUps.length > 0 && !pending ? (

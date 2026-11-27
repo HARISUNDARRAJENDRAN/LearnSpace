@@ -11,6 +11,7 @@ import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
 import { useCanvas, ZoomBar } from "../study/canvas";
 import { layoutCourse, PaperPreview, VIDEO_CARD } from "../study/CourseGraph";
 import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
+import { SessionChat } from "../study/SessionChat";
 import { postStudyAction } from "../study/session-api";
 import { useTranscriptCapture } from "../study/useTranscriptCapture";
 import { AddFolderContent } from "./AddFolderContent";
@@ -18,7 +19,6 @@ import { FolderDialog, FolderOptions, SessionFolderItemOptions } from "./FolderD
 import { takeFolderQuestion } from "./StudyFolderAction";
 import { folderRequest, FolderRequestError, folderSessionHref, useSessionFolders } from "./state";
 
-const SessionChat = dynamic(() => import("../study/SessionChat").then((module) => module.SessionChat));
 const SessionNotes = dynamic(() => import("../study/SessionNotes").then((module) => module.SessionNotes));
 const MasteryCheck = dynamic(() => import("../study/MasteryCheck").then((module) => module.MasteryCheck));
 const tools = [
@@ -33,9 +33,10 @@ function LoadTranscript({ id }: { id: string }) {
   return null;
 }
 
-function FolderBoard({ materials, disabled, onOpen, onOptions }: {
+function FolderBoard({ materials, disabled, tool, onOpen, onOptions }: {
   materials: FolderMaterial[];
   disabled: boolean;
+  tool: string | null;
   onOpen: (item: FolderMaterial) => void;
   onOptions: (item: FolderMaterial) => void;
 }) {
@@ -57,6 +58,13 @@ function FolderBoard({ materials, disabled, onOpen, onOptions }: {
   useEffect(() => {
     if (hasMaterials && !placed()) frameHome();
   }, [bounds.height, bounds.width, hasMaterials, frameHome, placed]);
+  // A tool changes the canvas width and may inherit a camera whose materials are outside the new viewport.
+  const previousTool = useRef(tool);
+  useEffect(() => {
+    if (previousTool.current === tool) return;
+    previousTool.current = tool;
+    if (hasMaterials) frameHome();
+  }, [tool, hasMaterials, frameHome]);
   const dotSpacing = Math.max(8, 24 * view.zoom);
   return <section className="folder-workspace-board" aria-label="Learning Canvas">
     <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers}
@@ -194,7 +202,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
     {loadError ? <p role="alert" className="session-folder-error">{loadError} <button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></p> : null}
     {error && !itemOptions ? <p role="alert" className="session-folder-error">{error}</p> : null}
     {folder ? <div className="folder-workspace-body">
-        <FolderBoard materials={materials} disabled={opening || pending} onOpen={(item) => void open(item)}
+        <FolderBoard materials={materials} disabled={opening || pending} tool={tool} onOpen={(item) => void open(item)}
           onOptions={(item) => { setError(""); setItemOptions(item); }} />
         {tool || chatOpened ? <aside className="folder-workspace-panel" aria-label={tools.find((item) => item.id === tool)?.label} hidden={!tool}>
           {tool === "chat" || chatOpened ? <div className="folder-tool-slot" hidden={tool !== "chat"}><SessionChat sessionId={folderId} folder resource={{ type: "paper", title: folder.title }} place={place} seed={seed} code={null}
