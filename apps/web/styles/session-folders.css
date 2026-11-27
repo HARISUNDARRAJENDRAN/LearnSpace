@@ -148,13 +148,18 @@
 .folder-workspace-header p { margin: 4px 0 0; color: #6b6968; font-size: .875rem; }
 .folder-workspace-tools { display: flex; flex-wrap: wrap; gap: 4px; padding-block: 5px 9px; }
 .folder-workspace-tools button {
-  padding: 7px 10px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  font-size: .8125rem;
+  background: transparent;
+  color: #595755;
+  font: inherit;
+  cursor: pointer;
 }
 .folder-workspace-tools button:hover,
 .folder-workspace-tools button[aria-pressed="true"] { background: #eaeae8; color: #17171a; }
-.folder-workspace-tools button[aria-pressed="true"] { font-weight: 650; }
+.folder-workspace-tools button[aria-pressed="true"] { border-color: #dedcd8; font-weight: 650; }
 .folder-workspace-body { position: relative; display: flex; flex: 1; min-height: 0; gap: 8px; }
 .folder-canvas-board {
   flex: 1;
@@ -180,8 +185,10 @@
   flex-direction: column;
   width: 100%;
   height: 100%;
+  padding: 0;
   overflow: hidden;
   text-align: start;
+  cursor: pointer;
   background: #fff;
   color: #222;
   border: 1px solid #dedcd8;
@@ -204,7 +211,8 @@
 .folder-canvas-caption { display: grid; gap: 4px; padding: 10px 12px 12px; }
 .folder-canvas-caption small { color: #66635e; font-size: .6875rem; }
 .folder-canvas-caption strong { font-size: .875rem; line-height: 1.35; overflow-wrap: anywhere; }
-.folder-canvas-options { position: absolute; top: 6px; right: 6px; background: #fff; color: #222; }
+.folder-canvas-options { position: absolute; top: 6px; right: 6px; width: 30px; height: 30px; background: #fff; color: #222; }
+.folder-canvas-options svg, .folder-workspace-header button svg { width: 16px; height: 16px; }
 .folder-workspace-panel {
   display: flex;
   flex-direction: column;
