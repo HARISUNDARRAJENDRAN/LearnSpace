@@ -8,13 +8,13 @@
   font-weight: 500;
 }
 .application-folder-tree > details > summary:focus-visible { outline: 2px solid #262625; outline-offset: -2px; }
-.application-folder-children { padding-left: 12px; }
 .application-folder-link svg { flex: none; width: 14px; height: 14px; color: currentColor; }
 .application-folder-link[aria-current="page"] { font-weight: 600; color: #17171a; background: #eaeae8; }
 .application-folder-empty { margin: 3px 0 5px 16px; color: #696762; font-size: 12px; }
 .application-folder-tree > details > ul > li > a { min-height: 27px; }
 
 .session-folders-page,
+.folder-workspace,
 .session-folder-dialog,
 .session-history-actions {
   --sf-ink: #202124;
@@ -31,20 +31,17 @@
 .session-folders-page ul, .session-folder-dialog ul { list-style: none; padding: 0; }
 .session-folders-page svg, .session-folder-dialog svg { width: 16px; height: 16px; flex: none; }
 .session-folders-page :is(a, button):focus-visible,
+.folder-workspace :is(button, select):focus-visible,
 .session-folder-dialog :is(button, input, textarea, select):focus-visible,
 .session-history-actions button:focus-visible { outline: 2px solid var(--sf-accent); outline-offset: 3px; }
-.session-folder-back { display: inline-flex; align-items: center; gap: 6px; color: var(--sf-accent); text-decoration: none; margin-bottom: 19px; }
-.session-folder-back:hover { text-decoration: underline; }
 .session-folder-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 26px; border-bottom: 1px solid var(--sf-line); }
 .session-folder-heading > div:first-child { min-width: 0; }
 .session-folders-page h1 { font-size: clamp(22px, 3vw, 28px); font-weight: 620; line-height: 1.08; letter-spacing: -.035em; overflow-wrap: anywhere; }
 .session-folder-heading p { margin-top: 9px; color: var(--sf-muted); white-space: pre-line; overflow-wrap: anywhere; }
-.session-folder-heading .session-folder-meta { font-size: 12px; margin-top: 12px; }
 .session-folder-section { margin-top: 28px; }
 .session-folder-section h2 { margin-bottom: 12px; font-size: 18px; font-weight: 620; letter-spacing: -.025em; }
 .session-folder-actions, .session-folder-item-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .session-folder-heading > .session-folder-actions { flex: none; }
-.session-folder-actions, .session-folder-pagination { align-items: center; }
 .session-folder-button,
 .session-folder-actions > button,
 .session-folder-item-actions > button,
@@ -61,7 +58,7 @@
 .session-folder-actions > .is-primary { border-color: var(--sf-accent); background: var(--sf-accent); color: #fff; }
 .session-folder-actions > .is-primary:hover { background: #111; }
 .session-folder-actions > .is-danger, .session-folder-options > .is-danger { color: #a72b27; }
-.session-folders-page button:disabled, .session-folder-dialog button:disabled, .session-history-actions button:disabled { opacity: .55; cursor: default; }
+.session-folders-page button:disabled, .folder-workspace button:disabled, .session-folder-dialog button:disabled, .session-history-actions button:disabled { opacity: .55; cursor: default; }
 .session-folder-icon { display: inline-grid; width: 36px; height: 36px; flex: none; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--sf-muted); cursor: pointer; }
 .session-folder-icon:hover { background: #f2f2f1; color: var(--sf-ink); }
 .session-folder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; }
@@ -75,10 +72,6 @@
 .session-folder-grid small, .session-folder-row small { display: block; color: var(--sf-muted); font-size: 12px; }
 .session-folder-empty { display: grid; place-items: center; gap: 9px; padding: 26px 16px; border: 1px dashed #dededc; border-radius: 12px; background: var(--sf-surface); text-align: center; }
 .session-folder-empty > svg { width: 23px; height: 23px; }
-.session-folder-tabs { display: flex; flex-wrap: wrap; gap: 4px 17px; border-bottom: 1px solid var(--sf-line); margin-bottom: 21px; }
-.session-folder-tabs a { padding: 11px 3px 9px; border-bottom: 2px solid transparent; color: var(--sf-muted); font-weight: 550; text-decoration: none; }
-.session-folder-tabs a:hover, .session-folder-tabs a[aria-current="page"] { color: var(--sf-accent); }
-.session-folder-tabs a[aria-current="page"] { border-bottom-color: var(--sf-accent); }
 .session-folder-list { border-top: 1px solid var(--sf-line); }
 .session-folder-list > li { border-bottom: 1px solid var(--sf-line); }
 .session-folder-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 11px; padding: 10px 4px; }
@@ -87,18 +80,6 @@
 .session-folder-row > div > a:not(.session-folder-button) { color: inherit; font-weight: 600; text-decoration: none; }
 .session-folder-row > div > a:hover { text-decoration: underline; }
 .session-folder-list + .session-folder-button { margin-top: 10px; }
-.session-folder-lessons { display: grid; gap: 8px; padding: 0 4px 10px 29px !important; }
-.session-folder-lessons > li { display: grid; gap: 4px; padding: 7px 10px; border-radius: 7px; background: var(--sf-surface); }
-.session-folder-lesson-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; overflow-wrap: anywhere; }
-.session-folder-lesson-name svg { width: 14px; height: 14px; color: var(--sf-muted); }
-.session-folder-lesson-name small { color: var(--sf-muted); white-space: nowrap; }
-.session-folder-links { display: flex; flex-wrap: wrap; gap: 4px 13px; }
-.session-folder-links > button { display: inline-flex; align-items: center; gap: 5px; min-height: 26px; padding: 1px 0; border: 0; background: transparent; color: var(--sf-accent); font: inherit; text-align: left; cursor: pointer; }
-.session-folder-links > button:hover { text-decoration: underline; }
-.session-folder-links svg { width: 13px; height: 13px; }
-.session-folder-code { padding: 0 0 10px 29px; }
-.session-folder-note-preview { color: var(--sf-muted); overflow-wrap: anywhere; margin-top: 4px !important; }
-.session-folder-pagination { display: flex; justify-content: center; gap: 12px; margin-top: 22px; }
 .session-folder-dialog {
   box-sizing: border-box; width: min(470px, calc(100vw - 28px)); max-height: calc(100dvh - 32px);
   border: 1px solid var(--sf-line); border-radius: 15px; padding: 19px;
@@ -131,7 +112,6 @@
   .session-folders-page { width: calc(100% - 32px); padding-top: 17px; }
   .session-folder-heading { flex-direction: column; align-items: flex-start; gap: 12px; padding-bottom: 16px; }
   .session-folder-heading > .session-folder-actions { flex: auto; }
-  .session-folder-tabs { gap: 0 13px; }
   .session-folder-item-actions { grid-column: 2 / -1; }
   .session-folder-row { gap: 7px; }
 }
@@ -139,3 +119,118 @@
 .session-ended-section[open] > summary { margin-bottom: 10px; }
 .library-artifact-sources { display: flex; flex-wrap: wrap; gap: 5px; color: #565e6b; font-size: 11px; }
 .library-artifact-sources > span { padding: 1px 5px; border-radius: 5px; background: #eef1f6; }
+
+.application-folder-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-inline: 9px 3px;
+  color: #626262;
+  font-size: .75rem;
+}
+.application-folder-link { padding-left: 10px; }
+.folder-workspace {
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 78px);
+  min-height: 460px;
+  padding: 12px clamp(12px, 2vw, 28px) 16px;
+  color: var(--sf-ink);
+}
+.folder-workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.folder-workspace-header h1 { margin: 0; overflow-wrap: anywhere; font-size: clamp(1.125rem, 3vw, 1.625rem); font-weight: 650; line-height: 1.25; }
+.folder-workspace-header p { margin: 4px 0 0; color: #6b6968; font-size: .875rem; }
+.folder-workspace-tools { display: flex; flex-wrap: wrap; gap: 4px; padding-block: 5px 9px; }
+.folder-workspace-tools button {
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: .8125rem;
+}
+.folder-workspace-tools button:hover,
+.folder-workspace-tools button[aria-pressed="true"] { background: #eaeae8; color: #17171a; }
+.folder-workspace-tools button[aria-pressed="true"] { font-weight: 650; }
+.folder-workspace-body { position: relative; display: flex; flex: 1; min-height: 0; gap: 8px; }
+.folder-canvas-board {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid #dedcd8;
+  border-radius: 9px;
+  background: radial-gradient(#d8d6d2 1px, transparent 1px) 0 0 / 16px 16px, #f8f7f5;
+}
+.folder-canvas-empty { margin: 0; padding: 20px; font-size: .875rem; color: #595755; }
+.folder-canvas-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 205px), 1fr));
+  gap: 18px;
+  margin: 0;
+  padding: clamp(14px, 3vw, 32px);
+  list-style: none;
+}
+.folder-canvas-card { position: relative; min-width: 0; }
+.folder-canvas-material {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  text-align: start;
+  background: #fff;
+  color: #222;
+  border: 1px solid #dedcd8;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px #24211a0d;
+}
+.folder-canvas-material:hover { border-color: #8b8880; }
+.folder-canvas-preview {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #dfebe7;
+  color: #2f6357;
+}
+.folder-canvas-preview.is-video { background: #e2e6ed; color: #455876; }
+.folder-canvas-preview img { width: 100%; height: 100%; object-fit: cover; }
+.folder-canvas-preview svg { width: 32px; height: 32px; stroke-width: 1.5; }
+.folder-canvas-caption { display: grid; gap: 4px; padding: 10px 12px 12px; }
+.folder-canvas-caption small { color: #66635e; font-size: .6875rem; }
+.folder-canvas-caption strong { font-size: .875rem; line-height: 1.35; overflow-wrap: anywhere; }
+.folder-canvas-options { position: absolute; top: 6px; right: 6px; background: #fff; color: #222; }
+.folder-workspace-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 min(45%, 540px);
+  min-width: 0;
+  overflow: hidden;
+  background: #f9f9f8;
+  border: 1px solid #dedcd8;
+  border-radius: 9px;
+}
+.folder-workspace-panel[hidden], .folder-tool-slot[hidden] { display: none; }
+.folder-tool-slot { display: flex; flex: 1; min-height: 0; }
+.folder-workspace-panel .session-tool { flex: 1; width: 100%; min-height: 0; }
+.folder-notes-picker { display: grid; gap: 4px; padding: 10px 12px; font-size: .75rem; font-weight: 600; }
+.folder-notes-picker select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #dedcd8;
+  border-radius: 6px;
+  background: #fff;
+  color: #222;
+  font: inherit;
+}
+@media (max-width: 740px) {
+  .folder-workspace-panel { position: absolute; inset: 0; }
+  .folder-workspace-header { align-items: start; }
+  .folder-workspace-header .session-folder-actions { flex: none; }
+  .folder-canvas-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); }
+}

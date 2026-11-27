@@ -44,10 +44,15 @@ const COPY = {
   },
 } as const;
 
-export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onCollapse }: { sessionId: string; resourceId: string; next: MasteryNext; place: StudyAnchor; onGo: (place: StudyAnchor) => void; onCollapse: () => void }) {
+export function MasteryCheck({ sessionId, resourceId, folder = false, readySources, next, place, onGo, onCollapse }: { sessionId: string; resourceId: string; folder?: boolean; readySources?: number; next: MasteryNext; place: StudyAnchor; onGo: (place: StudyAnchor) => void; onCollapse: () => void }) {
   const router = useRouter();
   const material = place.kind === "paper" ? "paper" : "video";
-  const copy = COPY[material];
+  const copy = folder ? {
+    ...COPY.paper,
+    unavailable: "The mastery check opens once a folder source has text ready.",
+    ready: (pass: string) => `Practice with questions drawn from the available sources in this folder. The passing score is ${pass}.`,
+    writing: "Writing questions from the folder sources",
+  } : COPY[material];
   const base = `/api/v1/study-sessions/${sessionId}/mastery`;
   const [view, setView] = useState<MasteryView | null>(null);
   const [busy, setBusy] = useState<"writing" | "grading" | null>(null);
@@ -81,6 +86,11 @@ export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onColla
   }, []);
 
   useEffect(() => { void run(null, () => request(base)).then(open); }, [base, run, open]);
+  useEffect(() => {
+    if (folder && readySources && view?.state === "unavailable") void request(base).then((next) => {
+      if (next.state !== "unavailable") { setView(next); open(next); }
+    }, () => undefined);
+  }, [base, folder, open, readySources, view?.state]);
   // The set is written in the background when the video ends; until its first question lands, check back every couple of seconds.
   const writing = view?.state === "writing";
   useEffect(() => {
@@ -153,7 +163,7 @@ export function MasteryCheck({ sessionId, resourceId, next, place, onGo, onColla
   if (scored && (!question || index >= questions.length)) {
     return shell(<>
       <MasteryResults material={material} check={scored} passScore={view.passScore} next={next} moving={moving} onGo={onGo} onReview={(at) => { setIndex(at); setText(""); }}
-        onContinue={() => void proceed()} onRetake={start} onAnalyse={analyse} />
+        onContinue={folder ? onCollapse : () => void proceed()} onRetake={start} onAnalyse={analyse} folder={folder} />
       {alert}
     </>);
   }

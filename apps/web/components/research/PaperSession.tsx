@@ -1,12 +1,12 @@
 "use client";
 
-import { StudyFolderAction, StudyFolderBreadcrumb } from "../folders/StudyFolderAction";
+import { leaveFolderQuestion, StudyFolderAction, StudyFolderBreadcrumb, useFolderReturn } from "../folders/StudyFolderAction";
 import type { StudyAnchor, StudySessionResource, StudySessionView } from "@learnspace/shared";
 import type { LessonControl } from "@learnspace/shared/notes";
 import { BookOpenText, Code, Crosshair, Expand, FileText, Lightbulb, ListChecks, NotebookPen, Shrink, Sparkles, Workflow } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { CollapseSidebarContext } from "../application/ApplicationShell";
 import { useCodingEligibility } from "../coding/useCodingEligibility";
@@ -79,7 +79,9 @@ function useReadingProgress(sessionId: string, resource: StudySessionResource) {
 }
 
 export function PaperSession({ session, active }: { session: StudySessionView; active: StudySessionResource }) {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const folderReturn = useFolderReturn();
   const urlTool = searchParams.get(TOOL_PARAM);
   const workspace = useWorkspaceSave(session.id);
   const collapseSidebar = useContext(CollapseSidebarContext);
@@ -93,7 +95,9 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
   useStudyTime(session.id, active.resourceId, readerReady && active.readiness !== "unavailable", true);
   const saveProgress = useReadingProgress(session.id, active);
   const initialAnchor = active.progress.lastAnchor?.kind === "paper" ? active.progress.lastAnchor : active.lastAnchor?.kind === "paper" ? active.lastAnchor : null;
-  const [page, setPage] = useState(initialAnchor?.page ?? 1);
+  const linkedPage = Number(searchParams.get("page"));
+  const initialPage = folderReturn && Number.isSafeInteger(linkedPage) && linkedPage > 0 ? linkedPage : initialAnchor?.page ?? 1;
+  const [page, setPage] = useState(initialPage);
   const sectionAt = useCallback((at: number) => [...paper.sections].reverse().find((section) => section.page <= at)?.id, [paper.sections]);
   const place = useMemo(() => {
     const sectionId = sectionAt(page);
@@ -136,7 +140,7 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
     saveProgress(sectionId ? { kind: "paper", page: next, sectionId } : { kind: "paper", page: next }, pageCount);
   }, [saveProgress, sectionAt]);
 
-  const [initialPanel] = useState<PanelView | null>(() => panelForSlug(urlTool) ?? session.workspace.panel ?? null);
+  const [initialPanel] = useState<PanelView | null>(() => folderReturn ? null : panelForSlug(urlTool) ?? session.workspace.panel ?? null);
   const [panel, setPanel] = useState<PanelView | null>(initialPanel);
   const [opened, setOpened] = useState<PanelView[]>(initialPanel ? [initialPanel] : []);
   const panelRef = useRef(panel);
@@ -149,6 +153,13 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
   }, []);
   const collapse = useCallback(() => setPanel(null), []);
   function openPanel(view: PanelView, focusId?: string) {
+    if (folderReturn && (view === "notes" || view === "ai" || (view === "check" && !session.course))) {
+      const destination = new URL(folderReturn, window.location.origin);
+      destination.searchParams.set(TOOL_PARAM, slugForPanel(view));
+      if (view === "notes") destination.searchParams.set("resource", active.resourceId);
+      router.push(destination.pathname + destination.search);
+      return;
+    }
     collapseSidebar();
     showPanel(view);
     if (focusId) requestAnimationFrame(() => document.getElementById(focusId)?.focus());
@@ -175,7 +186,8 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
   }, [panel, session.workspace.panel, workspace.save]);
 
   function askAbout(text: string) {
-    setSeed({ text, at: Date.now() });
+    if (folderReturn) leaveFolderQuestion(folderReturn.split("?")[0]!, `About “${active.title}”: ${text}`);
+    else setSeed({ text, at: Date.now() });
     openPanel("ai", "study-question");
   }
   const ask = (selection: PaperSelection) => askAbout(`Explain this passage from page ${selection.page}: “${selection.text.slice(0, 700)}”`);
@@ -206,7 +218,7 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
   useEffect(() => { frameHome(); }, [card.width, card.height, fillsPane, frameHome]);
   const papers = course?.sections.flatMap((section) => section.lessons) ?? [];
   const doneCount = papers.filter((item) => item.state === "completed").length;
-  const reader = <PaperReader ref={readerRef} resourceId={active.resourceId} title={active.title} initialPage={initialAnchor?.page ?? 1} sections={paper.sections} onPageChange={onPageChange} onAsk={ask} />;
+  const reader = <PaperReader ref={readerRef} resourceId={active.resourceId} title={active.title} initialPage={initialPage} sections={paper.sections} onPageChange={onPageChange} onAsk={ask} />;
 
   const panelView = (target: PanelView) => (opened.includes(target) ? { hidden: panel !== target } : null);
   const notesPanel = panelView("notes");

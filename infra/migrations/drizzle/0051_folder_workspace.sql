@@ -1,0 +1,7 @@
+ALTER TABLE "study"."tutor_threads" ALTER COLUMN "resource_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "study"."mastery_checks" ALTER COLUMN "resource_id" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "study"."mastery_checks" ALTER COLUMN "resource_version_id" DROP NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "tutor_threads_active_folder_uq" ON "study"."tutor_threads" USING btree ("study_session_id") WHERE "study"."tutor_threads"."status" = 'active' AND "study"."tutor_threads"."resource_id" IS NULL;--> statement-breakpoint
+CREATE INDEX "mastery_checks_folder_idx" ON "study"."mastery_checks" USING btree ("study_session_id","created_at" DESC NULLS LAST) WHERE "study"."mastery_checks"."resource_id" IS NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "mastery_checks_open_folder_uq" ON "study"."mastery_checks" USING btree ("study_session_id") WHERE "study"."mastery_checks"."status" = 'open' AND "study"."mastery_checks"."resource_id" IS NULL;--> statement-breakpoint
+ALTER TABLE "study"."mastery_checks" ADD CONSTRAINT "mastery_checks_resource_version_pair_chk" CHECK (("study"."mastery_checks"."resource_id" IS NULL) = ("study"."mastery_checks"."resource_version_id" IS NULL));

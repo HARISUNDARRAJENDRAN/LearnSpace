@@ -1187,7 +1187,7 @@ export async function recordStudyQuestion(tx: Transaction, input: { userId: stri
 export async function listStudySessions(userId: string, shelf: "open" | "library" | "ended" = "open"): Promise<StudySessionSummary[]> {
   return withUserTransaction(userId, async (tx) => {
     const sessions = shelf === "open"
-      ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"])))
+      ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`))
         .orderBy(sql`${studySessions.position} ASC NULLS FIRST`, desc(studySessions.createdAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS)
       : await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), eq(studySessions.status, shelf === "library" ? "completed" : "abandoned")))
         .orderBy(desc(studySessions.endedAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS);

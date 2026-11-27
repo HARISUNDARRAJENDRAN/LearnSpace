@@ -347,12 +347,7 @@ export const changeSessionFolderSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reorder-session"), sessionId: studySessionIdSchema, ...reorderFolderItem }).strict(),
   z.object({ action: z.literal("reorder-resource"), resourceId, ...reorderFolderItem }).strict(),
 ]);
-export const sessionFolderDetailsQuerySchema = z.object({
-  section: z.enum(["overview", "papers", "videos", "threads", "notes", "artifacts"]).default("overview"),
-  page: z.coerce.number().int().min(1).max(10000).default(1),
-}).strict();
 export const studySessionsQuerySchema = z.object({ shelf: z.enum(["open", "ended"]).default("open") }).strict();
 export const folderSessionCandidatesQuerySchema = z.object({ q: z.string().trim().max(120).default("") }).strict();
 export type CreateSessionFolder = z.infer<typeof createSessionFolderSchema>;
 export type ChangeSessionFolder = z.infer<typeof changeSessionFolderSchema>;
-export type SessionFolderDetailsQuery = z.infer<typeof sessionFolderDetailsQuerySchema>;

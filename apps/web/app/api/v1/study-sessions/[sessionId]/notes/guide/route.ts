@@ -1,4 +1,4 @@
-import { studySessionIdSchema } from "@learnspace/shared";
+import { sessionFolderIdSchema, studySessionIdSchema } from "@learnspace/shared";
 import { after, NextResponse } from "next/server";
 import { authErrorResponse } from "../../../../../../../lib/auth/errors";
 import { requireCompletedSession } from "../../../../../../../lib/discovery/access";
@@ -12,11 +12,12 @@ export const maxDuration = 300;
 type Context = { params: Promise<{ sessionId: string }> };
 
 /** Starts the video's study guide if it isn't written yet; the notes come back at once, saying it is being written. */
-export async function POST(_request: Request, context: Context) {
+export async function POST(request: Request, context: Context) {
   try {
     const session = await requireCompletedSession();
     const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
-    const { notes, write } = await startGuide(session.user.id, sessionId);
+    const resourceId = sessionFolderIdSchema.optional().parse(new URL(request.url).searchParams.get("resource") ?? undefined);
+    const { notes, write } = await startGuide(session.user.id, sessionId, resourceId ? { resourceId } : {});
     // A guide that fails is marked so, or its run times out of "writing"; either way the next open can start it again.
     if (write) after(() => write().catch(() => undefined));
     return NextResponse.json(notes, { headers: { "Cache-Control": "no-store" } });

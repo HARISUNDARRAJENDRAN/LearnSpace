@@ -84,8 +84,8 @@ async function readRow(tx: Transaction, userId: string, resourceId: string, lock
 }
 
 /** The notes for the video a session the learner owns is on now. */
-async function readNotes(tx: Transaction, userId: string, sessionId: string, lock: boolean): Promise<{ video: Video; row: Row }> {
-  const video = await studyContext(tx, userId, sessionId);
+async function readNotes(tx: Transaction, userId: string, sessionId: string, lock: boolean, resourceId?: string): Promise<{ video: Video; row: Row }> {
+  const video = await studyContext(tx, userId, sessionId, resourceId ? { resourceId } : undefined);
   return { video, row: await readRow(tx, userId, video.resourceId, lock) };
 }
 
@@ -93,14 +93,14 @@ async function writeNotes(tx: Transaction, userId: string, resourceId: string, r
   await tx.update(videoNotes).set({ ...row, updatedAt: new Date() }).where(notesOf(userId, resourceId));
 }
 
-export async function getNotes(userId: string, sessionId: string): Promise<NotesView> {
-  return withUserTransaction(userId, async (tx) => { const { video, row } = await readNotes(tx, userId, sessionId, false); return view(row, video); });
+export async function getNotes(userId: string, sessionId: string, resourceId?: string): Promise<NotesView> {
+  return withUserTransaction(userId, async (tx) => { const { video, row } = await readNotes(tx, userId, sessionId, false, resourceId); return view(row, video); });
 }
 
 /** The learner's own edits always apply; undo restores the page from before the companion's last edit, if nothing changed since. */
-export async function editNotes(userId: string, sessionId: string, request: NotesEditRequest): Promise<NotesView> {
+export async function editNotes(userId: string, sessionId: string, request: NotesEditRequest, resourceId?: string): Promise<NotesView> {
   return withUserTransaction(userId, async (tx) => {
-    const { video, row } = await readNotes(tx, userId, sessionId, true);
+    const { video, row } = await readNotes(tx, userId, sessionId, true, resourceId);
     if ("action" in request) {
       const last = row.history.at(-1);
       if (last?.revision !== row.revision) throw new AuthError("NOTES_UNDO_UNAVAILABLE", "There is no edit of Luny's to undo.", 409);
@@ -197,7 +197,8 @@ function readOnly<T>(userId: string, reads: (tx: Transaction) => Promise<T>): Pr
  *    all succeeded (and the rate limits allowed the turn); its transaction rolls back otherwise.
  * A turn with a `skip` (given the lesson) waits for the lesson before recording its run; a skipped turn returns null.
  */
-async function prepareTurn(userId: string, sessionId: string, turn: { goal: string; maxTokens: number; lines: number; record: boolean; skip: ((chunks: Chunk[]) => boolean) | null; resourceType?: Video["resourceType"] }): Promise<Prepared | null> {
+async function prepareTurn(userId: string, sessionId: string, turn: { goal: string; maxTokens: number; lines: number; record: boolean; skip: ((chunks: Chunk[]) => boolean) | null; resourceType?: Video["resourceType"]; resourceId?: string }): Promise<Prepared | null> {
+  if (turn.resourceId) await withUserTransaction(userId, (tx) => studyContext(tx, userId, sessionId, { resourceId: turn.resourceId! }));
   const admitted = admitNotesRequest(userId);
   let located: (video: Video) => void = () => undefined;
   let lost: (error: unknown) => void = () => undefined;
@@ -205,7 +206,7 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
   // Its failure is the notes lane's, reported there.
   found.catch(() => undefined);
   const notes = readOnly(userId, async (tx) => {
-    const video = await studyContext(tx, userId, sessionId);
+    const video = await studyContext(tx, userId, sessionId, turn.resourceId ? { resourceId: turn.resourceId } : undefined);
     if (turn.resourceType && video.resourceType !== turn.resourceType) throw new AuthError("STUDY_RESOURCE_TYPE_MISMATCH", `This ${video.resourceType} needs its matching voice request.`, 422);
     if (video.resourceType === "paper" && !video.versionId) throw new AuthError("PAPER_CONTENT_NOT_READY", "The paper text is still being prepared.", 409, undefined, { transcript: video.transcript });
     located(video);
@@ -256,11 +257,12 @@ async function prepareTurn(userId: string, sessionId: string, turn: { goal: stri
  * once Luny has answered, even in part; a turn cut off before she said anything is not, and the browser sends those words
  * again with what the learner says next.
  */
-export async function runVoiceTurn(userId: string, sessionId: string, input: VoiceTurnRequest, options: { signal: AbortSignal; emit: (event: VoiceTurnEvent) => void; model?: TutorModel; firstWordsMs?: number }): Promise<void> {
+export async function runVoiceTurn(userId: string, sessionId: string, input: VoiceTurnRequest, options: { signal: AbortSignal; emit: (event: VoiceTurnEvent) => void; model?: TutorModel; firstWordsMs?: number; resourceId?: string }): Promise<void> {
   const model = options.model ?? openAiTutorModel;
   const paperTurn = "anchor" in input;
   const prepared = await prepareTurn(userId, sessionId, {
     goal: "Talk with the learner", maxTokens: TUTOR_MODEL.depths.quick.maxOutputTokens, lines: RECENT_LINES, record: true,
+    ...(options.resourceId ? { resourceId: options.resourceId } : {}),
     resourceType: paperTurn ? "paper" : "video",
     // The video playing aloud reaches the microphone too; its own words never start a turn.
     skip: !paperTurn && input.utterance && input.playing ? (chunks) => isLecture(input.utterance ?? "", chunks, input.positionMs, input.playing) : null,
@@ -349,9 +351,9 @@ export async function runVoiceTurn(userId: string, sessionId: string, input: Voi
  * One scribe pass: reads the recent conversation and brings the notebook up to date. Its edits never overwrite a block the
  * learner changed while it was thinking, and the whole pass can be undone.
  */
-export async function runScribe(userId: string, sessionId: string, options: { signal: AbortSignal; model?: TutorModel; onOp?: (op: NoteOp, base: number) => void }): Promise<NotesView> {
+export async function runScribe(userId: string, sessionId: string, options: { signal: AbortSignal; model?: TutorModel; onOp?: (op: NoteOp, base: number) => void; resourceId?: string }): Promise<NotesView> {
   const model = options.model ?? openAiTutorModel;
-  const prepared = await prepareTurn(userId, sessionId, { goal: "Keep the learner's notebook", maxTokens: TUTOR_MODEL.depths.edit.maxOutputTokens, lines: SCRIBE_LINES, record: false, skip: null });
+  const prepared = await prepareTurn(userId, sessionId, { goal: "Keep the learner's notebook", maxTokens: TUTOR_MODEL.depths.edit.maxOutputTokens, lines: SCRIBE_LINES, record: false, skip: null, ...(options.resourceId ? { resourceId: options.resourceId } : {}) });
   if (!prepared) throw new Error("The scribe run was not recorded.");
   const { video, row, lines, chunks, runId, positionMs, paper } = prepared;
   const paperEvidence = paper && video.versionId ? await withUserTransaction(userId, (tx) => retrievePaperEvidence(tx, {
@@ -445,11 +447,11 @@ const validDiagram = (text: string) => { try { return diagramSchema.safeParse(JS
  * Starts the video's study guide unless it is written, being written, or cannot be yet. The guide is written by `write`, which
  * the caller runs after answering; the returned notes already say it is being written.
  */
-export async function startGuide(userId: string, sessionId: string, options: { model?: TutorModel } = {}): Promise<{ notes: NotesView; write: (() => Promise<void>) | null }> {
+export async function startGuide(userId: string, sessionId: string, options: { model?: TutorModel; resourceId?: string } = {}): Promise<{ notes: NotesView; write: (() => Promise<void>) | null }> {
   await admitNotesRequest(userId);
   const started = await withUserTransaction(userId, async (tx) => {
     // The locked row is the guide's mutex: the lesson page and the Notes panel may both ask at once.
-    const { video, row: read } = await readNotes(tx, userId, sessionId, true);
+    const { video, row: read } = await readNotes(tx, userId, sessionId, true, options.resourceId);
     let row = read;
     let status = guideStatus(row, video);
     // A guide written in one piece before long lectures were split covers only their first stretch. It is kept as it is,

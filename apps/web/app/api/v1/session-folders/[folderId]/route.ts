@@ -1,8 +1,9 @@
-import { changeSessionFolderSchema, sessionFolderDetailsQuerySchema, sessionFolderIdSchema } from "@learnspace/shared";
+import { changeSessionFolderSchema, sessionFolderIdSchema } from "@learnspace/shared";
 import { authErrorResponse } from "@/lib/auth/errors";
 import { readJson } from "@/lib/auth/request";
 import { requireCompletedSession } from "@/lib/discovery/access";
 import { getSessionFolderDetails } from "@/lib/folders/details";
+import { requestPaperIngestion } from "@/lib/research/ingestion";
 import { changeSessionFolder, deleteSessionFolder } from "@/lib/folders/service";
 
 export const runtime = "nodejs";
@@ -10,12 +11,17 @@ export const dynamic = "force-dynamic";
 
 type Context = { params: Promise<{ folderId: string }> };
 
-export async function GET(request: Request, { params }: Context) {
+export const maxDuration = 300;
+
+export async function GET(_request: Request, { params }: Context) {
   try {
     const { user } = await requireCompletedSession();
     const id = sessionFolderIdSchema.parse((await params).folderId);
-    const query = sessionFolderDetailsQuerySchema.parse(Object.fromEntries(new URL(request.url).searchParams));
-    return Response.json(await getSessionFolderDetails(user.id, id, query), { headers: { "Cache-Control": "private, no-store" } });
+    const folder = await getSessionFolderDetails(user.id, id);
+    // Claims are deduplicated by the paper ingestion lease.
+    await Promise.all(folder.materials.filter((item) => item.type === "paper" && item.state === "preparing")
+      .map((item) => requestPaperIngestion(item.id)));
+    return Response.json(folder, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return authErrorResponse(error);
   }

@@ -1,5 +1,5 @@
 import { type Transaction, withUserTransaction } from "@learnspace/db";
-import { codingAttempts, codingProblems, paperCodingProfiles, resources, sessionFolderMemberships, sessionResources, sessionTranscript, studySessions, tutorMessages, tutorThreads, videoNotes } from "@learnspace/db/schema";
+import { codingAttempts, codingProblems, paperCodingProfiles, resources, sessionResources, sessionTranscript, studySessions, tutorMessages, tutorThreads, videoNotes } from "@learnspace/db/schema";
 import { type ResearchGuide, researchGuideSchema, studyWorkspaceSchema } from "@learnspace/shared";
 import type { NoteBlock } from "@learnspace/shared/notes";
 import type { TutorSource } from "@learnspace/shared/tutor";
@@ -30,23 +30,16 @@ export type LibrarySessionContents = {
 const iso = (value: Date) => value.toISOString();
 
 export async function getLibrarySessionContents(userId: string, sessionId: string): Promise<LibrarySessionContents> {
-  return withUserTransaction(userId, (tx) => readSessionContents(tx, userId, sessionId, { status: "completed" }));
-}
-
-export function getFolderSessionContents(userId: string, folderId: string, sessionId: string) {
-  return withUserTransaction(userId, (tx) => readSessionContents(tx, userId, sessionId, { folderId }));
+  return withUserTransaction(userId, (tx) => readSessionContents(tx, userId, sessionId, "completed"));
 }
 
 export function getEndedSessionContents(userId: string, sessionId: string) {
-  return withUserTransaction(userId, (tx) => readSessionContents(tx, userId, sessionId, { status: "abandoned" }));
+  return withUserTransaction(userId, (tx) => readSessionContents(tx, userId, sessionId, "abandoned"));
 }
 
-async function readSessionContents(tx: Transaction, userId: string, sessionId: string, scope: { folderId: string } | { status: "abandoned" | "completed" }): Promise<LibrarySessionContents> {
+async function readSessionContents(tx: Transaction, userId: string, sessionId: string, status: "abandoned" | "completed"): Promise<LibrarySessionContents> {
   const [session] = await tx.select({ id: studySessions.id, workspace: studySessions.workspace }).from(studySessions)
-    .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId), "folderId" in scope
-      ? inArray(studySessions.id, tx.select({ id: sessionFolderMemberships.studySessionId }).from(sessionFolderMemberships)
-        .where(and(eq(sessionFolderMemberships.folderId, scope.folderId), eq(sessionFolderMemberships.userId, userId))))
-      : eq(studySessions.status, scope.status))).limit(1);
+    .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId), eq(studySessions.status, status))).limit(1);
   if (!session) throw new AuthError("STUDY_SESSION_NOT_FOUND", "That session history is unavailable.", 404);
   const lessonRows = await tx.select({ id: sessionResources.resourceId, title: resources.title, type: resources.type, guide: paperCodingProfiles.guide }).from(sessionResources)
     .leftJoin(resources, and(eq(resources.id, sessionResources.resourceId), isNull(resources.deletedAt)))

@@ -11,6 +11,7 @@ export type VoiceState = "off" | "loading" | "listening" | "thinking" | "speakin
 /** The lesson on screen: a video's moment and whether it plays, or for a paper the page being read and any passage picked out. */
 export type LessonState = { positionMs: number | null; playing: boolean; paper?: { anchor: { kind: "paper"; page: number; sectionId?: string }; selection: string | null } };
 type Options = {
+  scope?: string;
   sessionId: string;
   lesson: () => LessonState;
   /** The lesson as it is on screen now, or null when Luny cannot see it. */
@@ -276,7 +277,7 @@ export function useLunaVoice(options: Options) {
       for (let end = chunkEnd(say, turn.spoken, turn.spoken === 0, final); end > 0; end = chunkEnd(say, turn.spoken, false, final)) { speak(say.slice(turn.spoken, end)); turn.spoken = end; }
     };
     try {
-      const response = await fetch(`/api/v1/study-sessions/${latest.current.sessionId}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: turn.controller.signal });
+      const response = await fetch(`/api/v1/study-sessions/${latest.current.sessionId}/voice${latest.current.scope ?? ""}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: turn.controller.signal });
       if (!response.ok || !response.body) {
         const failure = await response.json().catch(() => null) as { error?: { message?: string } } | null;
         throw new Error(failure?.error?.message ?? "Luny couldn't answer just now.");

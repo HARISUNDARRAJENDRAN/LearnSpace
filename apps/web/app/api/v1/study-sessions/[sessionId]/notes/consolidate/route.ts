@@ -1,4 +1,4 @@
-import { studySessionIdSchema } from "@learnspace/shared";
+import { sessionFolderIdSchema, studySessionIdSchema } from "@learnspace/shared";
 import type { ScribeEvent } from "@learnspace/shared/notes";
 import { NextResponse } from "next/server";
 import { authErrorResponse, AuthError } from "../../../../../../../lib/auth/errors";
@@ -19,16 +19,18 @@ type Context = { params: Promise<{ sessionId: string }> };
 export async function POST(request: Request, context: Context) {
   let userId: string;
   let sessionId: string;
+  let resourceId: string | undefined;
   try {
     const session = await requireCompletedSession();
     userId = session.user.id;
     sessionId = studySessionIdSchema.parse((await context.params).sessionId);
+    resourceId = sessionFolderIdSchema.optional().parse(new URL(request.url).searchParams.get("resource") ?? undefined);
   } catch (error) {
     return authErrorResponse(error);
   }
   if (!request.headers.get("accept")?.includes("application/x-ndjson")) {
     try {
-      return NextResponse.json(await runScribe(userId, sessionId, { signal: request.signal }), { headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json(await runScribe(userId, sessionId, { ...(resourceId ? { resourceId } : {}), signal: request.signal }), { headers: { "Cache-Control": "no-store" } });
     } catch (error) {
       return authErrorResponse(error);
     }
@@ -44,7 +46,7 @@ export async function POST(request: Request, context: Context) {
         }
       };
       try {
-        const notes = await runScribe(userId, sessionId, { signal: request.signal, onOp: (op, base) => emit({ type: "op", op, base }) });
+        const notes = await runScribe(userId, sessionId, { ...(resourceId ? { resourceId } : {}), signal: request.signal, onOp: (op, base) => emit({ type: "op", op, base }) });
         emit({ type: "notes", notes });
       } catch (error) {
         emit({ type: "error", message: error instanceof AuthError ? error.message : "Luny couldn't update the notes just now.", status: error instanceof AuthError ? error.status : 500 });

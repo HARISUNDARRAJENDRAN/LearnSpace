@@ -8,6 +8,19 @@ import { type ReactNode, useState } from "react";
 import { MoveSessionDialog } from "./FolderDialogs";
 import { folderHref } from "./state";
 
+let folderQuestion: { path: string; text: string } | null = null;
+
+export function leaveFolderQuestion(path: string, text: string) {
+  folderQuestion = { path, text };
+}
+
+export function takeFolderQuestion(path: string) {
+  if (folderQuestion?.path !== path) return null;
+  const { text } = folderQuestion;
+  folderQuestion = null;
+  return text;
+}
+
 export function useFolderReturn() {
   const params = useSearchParams();
   const folder = sessionFolderIdSchema.safeParse(params.get("folder"));

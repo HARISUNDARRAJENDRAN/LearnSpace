@@ -88,7 +88,9 @@ export type NotesTutor = {
   onVoice?: (on: boolean) => void;
 };
 
-export function SessionNotes({ sessionId, title, material, active = true, tutor, onCollapse }: { sessionId: string; title: string; material: "video" | "paper"; active?: boolean; tutor: NotesTutor; onCollapse: () => void }) {
+export function SessionNotes({ sessionId, resourceId, title, material, active = true, tutor, onCollapse }: { sessionId: string; resourceId?: string; title: string; material: "video" | "paper"; active?: boolean; tutor: NotesTutor; onCollapse: () => void }) {
+  const base = `/api/v1/study-sessions/${sessionId}/notes`;
+  const scope = resourceId ? `?resource=${encodeURIComponent(resourceId)}` : "";
   const [notes, setNotes] = useState<NotesView | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [writing, setWriting] = useState(false);
@@ -110,7 +112,7 @@ export function SessionNotes({ sessionId, title, material, active = true, tutor,
       for (const request of requests) {
         // Every op names its block, so a request that landed but whose answer was lost changes nothing when sent again.
         for (let attempt = 0; ; attempt++) {
-          const response = await fetch(`/api/v1/study-sessions/${sessionId}/notes`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) }).catch(() => null);
+          const response = await fetch(`${base}${scope}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request) }).catch(() => null);
           if (response?.ok) { setFailed(null); receive(await response.json() as NotesView); break; }
           const error = await response?.json().catch(() => null);
           if (!transient(response?.status ?? null)) { setFailed(error?.error?.message ?? "That change couldn't be saved."); break; }
@@ -130,7 +132,7 @@ export function SessionNotes({ sessionId, title, material, active = true, tutor,
     setWriting(true);
     let retry = false;
     try {
-      const response = await fetch(`/api/v1/study-sessions/${sessionId}/notes/consolidate`, { method: "POST", headers: { Accept: "application/x-ndjson" } }).catch(() => null);
+      const response = await fetch(`${base}/consolidate${scope}`, { method: "POST", headers: { Accept: "application/x-ndjson" } }).catch(() => null);
       // The pass streams: each edit is shown as soon as it is written, and the saved notes replace them at the end.
       let status: number | null = response?.ok ? 200 : response?.status ?? null;
       let saved = false;
@@ -152,14 +154,14 @@ export function SessionNotes({ sessionId, title, material, active = true, tutor,
       if (state.again) { state.again = false; void runScribe(); }
       else if (retry) { window.clearTimeout(state.timer); state.timer = window.setTimeout(() => { void runScribe(); }, backoff(++state.attempt + 1)); }
     }
-  }, [receive, sessionId]);
+  }, [base, receive, scope]);
   const onExchange = useCallback((utterance: string | null) => {
     window.clearTimeout(scribe.current.timer);
     scribe.current.timer = window.setTimeout(() => { void runScribe(); }, utterance && ASKS_FOR_NOTES.test(utterance) ? SCRIBE_NOW_MS : SCRIBE_AFTER_MS);
   }, [runScribe]);
   useEffect(() => () => window.clearTimeout(scribe.current.timer), []);
 
-  const voice = useLunaVoice({ sessionId, lesson: tutor.lesson, capture: tutor.capture, onControl: tutor.onControl, onTurn: tutor.onTurn, onExchange });
+  const voice = useLunaVoice({ sessionId, scope, lesson: tutor.lesson, capture: tutor.capture, onControl: tutor.onControl, onTurn: tutor.onTurn, onExchange });
   // Opening Notes starts Luny, and she stays in the conversation while the learner watches the video or uses another tool;
   // only turning her off (which is remembered until they turn her on again) or leaving the lesson hangs up.
   const { start, stop } = voice;
@@ -172,26 +174,26 @@ export function SessionNotes({ sessionId, title, material, active = true, tutor,
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetch(`/api/v1/study-sessions/${sessionId}/notes`, { signal: controller.signal }).then(async (response) => {
+    void fetch(`${base}${scope}`, { signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error("notes");
       receive(await response.json() as NotesView);
     }).catch(() => { if (!controller.signal.aborted) setFailed("Your notes couldn't load. Reopen Notes to try again."); });
     return () => controller.abort();
-  }, [sessionId, receive]);
+  }, [base, receive, scope]);
   // The lesson page starts the guide as it opens; Notes starts one that could not be started then, and checks back while it is written.
   const guide = notes?.guide;
   const writeGuide = useCallback(() => {
-    void fetch(`/api/v1/study-sessions/${sessionId}/notes/guide`, { method: "POST" }).then(async (response) => { if (response.ok) receive(await response.json() as NotesView); }, () => undefined);
-  }, [receive, sessionId]);
+    void fetch(`${base}/guide${scope}`, { method: "POST" }).then(async (response) => { if (response.ok) receive(await response.json() as NotesView); }, () => undefined);
+  }, [base, receive, scope]);
   useEffect(() => { if (guide === "pending") writeGuide(); }, [guide, writeGuide]);
   useEffect(() => {
     const every = guide ? GUIDE_POLL_MS[guide] : undefined;
     if (!every) return;
     const timer = window.setInterval(() => {
-      void fetch(`/api/v1/study-sessions/${sessionId}/notes`).then(async (response) => { if (response.ok) receive(await response.json() as NotesView); }, () => undefined);
+      void fetch(`${base}${scope}`).then(async (response) => { if (response.ok) receive(await response.json() as NotesView); }, () => undefined);
     }, every);
     return () => window.clearInterval(timer);
-  }, [guide, receive, sessionId]);
+  }, [base, guide, receive, scope]);
   // The page shows the scribe's edits as they are written, on the notes they were made against.
   const shown = useMemo(() => {
     if (!notes || !preview || preview.base !== notes.revision) return notes ? { blocks: notes.blocks, revision: notes.revision } : null;

@@ -1,6 +1,6 @@
 "use client";
 
-import { StudyFolderAction, StudyFolderBreadcrumb } from "../folders/StudyFolderAction";
+import { StudyFolderAction, StudyFolderBreadcrumb, useFolderReturn } from "../folders/StudyFolderAction";
 import type { LessonControl } from "@learnspace/shared/notes";
 import type { StudyAnchor, StudyProgressRequest, StudyProgressResponse, StudySessionResource, StudySessionView, StudyTool, StudyWorkspace } from "@learnspace/shared";
 import { Code, Crosshair, Expand, ListChecks, NotebookPen, Shrink, Sparkles, Video, Workflow } from "lucide-react";
@@ -104,18 +104,18 @@ function useProgressSync(sessionId: string, resource: StudySessionResource, onCo
   return { playerRef, sync };
 }
 
-function useYouTubeLesson(sessionId: string, resource: StudySessionResource, onComplete: (progress: StudyProgressResponse) => void) {
+function useYouTubeLesson(sessionId: string, resource: StudySessionResource, linkedMs: number | null, onComplete: (progress: StudyProgressResponse) => void) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { playerRef, sync } = useProgressSync(sessionId, resource, onComplete);
   const syncRef = useRef(sync);
   const [playerState, setPlayerState] = useState<"loading" | "ready" | "unavailable">("loading");
   const [playing, setPlaying] = useState(false);
   useStudyTime(sessionId, resource.resourceId, playing);
-  const [currentMs, setCurrentMs] = useState(resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0);
+  const [currentMs, setCurrentMs] = useState(linkedMs ?? (resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0));
   syncRef.current = sync;
   // Read when the player is ready, so a refreshed anchor never rebuilds a player that is already playing.
   const resumeRef = useRef(0);
-  resumeRef.current = resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0;
+  resumeRef.current = linkedMs ?? (resource.lastAnchor?.kind === "video" ? resource.lastAnchor.positionMs : 0);
 
   useEffect(() => {
     if (!resource.video?.youtubeId || resource.readiness === "unavailable") {
@@ -240,6 +240,7 @@ function fullView(pane: { width: number; height: number }): CanvasRect {
 export function VideoSession({ session, active }: { session: StudySessionView; active: StudySessionResource }) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const folderReturn = useFolderReturn();
   const urlTool = searchParams.get(TOOL_PARAM);
   const workspace = useWorkspaceSave(session.id);
   const [selected, setSelected] = useState(false);
@@ -248,6 +249,7 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   const checkPending = active.type === "video" && active.progress.status !== "completed" && active.progress.progressPct >= WATCHED_PCT;
   // The tool opens from the link the learner followed (the sidebar's parts), else the pending check, else where they left it.
   const [initialPanel] = useState<PanelView | null>(() => {
+    if (folderReturn && !session.course) return null;
     const linked = panelForSlug(urlTool);
     // A video has no project guide; a link to one opens the canvas.
     if (linked !== undefined) return linked === "guide" ? null : linked;
@@ -268,11 +270,14 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   // a mastery check still to pass opens the check instead.
   const finished = useCallback((progress: StudyProgressResponse) => {
     if (!progress.masteryRequired) return router.refresh();
+    if (folderReturn && !session.course) return;
     setWatched((value) => value + 1);
     setPanel("check");
     setOpened((current) => (current.includes("check") ? current : [...current, "check"]));
-  }, [router]);
-  const lesson = useYouTubeLesson(session.id, active, finished);
+  }, [folderReturn, router, session.course]);
+  const at = searchParams.get("at");
+  const linkedMs = at !== null && /^\d{1,10}$/.test(at) ? Number(at) : null;
+  const lesson = useYouTubeLesson(session.id, active, linkedMs, finished);
   useTranscriptCapture(active.resourceId, Boolean(active.video?.youtubeId));
   // The video's study guide is written while the learner watches, so it is waiting when they open Notes; the server writes it once.
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new video is the trigger.
@@ -387,6 +392,13 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
   useEffect(() => { if (panel === "code" && lessonActions.current.isPlaying()) lessonActions.current.pause(); }, [panel]);
 
   function openPanel(view: PanelView, focusId?: string) {
+    if (folderReturn && (view === "notes" || view === "ai" || (view === "check" && !session.course))) {
+      const destination = new URL(folderReturn, window.location.origin);
+      destination.searchParams.set(TOOL_PARAM, slugForPanel(view));
+      if (view === "notes") destination.searchParams.set("resource", active.resourceId);
+      router.push(destination.pathname + destination.search);
+      return;
+    }
     collapseSidebar();
     // Notes split the screen with the lesson, which fills its half so there is one thing to look at while talking. Luny
     // sees the lesson through this tab; the browser asks once, and it has to be asked inside this click.

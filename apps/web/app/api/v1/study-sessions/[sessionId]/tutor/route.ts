@@ -23,7 +23,7 @@ export async function GET(_request: Request, context: Context) {
     const sessionId = studySessionIdSchema.parse((await context.params).sessionId);
     const thread = await getTutorThread(session.user.id, sessionId);
     // A failed attempt is retried by the chat's own polling once the request window has passed.
-    if (thread.resourceType === "paper" && thread.transcript.status === "preparing") await requestPaperIngestion(thread.resourceId);
+    if (thread.resourceId !== sessionId && thread.resourceType === "paper" && thread.transcript.status === "preparing") await requestPaperIngestion(thread.resourceId);
     return NextResponse.json(thread, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return authErrorResponse(error);

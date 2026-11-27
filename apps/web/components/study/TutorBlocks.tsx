@@ -10,6 +10,7 @@ import { PlaceIcon, placeLabel, placeOf } from "./place";
 /** Everything a block may do. Each action is an app-owned request the server authorizes; blocks carry no URLs or code. */
 export type TutorActions = {
   go: (place: StudyAnchor) => void;
+  source?: (id: string, place: StudyAnchor | null) => void;
   answer: (messageId: string, blockId: string, choice: number) => void;
   hint: (messageId: string, blockId: string) => void;
   reply: (messageId: string, blockId: string, prompt: string) => void;
@@ -22,15 +23,22 @@ type BlockProps<T extends TutorBlockView["type"]> = { block: Extract<TutorBlockV
 
 function Cites({ src, message, actions }: { src: number[]; message: TutorMessageView; actions: TutorActions }) {
   // A transcript without timestamps has no moment to jump to, so its passages get no pill.
-  const sources = src.flatMap((index) => message.sources[index] && placeOf(message.sources[index].startMs, message.sources[index].anchor) ? [message.sources[index]] : [])
+  const sources = src.flatMap((index) => message.sources[index] && (message.sources[index].resource || placeOf(message.sources[index].startMs, message.sources[index].anchor)) ? [message.sources[index]] : [])
     // Passages on one page read as one pill.
-    .filter((source, at, all) => !source.anchor || all.findIndex((other) => other.anchor?.page === source.anchor?.page) === at);
+    .filter((source, at, all) => !source.anchor || all.findIndex((other) => other.resource?.id === source.resource?.id && other.anchor?.page === source.anchor?.page) === at);
   if (sources.length === 0) return null;
   return <span className="tutor-cites">{sources.map((source) => <Cite key={source.chunkId} source={source} actions={actions} />)}</span>;
 }
 
 function Cite({ source, actions }: { source: TutorSource; actions: TutorActions }) {
   const place = placeOf(source.startMs, source.anchor);
+  const resource = source.resource;
+  if (resource) {
+    const label = place ? `${resource.title} · ${placeLabel(place)}` : resource.title;
+    return actions.source
+      ? <button className="tutor-cite" type="button" title={source.excerpt} onClick={() => actions.source?.(resource.id, place)}>{label}</button>
+      : <span className="tutor-cite" title={source.excerpt}>{label}</span>;
+  }
   if (!place) return null;
   const at = placeLabel(place);
   return <button className="tutor-cite" type="button" title={source.excerpt} aria-label={place.kind === "video" ? `Play the video from ${at}` : `Go to ${at} of the paper`} onClick={() => actions.go(place)}><PlaceIcon place={place} />{at}</button>;

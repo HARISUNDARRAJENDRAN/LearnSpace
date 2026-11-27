@@ -11,8 +11,8 @@ export const tutorThreads = studySchema.table(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
     studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
-    // The one video this thread is grounded in; a lesson switch opens another thread instead of widening this one.
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
+    // Folder threads use the folder study session and all its current material.
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "restrict" }),
     mode: text("mode").notNull(),
     status: text("status").notNull().default("active"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
@@ -24,6 +24,7 @@ export const tutorThreads = studySchema.table(
   (table) => [
     index("tutor_threads_session_updated_idx").on(table.studySessionId, table.updatedAt.desc()),
     uniqueIndex("tutor_threads_active_resource_uq").on(table.studySessionId, table.resourceId).where(sql`${table.status} = 'active'`),
+    uniqueIndex("tutor_threads_active_folder_uq").on(table.studySessionId).where(sql`${table.status} = 'active' AND ${table.resourceId} IS NULL`),
     unique("tutor_threads_user_id_uq").on(table.userId, table.id),
     unique("tutor_threads_id_session_uq").on(table.id, table.studySessionId),
     foreignKey({

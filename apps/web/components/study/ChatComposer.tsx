@@ -51,8 +51,8 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
   onSend: (text: string) => void;
   onStop: () => void;
   /** Where the question is asked: "4:10" in a video, "p. 3" in a paper. */
-  moment: string;
-  noun: "video" | "paper";
+  moment: string | null;
+  noun: "video" | "paper" | "folder";
   resourceTitle: string;
 }) {
   const [plusOpen, setPlusOpen] = useState(false);
@@ -77,7 +77,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
   const token = dismissed ? null : slashToken(draft);
   const open = plusOpen || token !== null;
   const query = plusOpen ? "" : token?.query ?? "";
-  const skills = open ? SKILLS[noun].filter((skill) => skill.name.slice(1).startsWith(query)) : [];
+  const skills = open && noun !== "folder" ? SKILLS[noun].filter((skill) => skill.name.slice(1).startsWith(query)) : [];
 
   const resetActive = () => {
     setActive(0);
@@ -95,8 +95,8 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
     const row = rowRef.current;
     const measure = measureRef.current;
     const moment = momentRef.current;
-    if (!row || !measure || !moment) return;
-    const inlineWidth = row.clientWidth - 28 * 3 - moment.offsetWidth - 4 * 4;
+    if (!row || !measure) return;
+    const inlineWidth = row.clientWidth - 28 * 3 - (moment?.offsetWidth ?? 0) - 4 * 4;
     setWide(draft.includes("\n") || measure.offsetWidth + 8 > inlineWidth);
   }, [draft]);
 
@@ -127,7 +127,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
 
   const recording = speech.state === "recording";
   const canSend = Boolean(draft.trim()) && ready;
-  const placeholder = !ready ? `Waiting for the ${noun === "video" ? "transcript" : "paper"}…` : recording ? "Listening…" : speech.state === "transcribing" ? "Transcribing…" : answering ? "Your answer…" : `Ask about this ${noun}, / for skills…`;
+  const placeholder = !ready ? `Waiting for the ${noun === "video" ? "transcript" : noun === "folder" ? "folder sources" : "paper"}…` : recording ? "Listening…" : speech.state === "transcribing" ? "Transcribing…" : answering ? "Your answer…" : noun === "folder" ? "Ask about this folder…" : `Ask about this ${noun}, / for skills…`;
   return (
     <div className="chat-composer-wrap" ref={rootRef}>
       {open ? (
@@ -199,7 +199,7 @@ export function ChatComposer({ draft, onDraft, ready, answering, onCancelAnsweri
               }
             }}
           />
-          <span className="chat-composer-moment" ref={momentRef} title={`Your question is asked about ${resourceTitle} at ${moment}`}><Clock aria-hidden="true" />{moment}</span>
+          {moment ? <span className="chat-composer-moment" ref={momentRef} title={`Your question is asked about ${resourceTitle} at ${moment}`}><Clock aria-hidden="true" />{moment}</span> : null}
           <button className={`chat-mic${recording ? " is-recording" : ""}`} type="button" aria-label={recording ? "Stop dictating" : "Dictate your question"} title={recording ? "Stop dictating" : "Dictate (runs on your device)"} aria-pressed={recording} disabled={!ready || speech.state === "transcribing"} onClick={() => (recording ? speech.stop() : void speech.start())}>
             {recording ? <span className="chat-eq" aria-hidden="true"><span /><span /><span /></span> : speech.state === "transcribing" ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : <Mic aria-hidden="true" />}
           </button>

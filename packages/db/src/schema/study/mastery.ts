@@ -15,8 +15,8 @@ export const masteryChecks = studySchema.table(
     id: uuid("id").defaultRandom().primaryKey(),
     userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "restrict" }),
     studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
-    resourceId: uuid("resource_id").notNull().references(() => resources.id, { onDelete: "restrict" }),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
+    resourceId: uuid("resource_id").references(() => resources.id, { onDelete: "restrict" }),
+    resourceVersionId: uuid("resource_version_id").references(() => resourceVersions.id, { onDelete: "restrict" }),
     status: text("status").notNull().default("open"),
     questions: jsonb("questions").$type<unknown[]>().notNull(),
     answers: jsonb("answers").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
@@ -34,6 +34,9 @@ export const masteryChecks = studySchema.table(
     index("mastery_checks_user_resource_idx").on(table.userId, table.resourceId, table.createdAt.desc()),
     // One set at a time per video, so two tabs cannot each start one.
     uniqueIndex("mastery_checks_open_uq").on(table.userId, table.resourceId).where(sql`${table.status} = 'open'`),
+    index("mastery_checks_folder_idx").on(table.studySessionId, table.createdAt.desc()).where(sql`${table.resourceId} IS NULL`),
+    uniqueIndex("mastery_checks_open_folder_uq").on(table.studySessionId).where(sql`${table.status} = 'open' AND ${table.resourceId} IS NULL`),
+    check("mastery_checks_resource_version_pair_chk", sql`(${table.resourceId} IS NULL) = (${table.resourceVersionId} IS NULL)`),
     check("mastery_checks_status_chk", sql`${table.status} IN ('open', 'passed', 'failed')`),
     foreignKey({
       name: "mastery_checks_user_session_fkey",

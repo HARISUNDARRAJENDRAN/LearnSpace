@@ -75,7 +75,9 @@ export function tutorOutputJsonSchema(reasoning = false): Record<string, unknown
 
 // What the browser receives. Sources are server-resolved chunks; blocks point at them by index.
 const src = z.array(z.number().int().min(0)).max(4);
-export const tutorSourceSchema = z.object({ chunkId: z.string().uuid(), startMs: z.number().int().min(0).nullable(), endMs: z.number().int().min(0).nullable(), excerpt: z.string(), anchor: paperCitationAnchorSchema.optional() }).strict();
+export const tutorSourceSchema = z.object({ chunkId: z.string().uuid(), startMs: z.number().int().min(0).nullable(), endMs: z.number().int().min(0).nullable(), excerpt: z.string(), anchor: paperCitationAnchorSchema.optional(),
+  resource: z.object({ id: z.string().uuid(), title: z.string() }).strict().optional(),
+}).strict();
 const viewLine = z.object({ text: z.string(), src }).strict();
 const interactive = { id: z.string(), concept: z.string(), src, hintAvailable: z.boolean(), hint: z.string().nullable() };
 

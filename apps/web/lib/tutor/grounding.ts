@@ -2,7 +2,7 @@ import { restoreLatex } from "../math";
 import type { TutorBlockView, TutorConceptStatus, TutorModelBlock, TutorModelOutput, TutorOutcome, TutorSource } from "@learnspace/shared/tutor";
 
 /** A retrieved transcript chunk the model was shown, numbered from 1 in the prompt. */
-export type Evidence = { chunkId: string; ordinal: number; startMs: number | null; endMs: number | null; content: string; anchor?: import("@learnspace/shared/contracts").PaperCitationAnchor; citations?: number[] };
+export type Evidence = { chunkId: string; ordinal: number; startMs: number | null; endMs: number | null; content: string; anchor?: import("@learnspace/shared/contracts").PaperCitationAnchor; citations?: number[]; resource?: TutorSource["resource"] };
 
 // Answers to checks and hints stay on the server until the learner earns them.
 type Hidden = { answer?: number; explanation?: string; hint?: string };
@@ -61,7 +61,7 @@ export function groundOutput(output: Pick<TutorModelOutput, "outcome" | "blocks"
     if (index === undefined) {
       index = sources.length;
       sourceIndex.set(cite, index);
-      sources.push({ chunkId: item.chunkId, startMs: item.startMs, endMs: item.endMs, excerpt: excerptOf(item.content, terms), ...(item.anchor ? { anchor: item.anchor } : {}) });
+      sources.push({ chunkId: item.chunkId, startMs: item.startMs, endMs: item.endMs, excerpt: excerptOf(item.content, terms), ...(item.anchor ? { anchor: item.anchor } : {}), ...(item.resource ? { resource: item.resource } : {}) });
     }
     return index;
   };

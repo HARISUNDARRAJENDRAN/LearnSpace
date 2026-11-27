@@ -7,7 +7,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { type FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
 import { useCodingEligibility } from "../coding/useCodingEligibility";
 import { FolderEditor, FolderOptions, MoveSessionDialog } from "../folders/FolderDialogs";
-import { folderHref, folderSessionHref, useSessionFolders } from "../folders/state";
+import { folderHref, useSessionFolders } from "../folders/state";
 import { sessionParts, TOOL_PARAM } from "../study/tools";
 import { sessionIdFromPath, sessionsHref, useSessions } from "./sessions";
 
@@ -85,7 +85,7 @@ type Menu = { sessionId: string; confirmEnd: boolean };
 
 export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research"; onClose: () => void }) {
   const { sessions, rename, remove, swap } = useSessions();
-  const { folders, folderBySession, change, pending, failed, refresh } = useSessionFolders();
+  const { folders, folderBySession, pending, failed, refresh } = useSessionFolders();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -101,7 +101,6 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   const [moving, setMoving] = useState<StudySessionSummary | null>(null);
   const menuAnchor = useRef<HTMLButtonElement | null>(null);
   const menuContent = useRef<HTMLDivElement | null>(null);
-  const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const visible = sessions.filter((session) => !folderBySession.has(session.id) && sessionMatchesMode(session, mode));
   const recent = sessions.filter((session) => session.route && sessionMatchesMode(session, mode))
     .toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)).slice(0, 3);
@@ -112,7 +111,6 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
 
   // Entering a session opens it in the tree, so its parts are one click away.
   useEffect(() => { if (activeId) setOpen(activeId, true); }, [activeId, setOpen]);
-  useEffect(() => { if (activeFolder) setOpen(`folder-${activeFolder}`, true); }, [activeFolder, setOpen]);
 
   useEffect(() => {
     if (!menu) return;
@@ -166,12 +164,12 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
     window.history.pushState(null, "", href);
   }
 
-  function renderSession(session: StudySessionSummary, index: number, group: StudySessionSummary[], folderId?: string) {
+  function renderSession(session: StudySessionSummary, index: number, group: StudySessionSummary[]) {
       const open = expanded.includes(session.id);
       const isActive = session.id === activeId;
       const parts = sessionPartsFor(session);
       const Icon = session.activeResource?.type === "paper" ? FileText : Video;
-      const href = session.route && folderId ? folderSessionHref(session.route, folderId, mode) : session.route ?? sessionsHref(mode);
+      const href = session.route ?? sessionsHref(mode);
       const menuOpen = menu?.sessionId === session.id;
       return (
         <li key={session.id} className={`application-session${isActive ? " is-active" : ""}`}>
@@ -206,8 +204,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
                     return <button key={direction} type="button" role="menuitem" disabled={pending || !neighbor} onClick={() => {
                       setMenu(null);
                       menuAnchor.current?.focus();
-                      if (folderId) void attempt(async () => { await change(folderId, { action: "reorder-session", sessionId: session.id, direction }); }, "That session couldn't be moved. Try again.");
-                      else if (neighbor) void attempt(() => swap(session.id, neighbor.id), "That session couldn't be moved. Try again.");
+                      if (neighbor) void attempt(() => swap(session.id, neighbor.id), "That session couldn't be moved. Try again.");
                     }}><Arrow aria-hidden="true" /><span>Move {direction}</span></button>;
                   })}
                   <button type="button" role="menuitem" className="is-danger" onClick={() => setMenu({ sessionId: session.id, confirmEnd: true })}><CircleStop aria-hidden="true" /><span>End session</span></button>
@@ -227,35 +224,24 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
         <Link className={`application-nav-link${overviewActive || (activeId && !groupOpen) ? " is-active" : ""}`} data-nav-tone="sessions" href={sessionsHref(mode)} aria-current={overviewActive ? "page" : undefined} onClick={onClose}>
           <span className="application-nav-icon" aria-hidden="true"><CalendarDays /></span><span>Sessions</span>
         </Link>
-        <button className="application-nav-disclosure" type="button" aria-label="New folder" disabled={pending} onClick={() => setNewFolder(true)}><Plus aria-hidden="true" /></button>
         <button className="application-nav-disclosure" type="button" aria-expanded={groupOpen} aria-controls="application-session-tree" aria-label={groupOpen ? "Hide sessions" : "Show sessions"} onClick={toggleGroup}><ChevronRight aria-hidden="true" /></button>
       </div>
       {groupOpen ? <div id="application-session-tree" className="application-folder-tree">
-        <details open>
-          <summary>Folders</summary>
+        <section aria-label="Folders">
+          <div className="application-folder-heading"><span>Folders</span><button className="application-nav-disclosure" type="button" aria-label="New folder" disabled={pending} onClick={() => setNewFolder(true)}><Plus aria-hidden="true" /></button></div>
           {failed ? <button type="button" className="application-session-more-list" onClick={() => void refresh()}>Retry loading folders</button> : null}
           <ul className="application-session-tree">
             {folders.map((folder) => {
-              const key = `folder-${folder.id}`;
-              const open = expanded.includes(key);
-              const all = folder.sessionIds.flatMap((id) => { const item = sessionById.get(id); return item ? [item] : []; });
-              const items = all.filter((item, index) => index < VISIBLE_SESSIONS || item.id === activeId);
               const href = folderHref(folder.id, mode);
               return <li key={folder.id}>
                 <div className="application-session-row">
-                  <button className="application-session-toggle" type="button" aria-expanded={open} aria-label={`${open ? "Collapse" : "Expand"} ${folder.title}`} onClick={() => setOpen(key, !open)}><ChevronRight aria-hidden="true" /></button>
-                  <Link className="application-session-link application-folder-link" href={href} title={folder.title} aria-current={pathname === href.split("?")[0] ? "page" : undefined} onClick={onClose}><FolderClosed aria-hidden="true" /><span>{folder.title}</span></Link>
+                  <Link className="application-session-link application-folder-link" href={href} title={folder.title} aria-current={(pathname === href.split("?")[0] || activeFolder === folder.id) ? "page" : undefined} onClick={onClose}><FolderClosed aria-hidden="true" /><span>{folder.title}</span></Link>
                   <button type="button" className="application-session-more" aria-label={`Folder options for ${folder.title}`} onClick={() => setOptions(folder)}><MoreHorizontal aria-hidden="true" /></button>
                 </div>
-                {open ? <ul className="application-session-tree application-folder-children">
-                  {items.map((session, index) => renderSession(session, index, items, folder.id))}
-                  {items.length < folder.sessionIds.length ? <li><Link className="application-session-more-list" href={href} onClick={onClose}>View all in folder</Link></li> : null}
-                  {!folder.sessionIds.length ? <li className="application-folder-empty">No study sessions yet</li> : null}
-                </ul> : null}
               </li>;
             })}
           </ul>
-        </details>
+        </section>
         <details open>
           <summary>Unfiled</summary>
           <ul className="application-session-tree">{listed.map((session, index) => renderSession(session, index, listed))}</ul>

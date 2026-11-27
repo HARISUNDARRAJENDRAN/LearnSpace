@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { type Transaction, withUserTransaction } from "@learnspace/db";
 import { resources, sessionFolderMemberships as memberships, sessionFolderResources as savedResources, sessionFolders as folders, studySessions } from "@learnspace/db/schema";
-import type { ChangeSessionFolder, CreateSessionFolder, SessionFolderDetailsQuery, StartStudySessionResponse } from "@learnspace/shared";
+import type { ChangeSessionFolder, CreateSessionFolder, StartStudySessionResponse } from "@learnspace/shared";
 import { and, asc, eq, inArray, isNull, max, or, sql } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
 import { invalidateHomeFeedCache } from "../discovery/cache";
@@ -44,7 +44,7 @@ async function touch(tx: Transaction, userId: string, folderIds: string[]) {
 
 async function moveSession(tx: Transaction, userId: string, folderId: string, sessionId: string, fromFolderId: string | null) {
   const [session] = await tx.select({ id: studySessions.id }).from(studySessions)
-    .where(and(eq(studySessions.userId, userId), eq(studySessions.id, sessionId)));
+    .where(and(eq(studySessions.userId, userId), eq(studySessions.id, sessionId), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`));
   if (!session) throw new AuthError("STUDY_SESSION_NOT_FOUND", "This session is no longer available.", 404);
   const [existing] = await tx.select({ folderId: memberships.folderId }).from(memberships)
     .where(and(eq(memberships.userId, userId), eq(memberships.studySessionId, sessionId)));
@@ -189,7 +189,7 @@ export function folderSessionCandidates(userId: string, folderId: string, query:
       LEFT JOIN catalog.resources r ON r.id = s.active_resource_id AND r.deleted_at IS NULL
       LEFT JOIN study.session_folder_memberships m ON m.study_session_id = s.id AND m.user_id = s.user_id
       LEFT JOIN study.session_folders f ON f.id = m.folder_id AND f.user_id = m.user_id
-      WHERE s.user_id = ${userId} AND m.folder_id IS DISTINCT FROM ${folderId}::uuid
+      WHERE s.user_id = ${userId} AND s.metadata->>'folderWorkspace' IS DISTINCT FROM 'true' AND m.folder_id IS DISTINCT FROM ${folderId}::uuid
         AND (s.title ILIKE ${pattern} OR r.title ILIKE ${pattern} OR ${query} = '')
       ORDER BY s.last_active_at DESC, s.id LIMIT 25
     `));

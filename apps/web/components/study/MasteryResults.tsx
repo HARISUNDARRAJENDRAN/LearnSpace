@@ -58,13 +58,14 @@ type Props = {
   onRetake: () => void;
   onAnalyse: () => void;
   material: "video" | "paper";
+  folder?: boolean;
 };
 
 /**
  * What a scored set says: the score on a dial, the answers and concepts behind it, progress over attempts and the course,
  * where to revise, and a learning analysis written from the learner's own answers, which fills in when it is ready.
  */
-export function MasteryResults({ check, passScore, next, moving, onGo, onReview, onContinue, onRetake, onAnalyse, material }: Props) {
+export function MasteryResults({ check, passScore, next, moving, onGo, onReview, onContinue, onRetake, onAnalyse, material, folder = false }: Props) {
   const unit = UNIT[material];
   const score = check.score ?? 0;
   const passed = check.status === "passed";
@@ -125,11 +126,12 @@ export function MasteryResults({ check, passScore, next, moving, onGo, onReview,
         </span>
         <p className="mastery-score"><strong>{percent(shownScore)}</strong><span>on {questions.length} questions</span></p>
       </ScoreDial>
+      {folder && passed ? <button className="session-link-button" type="button" onClick={onRetake}>Take another check</button> : null}
       {passed ? <button className="mastery-cta" type="button" disabled={moving} onClick={onContinue}>
-        {moving ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}{finished ? "Back to Sessions" : "Continue learning"}
+        {moving ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}{folder ? "Back to canvas" : finished ? "Back to Sessions" : "Continue learning"}
       </button> : <button className="mastery-cta" type="button" onClick={onRetake}><RotateCcw aria-hidden="true" />New set of questions</button>}
       <p className="mastery-verdict">
-        {passed ? finished ? next.course ? `${unit.whole} complete. Every ${unit.one} is mastered.` : `${unit.one[0]!.toUpperCase()}${unit.one.slice(1)} mastered.` : `${bandLine} The next ${unit.one} is unlocked.` : `${bandLine} You need ${percent(passScore)} to unlock the next ${unit.one}.`}
+        {folder ? `Folder check ${passed ? "passed" : "complete"}. ${percent(passScore)} to pass.` : passed ? finished ? next.course ? `${unit.whole} complete. Every ${unit.one} is mastered.` : `${unit.one[0]!.toUpperCase()}${unit.one.slice(1)} mastered.` : `${bandLine} The next ${unit.one} is unlocked.` : `${bandLine} You need ${percent(passScore)} to unlock the next ${unit.one}.`}
       </p>
       {passed && next.nextTitle ? <p className="mastery-next"><ArrowRight aria-hidden="true" /><span>Up next: <MathText text={next.nextTitle} /></span></p> : null}
     </section>

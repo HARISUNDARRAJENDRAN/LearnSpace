@@ -67,14 +67,21 @@ function ChatList({ current, history, noun, onOpenCurrent, onRestore }: { curren
 }
 
 /** The passages an answer cites, collapsed under a count. */
-function AnswerSources({ message, onGo }: { message: TutorMessageView; onGo: (place: StudyAnchor) => void }) {
+function AnswerSources({ message, onGo, onSource }: { message: TutorMessageView; onGo: (place: StudyAnchor) => void; onSource?: (id: string, place: StudyAnchor | null) => void }) {
   const [open, setOpen] = useState(false);
   if (message.sources.length === 0) return null;
   return (
     <>
       <button className="chat-sources-toggle" type="button" aria-expanded={open} onClick={() => setOpen(!open)}>{message.sources.length} {message.sources[0]?.anchor ? "passage" : "moment"}{message.sources.length === 1 ? "" : "s"}<ChevronDown aria-hidden="true" /></button>
       <div className="chat-sources" data-open={open || undefined}>
-        <ul inert={!open}>{message.sources.map((source) => { const place = placeOf(source.startMs, source.anchor); return <li key={source.chunkId}>{place ? <button className="chat-source" type="button" onClick={() => onGo(place)}><PlaceIcon place={place} /><time>{placeLabel(place)}</time><span>{source.excerpt}</span></button> : <span className="chat-source"><span>{source.excerpt}</span></span>}</li>; })}</ul>
+        <ul inert={!open}>{message.sources.map((source) => {
+          const place = placeOf(source.startMs, source.anchor);
+          const resource = source.resource;
+          return <li key={source.chunkId}>{resource && onSource
+            ? <button className="chat-source" type="button" onClick={() => onSource(resource.id, place)}><strong>{resource.title}</strong><span>{source.excerpt}</span></button>
+            : place && !resource ? <button className="chat-source" type="button" onClick={() => onGo(place)}><PlaceIcon place={place} /><time>{placeLabel(place)}</time><span>{source.excerpt}</span></button>
+            : <span className="chat-source"><span>{source.excerpt}</span></span>}</li>;
+        })}</ul>
       </div>
     </>
   );
@@ -97,10 +104,11 @@ async function errorMessage(response: Response): Promise<string> {
  * The tutor for the session's video or paper, asked at `place`: the moment playing, or the page being read. The learner can share the session's code draft with a question; it is sent only while
  * they keep sharing it on, and only for this session.
  */
-export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCollapse }: {
-  sessionId: string; resource: StudySessionResource; place: StudyAnchor;
+export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCollapse, folder = false, preparing, readySources, onSource }: {
+  sessionId: string; resource: Pick<StudySessionResource, "type" | "title">; place: StudyAnchor;
   /** A question the lesson drafted for the learner (asking about a passage they selected); a newer `at` replaces the draft. */
   seed?: { text: string; at: number } | null;
+  folder?: boolean; preparing?: boolean; readySources?: number; onSource?: (id: string, place: StudyAnchor | null) => void;
   code: SessionCodeDraft | null; onGo: (place: StudyAnchor) => void; onCollapse: () => void;
 }) {
   const noun = resource.type;
@@ -146,16 +154,16 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
   // The answer belongs to this lesson only; leaving it stops an answer in progress.
   useEffect(() => () => abortRef.current?.abort(), []);
 
-  const status = thread?.transcript.status;
+  const status = folder && thread ? readySources ? "ready" : preparing ? "preparing" : "unavailable" : thread?.transcript.status;
   useEffect(() => {
-    if (status !== "preparing") return;
+    if (folder || status !== "preparing") return;
     // A transcript usually lands within seconds of opening the video; past two minutes it waits on the Firecrawl fallback.
     const started = Date.now();
     let timer: number | undefined;
     const schedule = () => { timer = window.setTimeout(() => { void load(); schedule(); }, Date.now() - started < 120_000 ? 3_000 : 30_000); };
     schedule();
     return () => window.clearTimeout(timer);
-  }, [status, load]);
+  }, [folder, status, load]);
 
   const drafting = streaming !== null;
   const doubting = Boolean(pending?.doubtId);
@@ -193,7 +201,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
     const localId = crypto.randomUUID();
     let accepted = false;
     let drafted = false;
-    upsert({ id: localId, role: "user", status: "completed", createdAt: new Date().toISOString(), text: question, positionMs: place.kind === "video" ? place.positionMs : null, anchor: place, outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt });
+    upsert({ id: localId, role: "user", status: "completed", createdAt: new Date().toISOString(), text: question, positionMs: !folder && place.kind === "video" ? place.positionMs : null, anchor: folder ? null : place, outcome: null, blocks: [], sources: [], followUps: [], stale: false, doubt });
     try {
       const response = await fetch(endpoint, {
         method: "POST",
@@ -269,6 +277,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
   }
 
   const actions: TutorActions = {
+    ...(onSource ? { source: onSource } : {}),
     go: onGo,
     answer: (messageId, blockId, choice) => void act({ action: "answer", messageId, blockId, choice }),
     hint: (messageId, blockId) => void act({ action: "hint", messageId, blockId }),
@@ -341,12 +350,12 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
   const lastQuestion = main.findLast((message) => message.role === "user");
   const firstQuestion = main.find((message) => message.role === "user")?.text ?? null;
   const current = firstQuestion ? { title: firstQuestion, preview: main.find((message) => message.role === "assistant" && message.status === "completed")?.text.slice(0, 200) || null } : null;
-  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />General knowledge, not from this {noun}</p>;
+  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />General knowledge, outside {folder ? "the folder sources" : `this ${noun}`}</p>;
 
   const pendingAnswer = (doubtId: string | null) => pending && pending.doubtId === doubtId ? (
     <article className="chat-message is-assistant">
       {streaming?.outcome === "general" ? generalNote : null}
-      {streaming ? <TutorAnswer message={streaming} actions={{ ...actions, busy: true }} streaming /> : <LoadingState label={pending.phase === "retrieving" && noun === "paper" ? "Finding the passage in the paper" : phaseLabel[pending.phase]} />}
+      {streaming ? <TutorAnswer message={streaming} actions={{ ...actions, busy: true }} streaming /> : <LoadingState label={pending.phase === "retrieving" && !folder && noun === "paper" ? "Finding the passage in the paper" : phaseLabel[pending.phase]} />}
     </article>
   ) : null;
   const failureNote = (doubtId: string | null) => failure && failure.doubtId === doubtId ? (
@@ -401,7 +410,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
           {message.status === "completed" && message.text ? (
             <div className="chat-message-actions">
               <button className="session-icon-button" type="button" aria-label="Copy answer" title="Copy" onClick={() => void navigator.clipboard?.writeText(message.text)}><Copy aria-hidden="true" /></button>
-              <AnswerSources message={message} onGo={onGo} />
+              <AnswerSources message={message} onGo={onGo} {...(onSource ? { onSource } : {})} />
             </div>
           ) : null}
           {message === visible.at(-1) && message.followUps.length > 0 && !pending ? (
@@ -435,12 +444,13 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
         onKeyUp={(event) => { if (event.shiftKey) pickDoubt(); }}
       >
         {loadError ? <p className="session-tool-message is-error" role="alert">The conversation couldn&apos;t be loaded. <button className="session-link-button" type="button" onClick={() => void load()}>Try again</button></p> : null}
-        {thread && !ready ? <p className="tutor-notice" role="status">{transcriptNotice[noun][thread.transcript.status as keyof typeof transcriptNotice.video]}</p> : null}
+        {folder && preparing ? <p className="tutor-notice" role="status">Preparing folder sources in the background.</p> : null}
+        {thread && !ready && (!folder || !preparing) ? <p className="tutor-notice" role="status">{folder ? "Add a source with available text or captions to start chatting." : transcriptNotice[noun][thread.transcript.status as keyof typeof transcriptNotice.video]}</p> : null}
         {thread && visible.length === 0 && !pending ? (
           <div className="chat-empty">
-            <p className="chat-empty-title">Learn from this {noun}</p>
-            <p>{noun === "video" ? "Ask about anything the instructor covers. Answers link to the moment they come from" : "Ask about any idea, equation or reference in the paper. Answers link to the page they come from"}, say plainly when they go beyond the {noun}, and check what stuck as you go. Highlight any part of an answer to ask about just that.</p>
-            <ul className="chat-suggestions">{SKILLS[noun].slice(0, 3).map((skill) => <li key={skill.name}><button type="button" disabled={!ready} onClick={() => void send(skill.prompt, null)}><ArrowUp aria-hidden="true" />{skill.prompt}</button></li>)}</ul>
+            <p className="chat-empty-title">{folder ? "Ask about your folder" : `Learn from this ${noun}`}</p>
+            {folder ? <p>Ask about a source or compare ideas across sources.</p> : <p>{noun === "video" ? "Ask about anything the instructor covers. Answers link to the moment they come from" : "Ask about any idea, equation or reference in the paper. Answers link to the page they come from"}, say plainly when they go beyond the {noun}, and check what stuck as you go. Highlight any part of an answer to ask about just that.</p>}
+            {!folder ? <ul className="chat-suggestions">{SKILLS[noun].slice(0, 3).map((skill) => <li key={skill.name}><button type="button" disabled={!ready} onClick={() => void send(skill.prompt, null)}><ArrowUp aria-hidden="true" />{skill.prompt}</button></li>)}</ul> : null}
           </div>
         ) : visible.map((message) => "invalid" in message ? (
           <article className="chat-message is-assistant" key={message.id}><p className="session-tool-message is-error">This answer couldn&apos;t be displayed.</p></article>
@@ -451,7 +461,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
         {atEnd || visible.length === 0 ? null : <div className="chat-jump-dock"><button className="chat-jump" type="button" aria-label="Jump to latest" title="Jump to latest" onClick={() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" })}><ArrowDown aria-hidden="true" /></button></div>}
       </div>
       {code?.code.trim() ? <div className="chat-code-share"><button type="button" aria-pressed={shareCode} title={shareCode ? "The tutor sees your code with each question" : "Let the tutor see this session's code"} onClick={() => setShareCode(!shareCode)}><Code aria-hidden="true" /><span>{shareCode ? "Sharing your code" : "Share your code"}</span><small>{codeLabel(code)}</small></button></div> : null}
-      <ChatComposer draft={draft} onDraft={setDraft} ready={ready} answering={reply?.prompt ?? null} onCancelAnswering={() => setReply(null)} pending={Boolean(pending)} reasoning={pending?.phase === "reasoning"} onSend={(text) => void send(text)} onStop={() => abortRef.current?.abort()} moment={placeLabel(place)} noun={noun} resourceTitle={resource.title} />
+      <ChatComposer draft={draft} onDraft={setDraft} ready={ready} answering={reply?.prompt ?? null} onCancelAnswering={() => setReply(null)} pending={Boolean(pending)} reasoning={pending?.phase === "reasoning"} onSend={(text) => void send(text)} onStop={() => abortRef.current?.abort()} moment={folder ? null : placeLabel(place)} noun={folder ? "folder" : noun} resourceTitle={resource.title} />
       </>}
     </div>
   );

@@ -9,7 +9,7 @@ const materials = [
   { title: "World models lecture", type: "video", question: "How does planning use the world model?" },
 ] as const;
 
-test("folders keep paper and video sessions together across modes, tabs, and browser sessions", async ({ page, browser, baseURL }) => {
+test("folders open a shared canvas for papers and videos across modes and browser sessions", async ({ page, browser, baseURL }) => {
   const url = process.env.DATABASE_MIGRATOR_URL;
   if (!url || !baseURL) throw new Error("Folder E2E requires the test database and application URL");
   const db = postgres(url, { max: 1 });
@@ -56,23 +56,28 @@ test("folders keep paper and video sessions together across modes, tabs, and bro
     await db`UPDATE study.study_sessions SET workspace = '{"code":{"language":"python","code":"print(42)"}}' WHERE id = ${video.sessionId}`;
 
     await page.goto("/app/sessions?mode=research");
-    const main = page.locator(".session-folders-page");
-    await expect(main.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-    await expect(main.getByRole("link", { name: "Continue last session" })).toBeVisible();
-    await expect(main.getByRole("link", { name: fixtures[0]!.title }).first()).toBeVisible();
+    const sessions = page.locator(".session-folders-page");
+    const main = page.locator(".folder-workspace");
+    await expect(sessions.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+    await expect(sessions.getByRole("link", { name: "Continue last session" })).toBeVisible();
+    await expect(sessions.getByRole("link", { name: fixtures[0]!.title }).first()).toBeVisible();
     const create = page.getByRole("complementary", { name: "Application navigation" }).getByRole("button", { name: "New folder", exact: true });
     await create.click();
     await expect(page.getByRole("textbox", { name: "Folder name" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(create).toBeFocused();
-    await main.getByRole("button", { name: "New folder", exact: true }).click();
+    await create.click();
     await page.getByRole("textbox", { name: "Folder name" }).fill("World Models Research");
     await page.getByRole("textbox", { name: "Description" }).fill("Compare representation learning, imagination, and model-based planning.");
     await page.getByRole("button", { name: "Create folder", exact: true }).click();
     await expect(main.getByRole("heading", { name: "World Models Research" })).toBeVisible();
     const folderUrl = page.url();
     const folderId = new URL(folderUrl).pathname.split("/").at(-1);
-    await expect(main.getByText("This folder is empty.", { exact: false })).toBeVisible();
+    const board = main.getByRole("region", { name: "Learning Canvas" });
+    await expect(board.getByText("Add a YouTube video or research paper to start studying.")).toBeVisible();
+    await expect(main.getByRole("link", { name: "Overview" })).toHaveCount(0);
+    await main.getByRole("button", { name: "AI Chat" }).click();
+    await expect(main.getByText("Ask about your folder")).toBeVisible();
 
     await main.getByRole("button", { name: "Add content", exact: true }).first().click();
     const discovery = page.getByRole("dialog", { name: "Add content" });
@@ -105,16 +110,24 @@ test("folders keep paper and video sessions together across modes, tabs, and bro
     await picker.getByRole("button", { name: `Add ${video.title}`, exact: true }).first().click();
     await expect(picker.getByRole("button", { name: `${video.title} added` }).first()).toBeDisabled();
     await picker.getByRole("button", { name: "Done" }).click();
-    await expect(main.getByText(/2 papers · 1 video · 2 sessions/)).toBeVisible();
-    await main.getByRole("button", { name: "Start or resume" }).click();
+    const card = (title: string) => board.getByRole("button", { name: new RegExp(title), exact: false }).filter({ hasText: title });
+    for (const fixture of fixtures) await expect(card(fixture.title)).toBeVisible();
+    await expect(main.getByText("Ask about your folder")).toBeVisible();
+    await main.getByRole("button", { name: "Notes", exact: true }).click();
+    await expect(main.getByText(`Notes from ${fixtures[0]!.title}`)).toBeVisible();
+    await main.getByLabel("Notes for").selectOption(video.resourceId);
+    await expect(main.getByText(`Notes from ${video.title}`)).toBeVisible();
+    await expect(main.getByText(`Notes from ${fixtures[0]!.title}`)).toHaveCount(0);
+    await main.getByRole("button", { name: "Mastery Check", exact: true }).click();
+    await expect(main.getByRole("complementary", { name: "Mastery Check" })).toBeVisible();
+    await main.getByRole("button", { name: "Learning Canvas", exact: true }).click();
+    await card(video.title).click();
     await expect(page).toHaveURL(new RegExp(`/study/video/${video.sessionId}\\?folder=${folderId}`));
     await page.getByRole("link", { name: "Back to folder" }).click();
-    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
-    const disclosure = page.getByRole("button", { name: /^(Expand|Collapse) World Models Research$/ });
-    await expect(disclosure).toBeVisible();
-    if (await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
-    const tree = page.locator(".application-folder-children");
-    for (const fixture of fixtures) await expect(tree.getByRole("link", { name: fixture.title, exact: true })).toBeVisible();
+    await expect(card(video.title)).toBeVisible();
+    const tree = page.getByRole("region", { name: "Folders" });
+    await expect(tree.getByRole("link", { name: "World Models Research" })).toBeVisible();
+    for (const fixture of fixtures) await expect(tree.getByRole("link", { name: fixture.title, exact: true })).toHaveCount(0);
     if (screenshots) {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.screenshot({ path: join(screenshots, "world-models-folder.png"), animations: "disabled" });
@@ -123,68 +136,41 @@ test("folders keep paper and video sessions together across modes, tabs, and bro
     await page.getByRole("button", { name: "Switch mode (currently research)" }).click();
     await page.getByRole("menuitemradio", { name: "Learn" }).click();
     await expect(page).toHaveURL(new RegExp(`/folders/${folderId}$`));
-    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
+    await expect(card(video.title)).toBeVisible();
     await page.reload();
-    await expect(main.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
-
-    await main.getByRole("link", { name: "AI threads" }).click();
-    await main.getByRole("button", { name: fixtures[1]!.question }).click();
-    const history = page.getByRole("dialog", { name: fixtures[1]!.title });
-    await expect(history.locator("details[open] ol")).toContainText(fixtures[1]!.question);
-    await expect(history.getByText(fixtures[0]!.question)).toHaveCount(0);
-    await page.keyboard.press("Escape");
-    await main.getByRole("button", { name: "Voice transcript" }).click();
-    await expect(page.getByRole("dialog", { name: video.title }).locator("details[open] ol")).toContainText("Compare rollout error to the paper.");
-    await page.keyboard.press("Escape");
-
-    await main.getByRole("link", { name: "Notes & guides" }).click();
-    await expect(main.getByText(`Notes from ${video.title}`)).toBeVisible();
-    const videoRow = main.locator(".session-folder-entry").filter({ hasText: video.title });
-    await videoRow.getByRole("button", { name: "Preview notes" }).click();
-    await expect(page.getByRole("dialog", { name: video.title }).getByText(`Notes from ${video.title}`)).toBeVisible();
-    await page.keyboard.press("Escape");
-    await main.getByRole("link", { name: "Other artifacts" }).click();
-    await main.getByRole("button", { name: "Code draft" }).click();
-    await expect(page.getByRole("dialog", { name: video.title }).getByText("print(42)")).toBeVisible();
-    await page.keyboard.press("Escape");
-
-    await main.getByRole("link", { name: "Overview" }).click();
-    await videoRow.getByRole("link", { name: "Continue" }).click();
-    await expect(page).toHaveURL(new RegExp(`/study/video/${video.sessionId}\\?folder=${folderId}`));
-    await page.getByRole("link", { name: "Back to folder" }).click();
-    await expect(main.getByRole("heading", { name: "World Models Research" })).toBeVisible();
+    await expect(card(video.title)).toBeVisible();
 
     const fresh = await browser.newContext({ storageState: await context.storageState(), viewport: { width: 390, height: 1000 }, reducedMotion: "reduce" });
     try {
       const mobile = await fresh.newPage();
       await mobile.goto(folderUrl);
-      await expect(mobile.getByText(/2 papers · 1 video · 3 sessions/)).toBeVisible();
-      expect(await mobile.locator(".session-folders-page").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+      await expect(mobile.getByRole("region", { name: "Learning Canvas" }).getByText(video.title)).toBeVisible();
+      expect(await mobile.locator(".folder-workspace").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       if (screenshots) await mobile.screenshot({ path: join(screenshots, "world-models-mobile.png"), animations: "disabled" });
     } finally { await fresh.close(); }
 
     const otherTab = await context.newPage();
     await otherTab.goto(folderUrl);
-    await expect(otherTab.getByText(/3 sessions/)).toBeVisible();
+    await expect(otherTab.getByText(fixtures[1]!.title, { exact: true }).first()).toBeVisible();
     const api = `**/api/v1/session-folders/${folderId}`;
     await page.route(api, async (route) => {
       if (route.request().method() !== "PATCH") await route.continue();
       else await route.fulfill({ status: 409, json: { error: { message: "Simulated concurrent update." } } });
     });
-    await videoRow.getByRole("button", { name: `Options for ${video.title}` }).click();
+    await board.getByRole("button", { name: `Options for ${fixtures[1]!.title}` }).click();
     await page.getByRole("button", { name: "Unfile session" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "Simulated concurrent update." })).toBeVisible();
-    await expect(main.getByText(/3 sessions/)).toBeVisible();
+    await expect(card(fixtures[1]!.title)).toBeVisible();
     await page.unroute(api);
     await page.getByRole("button", { name: "Unfile session" }).click();
-    await expect(otherTab.getByText(/2 sessions/)).toBeVisible();
+    await expect(otherTab.getByRole("region", { name: "Learning Canvas" }).getByText(fixtures[1]!.title, { exact: true })).toHaveCount(0);
     await otherTab.close();
 
     await main.getByRole("button", { name: "Folder options", exact: true }).click();
     await page.getByRole("button", { name: "Delete folder…", exact: true }).click();
     await page.getByRole("button", { name: "Delete folder", exact: true }).click();
     await expect(page).toHaveURL(/\/app\/sessions$/);
-    expect(await db`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${userId}`).toEqual([{ count: 3 }]);
+    expect(await db`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${userId} AND metadata->>'folderWorkspace' IS DISTINCT FROM 'true'`).toEqual([{ count: 3 }]);
     expect(await db`SELECT count(*)::int AS count FROM study.video_notes WHERE user_id = ${userId}`).toEqual([{ count: 3 }]);
     expect(errors).toEqual([]);
   } finally {

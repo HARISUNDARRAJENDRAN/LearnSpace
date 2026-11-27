@@ -1,4 +1,4 @@
-import { studySessionIdSchema } from "@learnspace/shared";
+import { sessionFolderIdSchema, studySessionIdSchema } from "@learnspace/shared";
 import { type VoiceTurnEvent, voiceTurnRequestSchema } from "@learnspace/shared/notes";
 import { AuthError, authErrorResponse } from "../../../../../../lib/auth/errors";
 import { requireCompletedSession } from "../../../../../../lib/discovery/access";
@@ -14,11 +14,13 @@ type Context = { params: Promise<{ sessionId: string }> };
 export async function POST(request: Request, context: Context) {
   let userId: string;
   let sessionId: string;
+  let resourceId: string | undefined;
   let input: ReturnType<typeof voiceTurnRequestSchema.parse>;
   try {
     const session = await requireCompletedSession();
     userId = session.user.id;
     sessionId = studySessionIdSchema.parse((await context.params).sessionId);
+    resourceId = sessionFolderIdSchema.optional().parse(new URL(request.url).searchParams.get("resource") ?? undefined);
     input = voiceTurnRequestSchema.parse(await request.json().catch(() => { throw new AuthError("INVALID_JSON", "Send a valid JSON request body."); }));
   } catch (error) {
     return authErrorResponse(error);
@@ -34,7 +36,7 @@ export async function POST(request: Request, context: Context) {
         }
       };
       try {
-        await runVoiceTurn(userId, sessionId, input, { signal: request.signal, emit });
+        await runVoiceTurn(userId, sessionId, input, { ...(resourceId ? { resourceId } : {}), signal: request.signal, emit });
       } catch (error) {
         emit({ type: "error", message: error instanceof AuthError ? error.message : "Luny couldn't answer just now." });
       }
