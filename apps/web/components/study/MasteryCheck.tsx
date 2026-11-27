@@ -5,7 +5,7 @@ import type { MasteryQuestionView, MasteryView } from "@learnspace/shared/master
 import { Check, LoaderCircle, Mic, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { sessionsHref } from "../application/sessions";
+import { studyHomeHref } from "../application/sessions";
 import { LoadingState } from "./LoadingState";
 import { type MasteryNext, MasteryResults } from "./MasteryResults";
 import { MathText } from "./MathText";
@@ -134,7 +134,7 @@ export function MasteryCheck({ sessionId, resourceId, folder = false, readySourc
       body: JSON.stringify({ resourceId, progressPct: 100, anchor: place, event: "complete", idempotencyKey: `continue-${scoredId ?? resourceId}` }),
     }).catch(() => null);
     if (next.nextTitle) router.refresh();
-    else router.push(sessionsHref(material === "paper" ? "research" : "learn"));
+    else router.push(studyHomeHref(material === "paper" ? "research" : "learn"));
   };
   const answer = (question: MasteryQuestionView, response: { choice: number } | { text: string }) =>
     void run(question.type === "written" ? "grading" : null, () => request(`${base}/answers`, { checkId: view?.check?.id, questionId: question.id, ...response }));

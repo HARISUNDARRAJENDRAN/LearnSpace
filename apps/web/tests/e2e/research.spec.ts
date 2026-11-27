@@ -170,7 +170,7 @@ test("Workflow A — beginner path, cited paper study, notes, save and resume at
   await expect(paperRow.getByRole("button", { name: "Remove from library" })).toHaveAttribute("aria-pressed", "true");
   await page.getByLabel("Recently saved").getByRole("link", { name: "See the full list" }).click();
   await expect(page).toHaveURL(/\/app\/library\?view=papers/);
-  const resume = page.locator(".watch-later-card").filter({ hasText: "XGBoost: A Scalable Tree Boosting System" }).getByRole("link", { name: "Continue in Sessions" });
+  const resume = page.locator(".watch-later-card").filter({ hasText: "XGBoost: A Scalable Tree Boosting System" }).getByRole("link", { name: "Continue studying" });
   await expect(resume).toBeVisible();
   await resume.click();
   await expect(page).toHaveURL(new RegExp(`/app/study/paper/${sessionId}(?:\\?.*)?$`));

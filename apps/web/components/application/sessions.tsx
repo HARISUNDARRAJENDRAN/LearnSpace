@@ -28,15 +28,19 @@ export function sessionIdFromPath(pathname: string): string | null {
   return STUDY_PATH.exec(pathname)?.[1] ?? null;
 }
 
-/** The Sessions dashboard in the selected mode. */
-export function sessionsHref(mode: "learn" | "research"): string {
-  return mode === "research" ? "/app/sessions?mode=research" : "/app/sessions";
+export function sessionMatchesMode(session: StudySessionSummary, mode: "learn" | "research"): boolean {
+  return session.activeResource?.type === (mode === "research" ? "paper" : "video");
 }
 
-/** The most recently used open session. */
-export function lastSeenRoute(sessions: StudySessionSummary[]): string | null {
+/** Where to return after leaving a study workspace. */
+export function studyHomeHref(mode: "learn" | "research"): string {
+  return mode === "research" ? "/app/research" : "/app";
+}
+
+/** Open sessions in order of most recent use. */
+export function recentSessions(sessions: StudySessionSummary[]): StudySessionSummary[] {
   const open = sessions.filter((session) => session.route && (session.status === "active" || session.status === "paused"));
-  return open.toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt))[0]?.route ?? null;
+  return open.toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
 }
 
 async function send(url: string, init: RequestInit): Promise<void> {

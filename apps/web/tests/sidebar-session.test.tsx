@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { StudySessionSummary } from "@learnspace/shared";
 import { renderToStaticMarkup } from "react-dom/server";
-import { SessionPartLinks, sessionMatchesMode } from "../components/application/SidebarSessions";
+import { SessionPartLinks } from "../components/application/SidebarSessions";
+import { sessionMatchesMode } from "../components/application/sessions";
 
 function session(type: "video" | "paper"): StudySessionSummary {
   return {
@@ -23,7 +24,7 @@ function session(type: "video" | "paper"): StudySessionSummary {
 
 function render(codingEligible: boolean) {
   const summary = session("video");
-  return renderToStaticMarkup(<SessionPartLinks session={summary} href={summary.route ?? "/app/sessions"} active={false} activeSlug="canvas" open codingEligible={codingEligible} onPartClick={() => {}} />);
+  return renderToStaticMarkup(<SessionPartLinks session={summary} href={summary.route ?? "/app"} active={false} activeSlug="canvas" open codingEligible={codingEligible} onPartClick={() => {}} />);
 }
 
 test("nested video sessions show Code Exercises only when the resource capability allows it", () => {

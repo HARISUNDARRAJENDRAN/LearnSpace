@@ -350,7 +350,7 @@ export function SessionChat({ sessionId, resource, place, seed, code, onGo, onCo
   const lastQuestion = main.findLast((message) => message.role === "user");
   const firstQuestion = main.find((message) => message.role === "user")?.text ?? null;
   const current = firstQuestion ? { title: firstQuestion, preview: main.find((message) => message.role === "assistant" && message.status === "completed")?.text.slice(0, 200) || null } : null;
-  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />General knowledge, outside {folder ? "the folder sources" : `this ${noun}`}</p>;
+  const generalNote = <p className="chat-general-note"><BookOpen aria-hidden="true" />{folder ? "General knowledge, outside the folder sources" : `General knowledge, not from this ${noun}`}</p>;
 
   const pendingAnswer = (doubtId: string | null) => pending && pending.doubtId === doubtId ? (
     <article className="chat-message is-assistant">

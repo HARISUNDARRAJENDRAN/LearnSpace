@@ -5,7 +5,7 @@ import { CircleStop, Maximize, Minus, Plus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useFolderReturn } from "../folders/StudyFolderAction";
-import { sessionsHref, useSessions } from "../application/sessions";
+import { studyHomeHref, useSessions } from "../application/sessions";
 import type { CanvasRect } from "./CourseGraph";
 
 /** The whiteboard every study session sits on (videos, courses, papers, paper sets). */
@@ -158,7 +158,7 @@ export function savedCanvas(view: CanvasView, focused: boolean): NonNullable<Stu
 }
 
 /**
- * Ends the session and returns to the folder or Sessions dashboard. Study history stays with the original session.
+ * Ends the session and returns to the folder or study home. Study history stays with the original session.
  */
 export function EndSession({ sessionId, mode }: { sessionId: string; mode: "learn" | "research" }) {
   const router = useRouter();
@@ -180,7 +180,7 @@ export function EndSession({ sessionId, mode }: { sessionId: string; mode: "lear
     try {
       await remove(sessionId);
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
-      router.push(returnToFolder ?? sessionsHref(mode));
+      router.push(returnToFolder ?? studyHomeHref(mode));
     } catch {
       setState("error");
     }

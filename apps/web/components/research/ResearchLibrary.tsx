@@ -1,7 +1,7 @@
 import { ArrowUpRight, Play } from "lucide-react";
 import Link from "next/link";
 import type { ResearchLibraryData, ResearchLibraryPaper } from "../../lib/research/service";
-import { sessionsHref } from "../application/sessions";
+import { studyHomeHref } from "../application/sessions";
 import { FinishedSessions } from "../library/LibraryPage";
 import { ResearchPaperRow } from "./ResearchPaperRow";
 
@@ -48,7 +48,7 @@ export function ResearchLibrary({ data }: { data: ResearchLibraryData }) {
                   <strong>{session.title}</strong>
                   <small>Paper · Last read {lastRead.format(new Date(session.lastActiveAt))}</small>
                 </span>
-                <Link className="watch-later-continue" href={session.route ?? sessionsHref("research")}><Play aria-hidden="true" />Continue in Sessions</Link>
+                <Link className="watch-later-continue" href={session.route ?? studyHomeHref("research")}><Play aria-hidden="true" />Continue studying</Link>
               </li>
             ))}
           </ul>

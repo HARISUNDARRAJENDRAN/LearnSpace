@@ -244,6 +244,6 @@ test("watching the video to the end opens a hard check that must be passed to mo
   await openTool(page, "Check");
   await expect(results.getByText("You traced how the step size drives overshooting.")).toBeVisible();
   // A single lesson has no next video, so Continue ends the session.
-  await results.getByRole("button", { name: "Back to Sessions" }).click();
-  await page.waitForURL("**/app/sessions");
+  await results.getByRole("button", { name: "Back to Home" }).click();
+  await page.waitForURL("**/app");
 });

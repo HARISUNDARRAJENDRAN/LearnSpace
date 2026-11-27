@@ -1,5 +1,5 @@
 /* Video session: a whiteboard with the lesson as a card and a side panel for the card's content. */
-.video-session {
+.video-session, .folder-workspace {
   --session-ink: rgba(0, 0, 0, .88);
   --session-ink-soft: rgba(0, 0, 0, .72);
   --session-ink-muted: rgba(0, 0, 0, .48);
@@ -9,6 +9,8 @@
   --session-outer: #eeeded;
   --session-hover: rgba(0, 0, 0, .05);
   --session-blue: #2876dc;
+}
+.video-session {
   display: flex;
   height: 100dvh;
   overflow: hidden;

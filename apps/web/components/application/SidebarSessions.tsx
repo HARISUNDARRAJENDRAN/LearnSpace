@@ -4,12 +4,14 @@ import type { StudySessionSummary } from "@learnspace/shared";
 import { ArrowDown, ArrowUp, CalendarDays, ChevronRight, CircleStop, FileText, FolderClosed, Plus, MoreHorizontal, PencilLine, Video } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { type FormEvent, type MouseEvent as ReactMouseEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type FormEvent, type MouseEvent as ReactMouseEvent, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useCodingEligibility } from "../coding/useCodingEligibility";
 import { FolderEditor, FolderOptions, MoveSessionDialog } from "../folders/FolderDialogs";
 import { folderHref, useSessionFolders } from "../folders/state";
 import { sessionParts, TOOL_PARAM } from "../study/tools";
-import { sessionIdFromPath, sessionsHref, useSessions } from "./sessions";
+import { recentSessions, sessionIdFromPath, sessionMatchesMode, studyHomeHref, useSessions } from "./sessions";
+
+const EndedSessions = lazy(() => import("../folders/EndedSessions").then(({ EndedSessions }) => ({ default: EndedSessions })));
 
 /** Sessions shown before "Show more"; the open session is always listed. */
 const VISIBLE_SESSIONS = 6;
@@ -22,10 +24,6 @@ export function sessionPartsFor(session: StudySessionSummary, codingEligible = f
   if (type !== "video" && type !== "paper") return [];
   // A project guide is a paper's tool; code appears only where the server says an exercise fits.
   return sessionParts.filter((part) => (part.slug !== "code" || codingEligible) && (part.slug !== "guide" || type === "paper"));
-}
-
-export function sessionMatchesMode(session: StudySessionSummary, mode: "learn" | "research"): boolean {
-  return session.activeResource?.type === (mode === "research" ? "paper" : "video");
 }
 
 export function SessionPartLinks({ session, href, active, activeSlug, open, onPartClick, codingEligible: knownEligibility }: {
@@ -83,7 +81,7 @@ function useDisclosure() {
 
 type Menu = { sessionId: string; confirmEnd: boolean };
 
-export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research"; onClose: () => void }) {
+export function SidebarSessions({ mode, onClose, onExpand }: { mode: "learn" | "research"; onClose: () => void; onExpand?: () => void }) {
   const { sessions, rename, remove, swap } = useSessions();
   const { folders, folderBySession, pending, failed, refresh } = useSessionFolders();
   const pathname = usePathname();
@@ -92,6 +90,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   const activeId = sessionIdFromPath(pathname);
   const activeSlug = searchParams.get(TOOL_PARAM) ?? "canvas";
   const { groupOpen, toggleGroup, expanded, setOpen } = useDisclosure();
+  const [showEnded, setShowEnded] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -102,8 +101,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
   const menuAnchor = useRef<HTMLButtonElement | null>(null);
   const menuContent = useRef<HTMLDivElement | null>(null);
   const visible = sessions.filter((session) => !folderBySession.has(session.id) && sessionMatchesMode(session, mode));
-  const recent = sessions.filter((session) => session.route && sessionMatchesMode(session, mode))
-    .toSorted((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)).slice(0, 3);
+  const recent = recentSessions(sessions.filter((session) => sessionMatchesMode(session, mode))).slice(0, 3);
   const activeFolder = activeId ? folderBySession.get(activeId) : null;
   const selectedFolder = options;
   const listed = showAll ? visible : visible.filter((session, index) => index < VISIBLE_SESSIONS || session.id === activeId);
@@ -152,7 +150,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
     setMenu(null);
     void attempt(async () => {
       await remove(session.id);
-      if (session.id === activeId) router.push(activeFolder ? folderHref(activeFolder, mode) : sessionsHref(mode));
+      if (session.id === activeId) router.push(activeFolder ? folderHref(activeFolder, mode) : studyHomeHref(mode));
     }, "That session couldn't be ended. Try again.");
   }
 
@@ -169,7 +167,7 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
       const isActive = session.id === activeId;
       const parts = sessionPartsFor(session);
       const Icon = session.activeResource?.type === "paper" ? FileText : Video;
-      const href = session.route ?? sessionsHref(mode);
+      const href = session.route ?? studyHomeHref(mode);
       const menuOpen = menu?.sessionId === session.id;
       return (
         <li key={session.id} className={`application-session${isActive ? " is-active" : ""}`}>
@@ -217,18 +215,17 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
       );
   }
 
-  const overviewActive = pathname === "/app/sessions";
   return (
     <div className={`application-sessions${groupOpen ? " is-open" : ""}`}>
       <div className="application-nav-row">
-        <Link className={`application-nav-link${overviewActive || (activeId && !groupOpen) ? " is-active" : ""}`} data-nav-tone="sessions" href={sessionsHref(mode)} aria-current={overviewActive ? "page" : undefined} onClick={onClose}>
+        <button className={`application-nav-link application-sessions-trigger${activeId || pathname.startsWith("/app/sessions/folders/") ? " is-active" : ""}`} data-nav-tone="sessions" type="button" aria-label="Sessions" aria-expanded={groupOpen} aria-controls="application-session-tree" onClick={() => { onExpand?.(); if (!onExpand || !groupOpen) toggleGroup(); }}>
           <span className="application-nav-icon" aria-hidden="true"><CalendarDays /></span><span>Sessions</span>
-        </Link>
-        <button className="application-nav-disclosure" type="button" aria-expanded={groupOpen} aria-controls="application-session-tree" aria-label={groupOpen ? "Hide sessions" : "Show sessions"} onClick={toggleGroup}><ChevronRight aria-hidden="true" /></button>
+          <ChevronRight className="application-sessions-chevron" aria-hidden="true" />
+        </button>
       </div>
       {groupOpen ? <div id="application-session-tree" className="application-folder-tree">
         <section aria-label="Folders">
-          <div className="application-folder-heading"><span>Folders</span><button className="application-nav-disclosure" type="button" aria-label="New folder" disabled={pending} onClick={() => setNewFolder(true)}><Plus aria-hidden="true" /></button></div>
+          <div className="application-folder-heading"><span>Folders</span><button className="application-folder-add" type="button" aria-label="New folder" title="New folder" disabled={pending} onClick={() => setNewFolder(true)}><Plus aria-hidden="true" /></button></div>
           {failed ? <button type="button" className="application-session-more-list" onClick={() => void refresh()}>Retry loading folders</button> : null}
           <ul className="application-session-tree">
             {folders.map((folder) => {
@@ -250,13 +247,17 @@ export function SidebarSessions({ mode, onClose }: { mode: "learn" | "research";
         </details>
         {recent.length ? <details>
           <summary>Recent Sessions</summary>
-          <ul className="application-session-tree">{recent.map((session) => <li key={session.id}><Link className="application-session-link" href={session.route ?? sessionsHref(mode)} prefetch={false} onClick={onClose}><span>{session.title}</span></Link></li>)}</ul>
+          <ul className="application-session-tree">{recent.map((session) => <li key={session.id}><Link className="application-session-link" href={session.route ?? studyHomeHref(mode)} prefetch={false} onClick={onClose}><span>{session.title}</span></Link></li>)}</ul>
         </details> : null}
+        <details onToggle={(event) => setShowEnded(event.currentTarget.open)}>
+          <summary>Ended sessions</summary>
+          {showEnded ? <div className="application-ended-sessions"><Suspense fallback={<p role="status">Loading ended sessions…</p>}><EndedSessions mode={mode} /></Suspense></div> : null}
+        </details>
         {error ? <p className="application-session-error" role="alert">{error}</p> : null}
       </div> : null}
       {newFolder ? <FolderEditor onClose={() => setNewFolder(false)} onSaved={(id) => { onClose(); router.push(folderHref(id, mode)); }} /> : null}
       {moving ? <MoveSessionDialog session={moving} onClose={() => setMoving(null)} /> : null}
-      {selectedFolder ? <FolderOptions folder={selectedFolder} onClose={() => setOptions(null)} onDeleted={() => { if (pathname === folderHref(selectedFolder.id, mode).split("?")[0]) router.push(sessionsHref(mode)); }} /> : null}
+      {selectedFolder ? <FolderOptions folder={selectedFolder} onClose={() => setOptions(null)} onDeleted={() => { if (pathname === folderHref(selectedFolder.id, mode).split("?")[0]) router.push(studyHomeHref(mode)); }} /> : null}
     </div>
   );
 }

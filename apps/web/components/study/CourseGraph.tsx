@@ -5,14 +5,13 @@ import type { CSSProperties, ReactNode } from "react";
 export type CanvasRect = { x: number; y: number; width: number; height: number };
 
 type Lesson = StudySessionCourse["sections"][number]["lessons"][number];
-type PlacedLesson = { lesson: Lesson; number: number; x: number; y: number; row: number };
+type PlacedLesson<T = Lesson> = { lesson: T; number: number; x: number; y: number; row: number };
 /** A lesson node's size: the media (a video's player, a paper's page) and the caption under it. */
 export type CourseCard = { width: number; mediaHeight: number };
 type Frame = { id: string; title: string; hue: number; x: number; y: number; width: number; height: number };
 
 export const VIDEO_CARD: CourseCard = { width: 800, mediaHeight: 450 };
 const CAPTION_HEIGHT = 96;
-const COLUMNS = 3;
 const GAP_X = 140;
 const GAP_Y = 150;
 const FRAME_PADDING = 64;
@@ -24,24 +23,24 @@ const SECTION_HUES = [8, 212, 145, 280, 38];
  * Lays the course out as a board: each section is a tinted frame, and its lessons run in a snake,
  * left to right then right to left, so every lesson sits right beside the one it leads to.
  */
-export function layoutCourse(course: StudySessionCourse, card: CourseCard = VIDEO_CARD) {
+export function layoutCourse<T>(course: { sections: ReadonlyArray<{ id: string; title: string; lessons: readonly T[] }> }, card: CourseCard = VIDEO_CARD, columns = 3) {
   const LESSON_WIDTH = card.width;
   const LESSON_HEIGHT = card.mediaHeight + CAPTION_HEIGHT;
-  const lessons: PlacedLesson[] = [];
+  const lessons: PlacedLesson<T>[] = [];
   const frames: Frame[] = [];
   let top = 0;
   let number = 0;
   let row = 0;
   course.sections.forEach((section, sectionIndex) => {
-    const columns = Math.min(COLUMNS, section.lessons.length);
-    const rows = Math.ceil(section.lessons.length / COLUMNS);
-    const width = columns * LESSON_WIDTH + (columns - 1) * GAP_X + FRAME_PADDING * 2;
+    const sectionColumns = Math.min(columns, section.lessons.length);
+    const rows = Math.ceil(section.lessons.length / columns);
+    const width = sectionColumns * LESSON_WIDTH + (sectionColumns - 1) * GAP_X + FRAME_PADDING * 2;
     const height = rows * LESSON_HEIGHT + (rows - 1) * GAP_Y + FRAME_PADDING * 2;
     const frameTop = top + FRAME_TITLE_HEIGHT;
     frames.push({ id: section.id, title: section.title, hue: SECTION_HUES[sectionIndex % SECTION_HUES.length] ?? 212, x: -width / 2, y: frameTop, width, height });
     section.lessons.forEach((lesson, index) => {
-      const sectionRow = Math.floor(index / COLUMNS);
-      const step = index % COLUMNS;
+      const sectionRow = Math.floor(index / columns);
+      const step = index % columns;
       const column = sectionRow % 2 === 0 ? step : columns - 1 - step;
       number += 1;
       lessons.push({ lesson, number, row: row + sectionRow, x: -width / 2 + FRAME_PADDING + column * (LESSON_WIDTH + GAP_X), y: frameTop + FRAME_PADDING + sectionRow * (LESSON_HEIGHT + GAP_Y) });
@@ -87,7 +86,7 @@ function edgeState(from: Lesson, to: Lesson): StudyCourseLessonState {
 const stateLabel: Record<StudyCourseLessonState, string> = { completed: "Completed", current: "Now studying", locked: "Locked" };
 
 /** A paper not being read shows as its first page would read: title, authors and abstract. */
-function PaperPreview({ lesson }: { lesson: Lesson }) {
+export function PaperPreview({ lesson }: { lesson: Pick<Lesson, "title" | "byline" | "summary"> }) {
   return <div className="course-node-paper">
     <h4>{lesson.title}</h4>
     {lesson.byline ? <p className="course-node-byline">{lesson.byline}</p> : null}

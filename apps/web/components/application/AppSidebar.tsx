@@ -59,9 +59,9 @@ function isResearchPath(pathname: string): boolean {
   return pathname === "/app/research" || pathname.startsWith("/app/research/") || pathname.startsWith("/app/study/paper/");
 }
 
-/** The mode a URL belongs to: Research pages and paper sessions, and the Research views of Sessions and Library. */
+/** The mode a URL belongs to: Research pages and paper sessions, and Research folders and the papers view of Library. */
 export function modeFromUrl(pathname: string, searchParams: URLSearchParams): NavigationMode {
-  if ((pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) && searchParams.get("mode") === "research") return "research";
+  if (pathname.startsWith("/app/sessions/folders/") && searchParams.get("mode") === "research") return "research";
   if (pathname === "/app/library" && searchParams.get("view") === "papers") return "research";
   return isResearchPath(pathname) ? "research" : "learn";
 }
@@ -87,7 +87,7 @@ export function AppSidebar({
   useEffect(() => {
     if (isResearchPath(pathname)) setMode("research");
     else if (pathname === "/app" || pathname.startsWith("/app/discover") || pathname.startsWith("/app/study/")) setMode("learn");
-    else if (pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) setMode(modeFromUrl(pathname, searchParams));
+    else if (pathname.startsWith("/app/sessions/folders/")) setMode(modeFromUrl(pathname, searchParams));
   }, [pathname, searchParams]);
 
   useEffect(() => {
@@ -149,7 +149,7 @@ export function AppSidebar({
   function selectMode(nextMode: NavigationMode) {
     setMode(nextMode);
     setModeMenuOpen(false);
-    if (pathname === "/app/sessions" || pathname.startsWith("/app/sessions/folders/")) {
+    if (pathname.startsWith("/app/sessions/folders/")) {
       const params = new URLSearchParams(searchParams);
       if (nextMode === "research") params.set("mode", "research");
       else params.delete("mode");
@@ -219,7 +219,7 @@ export function AppSidebar({
           </div>
           <div className="application-nav-section">
             <p className="application-nav-label">WORKSPACE</p>
-            <SidebarSessions mode={mode} onClose={onClose} />
+            <SidebarSessions mode={mode} onClose={onClose} {...(isCollapsed ? { onExpand: onToggleCollapsed } : {})} />
             {sharedNavigation.map(({ label, href: defaultHref, icon: Icon, tone }) => {
               const href = label === "Library" && mode === "research" ? "/app/library?view=papers" : defaultHref;
               const active = label === "Library"

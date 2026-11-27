@@ -25,6 +25,10 @@ test("folders open a shared canvas for papers and videos across modes and browse
   const context = page.context();
   await context.addCookies([{ name: "learnspace_session", value: token, url: baseURL, httpOnly: true, sameSite: "Lax" }]);
   await page.route("https://www.youtube.com/iframe_api", (route) => route.abort());
+  await page.route("https://i.ytimg.com/vi/**", (route) => route.fulfill({
+    contentType: "image/svg+xml",
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="270"><rect width="480" height="270" fill="#162530"/><path d="m206 90 0 90 72-45Z" fill="#fff"/></svg>',
+  }));
   try {
     await db`INSERT INTO identity.users (id, email, display_name, email_verified, status) VALUES (${userId}, ${`folders-e2e-${userId}@example.test`}, 'Researcher', true, 'active')`;
     await db`INSERT INTO identity.user_settings (user_id, onboarding_completed_at, first_application_visit_at) VALUES (${userId}, now(), now())`;
@@ -55,13 +59,14 @@ test("folders open a shared canvas for papers and videos across modes and browse
       VALUES (${video.sessionId}, ${userId}, ${video.resourceId}, 'you', 'Compare rollout error to the paper.')`;
     await db`UPDATE study.study_sessions SET workspace = '{"code":{"language":"python","code":"print(42)"}}' WHERE id = ${video.sessionId}`;
 
-    await page.goto("/app/sessions?mode=research");
-    const sessions = page.locator(".session-folders-page");
+    const retired = await page.goto("/app/sessions");
+    expect(retired?.status()).toBe(404);
+    await page.goto("/app/research");
     const main = page.locator(".folder-workspace");
-    await expect(sessions.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
-    await expect(sessions.getByRole("link", { name: "Continue last session" })).toBeVisible();
-    await expect(sessions.getByRole("link", { name: fixtures[0]!.title }).first()).toBeVisible();
-    const create = page.getByRole("complementary", { name: "Application navigation" }).getByRole("button", { name: "New folder", exact: true });
+    const navigation = page.getByRole("complementary", { name: "Application navigation" });
+    await expect(navigation.getByRole("link", { name: fixtures[0]!.title }).first()).toBeVisible();
+    const create = navigation.getByRole("region", { name: "Folders" }).getByRole("button", { name: "New folder", exact: true });
+    await expect(create).toBeVisible();
     await create.click();
     await expect(page.getByRole("textbox", { name: "Folder name" })).toBeFocused();
     await page.keyboard.press("Escape");
@@ -110,8 +115,15 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await picker.getByRole("button", { name: `Add ${video.title}`, exact: true }).first().click();
     await expect(picker.getByRole("button", { name: `${video.title} added` }).first()).toBeDisabled();
     await picker.getByRole("button", { name: "Done" }).click();
-    const card = (title: string) => board.getByRole("button", { name: new RegExp(title), exact: false }).filter({ hasText: title });
+    const card = (title: string) => board.getByRole("button", { name: title, exact: true });
     for (const fixture of fixtures) await expect(card(fixture.title)).toBeVisible();
+    await expect(board.locator(".course-node-paper")).toHaveCount(2);
+    await expect(board.locator(".course-node-media.is-video img[src*='ytimg.com']")).toBeVisible();
+    const zoom = board.getByRole("toolbar", { name: "Zoom" });
+    const initialZoom = await zoom.getByRole("button", { name: "Reset zoom to 100%" }).textContent();
+    await zoom.getByRole("button", { name: "Zoom in" }).click();
+    await expect(zoom.getByRole("button", { name: "Reset zoom to 100%" })).not.toHaveText(initialZoom!);
+    await zoom.getByRole("button", { name: "Zoom to fit" }).click();
     await expect(main.getByText("Ask about your folder")).toBeVisible();
     await main.getByRole("button", { name: "Notes", exact: true }).click();
     await expect(main.getByText(`Notes from ${fixtures[0]!.title}`)).toBeVisible();
@@ -169,7 +181,7 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await main.getByRole("button", { name: "Folder options", exact: true }).click();
     await page.getByRole("button", { name: "Delete folder…", exact: true }).click();
     await page.getByRole("button", { name: "Delete folder", exact: true }).click();
-    await expect(page).toHaveURL(/\/app\/sessions$/);
+    await expect(page).toHaveURL(/\/app$/);
     expect(await db`SELECT count(*)::int AS count FROM study.study_sessions WHERE user_id = ${userId} AND metadata->>'folderWorkspace' IS DISTINCT FROM 'true'`).toEqual([{ count: 3 }]);
     expect(await db`SELECT count(*)::int AS count FROM study.video_notes WHERE user_id = ${userId}`).toEqual([{ count: 3 }]);
     expect(errors).toEqual([]);

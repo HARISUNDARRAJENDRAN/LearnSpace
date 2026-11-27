@@ -289,10 +289,7 @@ test("completed learner reaches Home and can use the app navigation", async ({ p
   await expect(page.getByRole("main", { name: "Home" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Study plan" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Recent study", exact: true })).toBeVisible();
-  // With no session in progress, the dashboard offers a way to start a new one.
-  await page.goto("/app/sessions");
-  await expect(page.getByRole("heading", { name: "Unfiled sessions" })).toBeVisible();
-  await page.goto("/app");
+  await expect(page.getByText("No unfiled sessions", { exact: true })).toBeVisible();
   const browserErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

@@ -128,7 +128,7 @@ export function MasteryResults({ check, passScore, next, moving, onGo, onReview,
       </ScoreDial>
       {folder && passed ? <button className="session-link-button" type="button" onClick={onRetake}>Take another check</button> : null}
       {passed ? <button className="mastery-cta" type="button" disabled={moving} onClick={onContinue}>
-        {moving ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}{folder ? "Back to canvas" : finished ? "Back to Sessions" : "Continue learning"}
+        {moving ? <LoaderCircle className="chat-spin" aria-hidden="true" /> : null}{folder ? "Back to canvas" : finished ? "Back to Home" : "Continue learning"}
       </button> : <button className="mastery-cta" type="button" onClick={onRetake}><RotateCcw aria-hidden="true" />New set of questions</button>}
       <p className="mastery-verdict">
         {folder ? `Folder check ${passed ? "passed" : "complete"}. ${percent(passScore)} to pass.` : passed ? finished ? next.course ? `${unit.whole} complete. Every ${unit.one} is mastered.` : `${unit.one[0]!.toUpperCase()}${unit.one.slice(1)} mastered.` : `${bandLine} The next ${unit.one} is unlocked.` : `${bandLine} You need ${percent(passScore)} to unlock the next ${unit.one}.`}

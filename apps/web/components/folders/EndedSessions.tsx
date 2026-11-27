@@ -3,7 +3,7 @@
 import type { StudySessionSummary } from "@learnspace/shared";
 import { FileText, Video } from "lucide-react";
 import { useEffect, useState } from "react";
-import { sessionMatchesMode } from "../application/SidebarSessions";
+import { sessionMatchesMode } from "../application/sessions";
 import { SessionFolder } from "../library/LibraryPage";
 import { MoveSessionDialog } from "./FolderDialogs";
 import { folderRequest, useSessionFolders } from "./state";

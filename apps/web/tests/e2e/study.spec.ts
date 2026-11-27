@@ -215,8 +215,8 @@ test("E2E player error — unavailable embeds keep the StudySession usable", asy
   await page.goto(sessionRoute("video", videoSessionId));
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
   await expect(page.getByRole("link", { name: "Open on YouTube" })).toBeVisible();
-  await page.goto("/app/sessions");
-  await page.getByRole("link", { name: "Continue last session" }).click();
+  await page.goto("/app");
+  await page.getByRole("complementary", { name: "Application navigation" }).locator(`a[href="${sessionRoute("video", videoSessionId)}"]`).first().click();
   await expect(page.getByText("This video can't be played inside LearnSpace.")).toBeVisible();
 });
 
@@ -249,7 +249,7 @@ test("E2E B — Research opens a paper session and keeps the save and the readin
   await page.goto("/app/library?view=papers");
   const saved = page.locator("article.research-paper-row").filter({ hasText: "A deterministic Study paper" });
   await expect(saved.getByText("Page 2 · 40% read")).toBeVisible();
-  await expect(page.locator(".watch-later-card").filter({ hasText: "A deterministic Study paper" }).getByRole("link", { name: "Continue in Sessions" })).toBeVisible();
+  await expect(page.locator(".watch-later-card").filter({ hasText: "A deterministic Study paper" }).getByRole("link", { name: "Continue studying" })).toBeVisible();
 });
 
 test("E2E D — A mixed collection starts beside the sessions already in progress", async ({ page }) => {

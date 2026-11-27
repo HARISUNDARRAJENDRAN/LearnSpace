@@ -17,7 +17,7 @@ const viewOptions = [
 function contextLabel(pathname: string): string {
   if (pathname === "/app") return "Home";
   if (pathname.startsWith("/app/discover")) return "Discover";
-  if (pathname.startsWith("/app/sessions")) return "Sessions";
+  if (pathname.startsWith("/app/sessions/folders/")) return "Learning Canvas";
   if (pathname.startsWith("/app/library")) return "Library";
   if (pathname.startsWith("/app/research/discover")) return "Discover";
   if (pathname.startsWith("/app/research/authors")) return "Authors";
@@ -53,7 +53,7 @@ export function AppHeader({ onMenu, viewMode, onViewModeChange, search }: AppHea
   };
   const isHome = pathname === "/app";
   const isDiscover = pathname.startsWith("/app/discover");
-  const hasShellHeading = isHome || pathname === "/app/sessions" || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings" || pathname === "/app/profile";
+  const hasShellHeading = isHome || pathname === "/app/library" || pathname === "/app/research" || pathname === "/app/second-brain" || pathname === "/app/settings" || pathname === "/app/profile";
   const showViewControls = pathname === "/app/library";
 
   return (

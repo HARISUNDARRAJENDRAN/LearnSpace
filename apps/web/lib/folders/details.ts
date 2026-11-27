@@ -1,4 +1,5 @@
 import { type Transaction, withUserTransaction } from "@learnspace/db";
+import { youtubeIdFromUrl } from "@learnspace/shared";
 import { studySessions } from "@learnspace/db/schema";
 import { sql } from "drizzle-orm";
 import { ownedFolder } from "./service";
@@ -11,7 +12,8 @@ export type FolderMaterial = {
   parser: string | null;
   state: "ready" | "preparing" | "unavailable";
   durationMs: number | null;
-  thumbnailUrl: string | null;
+  youtubeId: string | null;
+  abstract: string | null;
   sessionId: string | null;
   active: boolean;
   saved: boolean;
@@ -20,7 +22,7 @@ export type FolderMaterial = {
 
 /** The ordered union of saved material and material from sessions filed in the folder. */
 export function folderMaterials(tx: Transaction, userId: string, folderId: string) {
-  return tx.execute<FolderMaterial>(sql`
+  return tx.execute<FolderMaterial & { canonicalUrl: string | null }>(sql`
     WITH members AS (
       SELECT sr.resource_id, m.study_session_id, s.active_resource_id = sr.resource_id AS active,
         m.position AS session_position, sr.position AS resource_position
@@ -36,7 +38,7 @@ export function folderMaterials(tx: Transaction, userId: string, folderId: strin
     )
     SELECT r.id, r.title, CASE WHEN r.type = 'video' THEN 'video' ELSE 'paper' END AS type,
       CASE WHEN v.processing_status = 'ready' THEN v.id END AS "versionId",
-      v.parser_name AS parser, vd.duration_ms AS "durationMs", CASE WHEN vd.youtube_id ~ '^[A-Za-z0-9_-]{11}$' THEN 'https://i.ytimg.com/vi/' || vd.youtube_id || '/hqdefault.jpg' END AS "thumbnailUrl",
+      v.parser_name AS parser, vd.duration_ms AS "durationMs", vd.youtube_id AS "youtubeId", r.canonical_url AS "canonicalUrl", pd.abstract,
       CASE WHEN v.processing_status = 'ready' THEN 'ready'
         WHEN r.status IN ('failed', 'archived') OR tr.status IN ('unavailable', 'failed') THEN 'unavailable'
         ELSE 'preparing' END AS state,
@@ -46,6 +48,7 @@ export function folderMaterials(tx: Transaction, userId: string, folderId: strin
     JOIN catalog.resources r ON r.id = coalesce(links.resource_id, saved.resource_id)
     LEFT JOIN catalog.resource_versions v ON v.id = r.current_version_id
     LEFT JOIN catalog.video_details vd ON vd.resource_id = r.id
+    LEFT JOIN catalog.paper_details pd ON pd.resource_id = r.id
     LEFT JOIN ops.transcript_requests tr ON tr.resource_id = r.id
     LEFT JOIN study.user_resource_progress p ON p.resource_id = r.id AND p.user_id = ${userId}
     WHERE r.deleted_at IS NULL AND r.type IN ('paper', 'pdf', 'video')
@@ -62,7 +65,7 @@ export async function folderStudySession(tx: Transaction, userId: string, folder
 export function getSessionFolderDetails(userId: string, folderId: string) {
   return withUserTransaction(userId, async (tx) => {
     const [folder, materials] = await Promise.all([ownedFolder(tx, userId, folderId), folderMaterials(tx, userId, folderId)]);
-    return { id: folder.id, title: folder.title, description: folder.description, materials: Array.from(materials) };
+    return { id: folder.id, title: folder.title, description: folder.description, materials: materials.map(({ canonicalUrl, ...item }) => ({ ...item, youtubeId: item.type === "video" ? item.youtubeId ?? youtubeIdFromUrl(canonicalUrl ?? "") : null })) };
   });
 }
 

@@ -1,13 +1,15 @@
 "use client";
 
 import type { SourcePreview, StudyAnchor } from "@learnspace/shared";
-import { FileText, MoreHorizontal, Plus, Video } from "lucide-react";
+import { MoreHorizontal, Play, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
-import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { FolderMaterial, SessionFolderDetails } from "../../lib/folders/details";
-import { sessionsHref, useSessions } from "../application/sessions";
+import { studyHomeHref, useSessions } from "../application/sessions";
+import { YouTubeThumbnail } from "../home/YouTubeThumbnail";
+import { useCanvas, ZoomBar } from "../study/canvas";
+import { layoutCourse, PaperPreview, VIDEO_CARD } from "../study/CourseGraph";
 import { SourceDiscoveryModal } from "../source-discovery/SourceDiscoveryModal";
 import { postStudyAction } from "../study/session-api";
 import { useTranscriptCapture } from "../study/useTranscriptCapture";
@@ -25,6 +27,62 @@ const noAction = () => undefined;
 function LoadTranscript({ id }: { id: string }) {
   useTranscriptCapture(id, true);
   return null;
+}
+
+function FolderBoard({ materials, disabled, onOpen, onOptions }: {
+  materials: FolderMaterial[];
+  disabled: boolean;
+  onOpen: (item: FolderMaterial) => void;
+  onOptions: (item: FolderMaterial) => void;
+}) {
+  const [columns, setColumns] = useState(3);
+  useEffect(() => {
+    const mobile = window.matchMedia("(max-width: 740px)");
+    const update = () => setColumns(mobile.matches ? 2 : 3);
+    update();
+    mobile.addEventListener("change", update);
+    return () => mobile.removeEventListener("change", update);
+  }, []);
+  const { lessons, frames, bounds } = layoutCourse({
+    sections: materials.length ? [{ id: "resources", title: "Resources", lessons: materials }] : [],
+  }, VIDEO_CARD, columns);
+  const canvas = useCanvas(noAction, noAction, bounds, bounds, 36, null, noAction);
+  const { frameHome, placed, view } = canvas;
+  const hasMaterials = materials.length > 0;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: frameHome reads updated bounds from the shared canvas.
+  useEffect(() => {
+    if (hasMaterials && !placed()) frameHome();
+  }, [bounds.height, bounds.width, hasMaterials, frameHome, placed]);
+  const dotSpacing = Math.max(8, 24 * view.zoom);
+  return <section className="folder-workspace-board" aria-label="Learning Canvas">
+    <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers}
+      style={{ backgroundSize: `${dotSpacing}px ${dotSpacing}px`, backgroundPosition: `calc(50% + ${view.x}px) calc(50% + ${view.y}px)` }}>
+      {materials.length === 0 ? <p className="folder-canvas-empty">Add a YouTube video or research paper to start studying.</p> : <>
+        <div className="session-canvas-layer" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})` }}>
+          {frames.map((frame) => <div key={frame.id} className="course-frame folder-resource-frame" style={{ left: frame.x, top: frame.y, width: frame.width, height: frame.height }}>
+            <span className="course-frame-title">{frame.title}</span>
+          </div>)}
+          <ol className="course-lessons" aria-label="Resources">
+            {lessons.map(({ lesson: item, x, y }) => <li key={item.id} className="course-node folder-resource-node" style={{ left: x, top: y, width: VIDEO_CARD.width }}>
+              {item.type === "video" && item.state === "preparing" ? <LoadTranscript id={item.id} /> : null}
+              <div className={`course-node-media is-${item.type}`} style={{ height: VIDEO_CARD.mediaHeight }} aria-hidden="true">
+                {item.type === "paper" ? <PaperPreview lesson={{ title: item.title, byline: null, summary: item.abstract }} />
+                  : item.youtubeId ? <YouTubeThumbnail src={`https://i.ytimg.com/vi/${item.youtubeId}/hqdefault.jpg`} width={800} height={450} alt="" draggable={false} />
+                  : <div className="folder-resource-video-empty"><Play /></div>}
+              </div>
+              <div className="course-node-copy">
+                <span className="course-node-meta">{item.type === "paper" ? "Research paper" : "YouTube video"}{item.progress > 0 ? ` · ${Math.round(item.progress)}%` : ""}</span>
+                <h3 title={item.title}>{item.title}</h3>
+              </div>
+              <button className="session-card-select" type="button" aria-label={item.title} disabled={disabled} onClick={() => onOpen(item)} />
+              <button className="folder-resource-options" type="button" aria-label={`Options for ${item.title}`} onClick={() => onOptions(item)}><MoreHorizontal aria-hidden="true" /></button>
+            </li>)}
+          </ol>
+        </div>
+        <ZoomBar canvas={canvas} />
+      </>}
+    </div>
+  </section>;
 }
 
 export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "learn" | "research" }) {
@@ -133,26 +191,8 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
         {tools.map((item) => <button key={item.id} type="button" aria-pressed={tool === item.id} onClick={() => selectTool(item.id)}>{item.label}</button>)}
       </nav>
       <div className="folder-workspace-body">
-        <section className="folder-canvas-board" aria-label="Learning Canvas">
-          {materials.length === 0 ? <p className="folder-canvas-empty">Add a YouTube video or research paper to start studying.</p> : <ul className="folder-canvas-grid">
-            {materials.map((item) => {
-              const Icon = item.type === "video" ? Video : FileText;
-              return <li key={item.id} className="folder-canvas-card">
-                {item.type === "video" && item.state === "preparing" ? <LoadTranscript id={item.id} /> : null}
-                <button className="folder-canvas-material" type="button" disabled={opening || pending} onClick={() => void open(item)}>
-                  <span className={`folder-canvas-preview is-${item.type}`}>
-                    {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt="" width={480} height={270} unoptimized /> : <Icon aria-hidden="true" />}
-                  </span>
-                  <span className="folder-canvas-caption">
-                    <small>{item.type === "video" ? "YouTube video" : "Research paper"}{item.progress > 0 ? ` · ${Math.round(item.progress)}%` : ""}</small>
-                    <strong>{item.title}</strong>
-                  </span>
-                </button>
-                <button className="session-folder-icon folder-canvas-options" type="button" aria-label={`Options for ${item.title}`} onClick={() => { setError(""); setItemOptions(item); }}><MoreHorizontal aria-hidden="true" /></button>
-              </li>;
-            })}
-          </ul>}
-        </section>
+        <FolderBoard materials={materials} disabled={opening || pending} onOpen={(item) => void open(item)}
+          onOptions={(item) => { setError(""); setItemOptions(item); }} />
         {tool || chatOpened ? <aside className="folder-workspace-panel" aria-label={tools.find((item) => item.id === tool)?.label} hidden={!tool}>
           {tool === "chat" || chatOpened ? <div className="folder-tool-slot" hidden={tool !== "chat"}><SessionChat sessionId={folderId} folder resource={{ type: "paper", title: folder.title }} place={place} seed={seed} code={null}
             onGo={noAction} onCollapse={collapse} preparing={preparing} readySources={readySources} onSource={(id, anchor) => {
@@ -173,7 +213,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
         </aside> : null}
       </div>
     </> : !loadError ? <p role="status">Opening folder…</p> : null}
-    {options && folder ? <FolderOptions folder={folder} onClose={() => setOptions(false)} onDeleted={() => router.push(sessionsHref(mode))} /> : null}
+    {options && folder ? <FolderOptions folder={folder} onClose={() => setOptions(false)} onDeleted={() => router.push(studyHomeHref(mode))} /> : null}
     {add === "discovery" ? <SourceDiscoveryModal mode={mode} isOpen onClose={() => setAdd(null)} triggerRef={addTrigger}
       onBrowseLibrary={() => setAdd("library")} onSaveSource={async ({ resourceId, sourceUrl }, sourceMode) => {
         if (!resourceId && sourceUrl) {

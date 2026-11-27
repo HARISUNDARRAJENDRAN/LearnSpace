@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import postgres from "postgres";
-import { lastSeenRoute } from "../components/application/sessions";
+import { recentSessions } from "../components/application/sessions";
 import { AuthError } from "../lib/auth/errors";
 
 const databaseAvailable = Boolean(process.env.DATABASE_AUTH_URL && process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_URL);
@@ -132,7 +132,7 @@ test("StudySession starts provisionally, switches resources in place, and preser
     assert.deepEqual((await listStudySessions(owner.id)).map((session) => [session.id, session.title]), [[studySessionId, "Study video without an ingested version"], [second.sessionId, "Concurrency"]]);
     await assert.rejects(reorderStudySessions(foreign.id, { sessionIds: [second.sessionId] }), (error: unknown) => error instanceof AuthError && error.status === 404);
     // Continue last session uses the activity time recorded by the study route.
-    const lastRoute = async (type: "paper" | "video") => lastSeenRoute((await listStudySessions(owner.id)).filter((session) => session.activeResource?.type === type));
+    const lastRoute = async (type: "paper" | "video") => recentSessions((await listStudySessions(owner.id)).filter((session) => session.activeResource?.type === type))[0]?.route ?? null;
     assert.equal(await lastRoute("video"), second.route);
     // Research's Sessions resumes papers only, never a video.
     assert.equal(await lastRoute("paper"), null);
