@@ -368,7 +368,6 @@ test("StudySession starts provisionally, switches resources in place, and preser
     }
     await migrator`DELETE FROM activity.activity_events WHERE user_id IN (${owner.id}, ${foreign.id}) OR resource_id IN (${videoId}, ${concurrentVideoId}, ${paperId}, ${lowQualityPaperId}, ${highQualityPaperId}, ${privateId})`;
     await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN (${owner.id}, ${foreign.id}))`;
-    await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN (${owner.id}, ${foreign.id}))`;
     await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id IN (${owner.id}, ${foreign.id})`;
     await migrator`DELETE FROM discovery.user_concept_affinity WHERE user_id IN (${owner.id}, ${foreign.id})`;
     await migrator`DELETE FROM catalog.collection_enrollments WHERE collection_id IN (${ownCollectionId}, ${foreignCollectionId}, ${privateForeignCollectionId}, ${curatedCollectionId}, ${generatedCollectionId})`;

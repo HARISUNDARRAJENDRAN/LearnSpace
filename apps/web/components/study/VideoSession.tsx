@@ -176,7 +176,7 @@ function useYouTubeLesson(sessionId: string, resource: StudySessionResource, lin
       const player = playerRef.current;
       if (player) setCurrentMs(Math.max(0, Math.round(player.getCurrentTime() * 1_000)));
     }, 1_000);
-    const checkpoint = window.setInterval(() => { void syncRef.current("checkpoint"); }, 15_000);
+    const checkpoint = window.setInterval(() => { void syncRef.current("checkpoint"); }, 60_000);
     return () => { window.clearInterval(timer); window.clearInterval(checkpoint); };
   }, [playing, playerRef]);
 

@@ -47,7 +47,7 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
       await db`INSERT INTO catalog.resources (id,type,provider,external_id,title,canonical_url,visibility,status,quality_score,metadata) VALUES (${id},'video','youtube',${youtubeId},${`Semantic fixture ${i}`},${`https://youtube.com/watch?v=${youtubeId}`},'public','ready',0.96,${db.json({ test: true, estimatedLevel: i % 3 === 0 ? "intermediate" : "beginner", learningFormat: "clear_explanations" })})`;
       await db`INSERT INTO catalog.video_details (resource_id,youtube_id,channel_title,duration_ms) VALUES (${id},${youtubeId},${`Channel ${i % 12}`},600000)`;
       await db`INSERT INTO catalog.resource_concepts (resource_id,concept_id,source,relevance,is_primary) VALUES (${id},${i < 24 ? python : ai},'semantic-test',1,true)`;
-      if (i !== 47) await db`INSERT INTO discovery.resource_embeddings (resource_id,model,source_hash,embedding) VALUES (${id},${config.embeddingModel},'test',${JSON.stringify(axis(i < 24 ? 0 : 1))}::vector)`;
+      if (i !== 47) await db`INSERT INTO discovery.resource_embeddings (resource_id,model,source_hash,embedding) VALUES (${id},${config.embeddingModel},'test',${JSON.stringify(axis(i < 24 ? 0 : 1))}::halfvec)`;
     }
     // Invalid provider output is retryable and does not poison the database transaction.
     const unrelatedDelete = await worker`DELETE FROM catalog.resource_concepts WHERE resource_id = ${resources[0]!} AND source = 'semantic-test' RETURNING resource_id`;
@@ -57,8 +57,8 @@ test("semantic feed: real database, Redis, projection, provenance, bounded retri
     await db`UPDATE discovery.resource_embeddings SET retry_at = now() WHERE resource_id = ${last}`;
     assert.deepEqual(await backfillResourceEmbeddings(worker, provider, [last]), { embedded: 1, failed: 0 });
     assert.deepEqual(await backfillResourceEmbeddings(worker, provider, [last]), { embedded: 0, failed: 0 });
-    await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = '[1,2]'::vector WHERE resource_id = ${last}`, /dimensions/);
-    await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = ${JSON.stringify(Array(config.embeddingDimensions).fill(0))}::vector WHERE resource_id = ${last}`, /nonzero/);
+    await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = '[1,2]'::halfvec WHERE resource_id = ${last}`, /dimensions/);
+    await assert.rejects(() => db`UPDATE discovery.resource_embeddings SET embedding = ${JSON.stringify(Array(config.embeddingDimensions).fill(0))}::halfvec WHERE resource_id = ${last}`, /nonzero/);
     // A slow external provider neither reserves the only connection nor locks
     // resources, and a second worker cannot claim the same batch.
     await db`DELETE FROM discovery.resource_embeddings WHERE resource_id = ${last}`;

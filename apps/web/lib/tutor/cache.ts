@@ -29,13 +29,13 @@ export function cacheEligible(input: { firstTurn: boolean; replying: boolean; pu
 
 export async function findCachedAnswer(tx: Transaction, versionId: string, scopeKey: string, question: string, vector: number[] | null): Promise<CachedAnswer | null> {
   const sha = createHash("sha256").update(normalizeQuestion(question)).digest("hex");
-  const similarity = vector ? sql`1 - (question_embedding <=> ${JSON.stringify(vector)}::vector)` : sql`NULL::float8`;
+  const similarity = vector ? sql`1 - (question_embedding <=> ${JSON.stringify(vector)}::halfvec)` : sql`NULL::float8`;
   const [row] = await tx.execute<{ answer: CachedAnswer; chunk_ids: string[]; exact: boolean; similarity: number | null }>(sql`
     SELECT answer, chunk_ids, question_sha256 = ${sha} AS exact, ${similarity} AS similarity
     FROM retrieval.answer_cache
     WHERE resource_version_id = ${versionId} AND contract_version = ${CONTRACT} AND scope_key = ${scopeKey}
       AND (question_sha256 = ${sha} ${vector ? sql`OR question_embedding IS NOT NULL` : sql``})
-    ORDER BY (question_sha256 = ${sha}) DESC ${vector ? sql`, question_embedding <=> ${JSON.stringify(vector)}::vector` : sql``}
+    ORDER BY (question_sha256 = ${sha}) DESC ${vector ? sql`, question_embedding <=> ${JSON.stringify(vector)}::halfvec` : sql``}
     LIMIT 1`);
   if (!row) return null;
   if (!row.exact && Number(row.similarity ?? 0) < SEMANTIC_MATCH) return null;

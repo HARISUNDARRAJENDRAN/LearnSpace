@@ -230,7 +230,6 @@ test(
         await db`DELETE FROM ops.idempotency_records WHERE user_id = ANY(${userIds}::uuid[])`;
         await db`DELETE FROM activity.activity_events WHERE user_id = ANY(${userIds}::uuid[])`;
         await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ANY(${userIds}::uuid[]))`;
-        await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ANY(${userIds}::uuid[]))`;
         await db`DELETE FROM study.user_resource_progress WHERE user_id = ANY(${userIds}::uuid[])`;
         await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ANY(${userIds}::uuid[]))`;
         await db`DELETE FROM study.study_sessions WHERE user_id = ANY(${userIds}::uuid[])`;

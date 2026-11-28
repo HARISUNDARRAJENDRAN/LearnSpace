@@ -40,8 +40,10 @@ export const resources = catalogSchema.table(
     index("resources_owner_updated_idx").on(table.ownerUserId, table.updatedAt.desc()),
     index("resources_type_status_quality_idx").on(table.type, table.status, table.qualityScore.desc()),
     index("resources_visibility_status_idx").on(table.visibility, table.status),
+    index("resources_public_ready_updated_idx")
+      .on(table.type, table.updatedAt, table.id)
+      .where(sql`${table.ownerUserId} IS NULL AND ${table.status} = 'ready' AND ${table.deletedAt} IS NULL`),
     index("resources_title_trgm_idx").using("gin", sql`${table.title} gin_trgm_ops`),
-    index("resources_search_tsv_idx").using("gin", table.searchTsv),
     check(
       "resources_quality_score_chk",
       sql`${table.qualityScore} IS NULL OR (${table.qualityScore} >= 0 AND ${table.qualityScore} <= 1)`,
@@ -82,26 +84,5 @@ export const resourceVersions = catalogSchema.table(
     uniqueIndex("resource_versions_resource_source_hash_uq").on(table.resourceId, table.sourceSha256),
     unique("resource_versions_resource_id_id_uq").on(table.resourceId, table.id),
     check("resource_versions_version_no_chk", sql`${table.versionNo} > 0`),
-  ],
-);
-
-export const resourceAssets = catalogSchema.table(
-  "resource_assets",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    resourceVersionId: uuid("resource_version_id").notNull().references(() => resourceVersions.id, { onDelete: "restrict" }),
-    assetType: text("asset_type").notNull(),
-    ordinal: integer("ordinal").notNull(),
-    objectKey: text("object_key").notNull(),
-    sha256: char("sha256", { length: 64 }).notNull(),
-    mimeType: text("mime_type").notNull(),
-    byteSize: bigint("byte_size", { mode: "number" }),
-    anchor: jsonb("anchor").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    uniqueIndex("resource_assets_version_type_ordinal_uq").on(table.resourceVersionId, table.assetType, table.ordinal),
-    uniqueIndex("resource_assets_object_key_uq").on(table.objectKey),
   ],
 );

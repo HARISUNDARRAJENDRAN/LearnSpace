@@ -1,5 +1,6 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { resources, scheduleItems, studySessions, userResourceProgress, videoDetails } from "@learnspace/db/schema";
+import { cacheDelete, homeDashboardCacheKey } from "@learnspace/shared/recommendation-cache";
 import { and, asc, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { AuthError } from "../auth/errors";
@@ -177,7 +178,7 @@ export async function createPlanItem(userId: string, input: PlanItemInput): Prom
   const value = planItemInputSchema.parse(input);
   // Free-text kinds may need a model call, so they are settled before the transaction opens.
   const freeKind = value.resourceId ? null : value.kind ?? await inferPlanKind(value.title ?? "", value.description);
-  return withUserTransaction(userId, async (tx) => {
+  const created = await withUserTransaction(userId, async (tx) => {
     const material = value.resourceId ? await loadMaterial(tx, userId, value.resourceId) : null;
     if (value.studySessionId) {
       const [session] = await tx.select({ id: studySessions.id }).from(studySessions).where(and(eq(studySessions.id, value.studySessionId), eq(studySessions.userId, userId)));
@@ -197,6 +198,8 @@ export async function createPlanItem(userId: string, input: PlanItemInput): Prom
     }).returning({ id: scheduleItems.id });
     return loadItem(tx, userId, row!.id);
   });
+  await cacheDelete(homeDashboardCacheKey(userId));
+  return created;
 }
 
 export async function updatePlanItem(userId: string, itemId: string, patch: PlanItemPatch): Promise<PlanItem> {
@@ -209,7 +212,7 @@ export async function updatePlanItem(userId: string, itemId: string, patch: Plan
   const value = linked && !linked.resourceId
     ? { ...parsed, kind: await inferPlanKind(parsed.title ?? linked.title, parsed.description === undefined ? linked.description : parsed.description) }
     : parsed;
-  return withUserTransaction(userId, async (tx) => {
+  const updated = await withUserTransaction(userId, async (tx) => {
     const [current] = await tx.select({ status: scheduleItems.status, source: scheduleItems.source, startsAt: scheduleItems.startsAt, endsAt: scheduleItems.endsAt }).from(scheduleItems)
       .where(and(eq(scheduleItems.userId, userId), eq(scheduleItems.id, id))).for("update");
     if (!current) throw new AuthError("PLAN_ITEM_NOT_FOUND", "That plan item no longer exists.", 404);
@@ -236,6 +239,8 @@ export async function updatePlanItem(userId: string, itemId: string, patch: Plan
     }).where(and(eq(scheduleItems.userId, userId), eq(scheduleItems.id, id)));
     return loadItem(tx, userId, id);
   });
+  await cacheDelete(homeDashboardCacheKey(userId));
+  return updated;
 }
 
 export async function deletePlanItem(userId: string, itemId: string): Promise<void> {
@@ -249,4 +254,5 @@ export async function deletePlanItem(userId: string, itemId: string): Promise<vo
     const deleted = await tx.delete(scheduleItems).where(and(eq(scheduleItems.userId, userId), eq(scheduleItems.id, id), sql`${scheduleItems.status} <> 'dismissed'`)).returning({ id: scheduleItems.id });
     if (deleted.length === 0) throw new AuthError("PLAN_ITEM_NOT_FOUND", "That plan item no longer exists.", 404);
   });
+  await cacheDelete(homeDashboardCacheKey(userId));
 }

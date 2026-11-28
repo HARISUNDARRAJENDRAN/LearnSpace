@@ -25,7 +25,7 @@ export function useStudyTime(sessionId: string, resourceId: string, enabled: boo
     function flush() {
       const now = Date.now();
       const endedAt = reading ? Math.min(now, lastInteraction + 60_000) : now;
-      if (startedAt !== null && endedAt - startedAt >= 1_000 && endedAt - startedAt <= 30_000) {
+      if (startedAt !== null && endedAt - startedAt >= 1_000 && endedAt - startedAt <= 90_000) {
         void send({ id: crypto.randomUUID(), resourceId, startedAt, endedAt });
       }
       startedAt = visible() && (!reading || now < lastInteraction + 60_000) ? now : null;
@@ -35,7 +35,7 @@ export function useStudyTime(sessionId: string, resourceId: string, enabled: boo
       if (startedAt === null && visible()) startedAt = lastInteraction;
     }
     function visibility() { flush(); if (document.visibilityState === "hidden") startedAt = null; else interact(); }
-    const timer = setInterval(flush, 15_000);
+    const timer = setInterval(flush, 60_000);
     document.addEventListener("visibilitychange", visibility);
     window.addEventListener("pagehide", flush);
     if (reading) window.addEventListener("blur", flush);

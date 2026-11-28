@@ -1,8 +1,7 @@
 import { sql } from "drizzle-orm";
-import { char, check, foreignKey, index, integer, jsonb, primaryKey, real, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { char, check, foreignKey, index, integer, jsonb, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { resourceVersions } from "../catalog/resources.js";
-import { concepts } from "../knowledge/concepts.js";
 import { tsvector } from "../types.js";
 
 export const resourceChunks = retrievalSchema.table(
@@ -31,7 +30,6 @@ export const resourceChunks = retrievalSchema.table(
   },
   (table) => [
     uniqueIndex("resource_chunks_version_ordinal_uq").on(table.resourceVersionId, table.ordinal),
-    uniqueIndex("resource_chunks_version_content_ordinal_uq").on(table.resourceVersionId, table.contentSha256, table.ordinal),
     unique("resource_chunks_version_id_uq").on(table.resourceVersionId, table.id),
     foreignKey({
       name: "resource_chunks_parent_version_fkey",
@@ -48,23 +46,5 @@ export const resourceChunks = retrievalSchema.table(
     check("resource_chunks_page_to_chk", sql`${table.pageTo} IS NULL OR (${table.pageFrom} IS NOT NULL AND ${table.pageTo} >= ${table.pageFrom})`),
     check("resource_chunks_paragraph_from_chk", sql`${table.paragraphFrom} IS NULL OR ${table.paragraphFrom} >= 1`),
     check("resource_chunks_paragraph_to_chk", sql`${table.paragraphTo} IS NULL OR (${table.paragraphFrom} IS NOT NULL AND ${table.paragraphTo} >= ${table.paragraphFrom})`),
-  ],
-);
-
-export const chunkConcepts = retrievalSchema.table(
-  "chunk_concepts",
-  {
-    chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
-    relationType: text("relation_type").notNull(),
-    confidence: real("confidence").notNull(),
-    source: text("source").notNull(),
-    extractorVersion: text("extractor_version"),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    primaryKey({ columns: [table.chunkId, table.conceptId, table.relationType, table.source] }),
-    index("chunk_concepts_concept_confidence_idx").on(table.conceptId, table.confidence.desc()),
-    check("chunk_concepts_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
   ],
 );

@@ -4,6 +4,7 @@ import { studySessionIdSchema } from "@learnspace/shared";
 import { and, eq, gt, lt, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { projectStudyBehavior } from "../discovery/service";
+import { invalidateHomeDashboardCache } from "../home/service";
 import { AuthError } from "../auth/errors";
 
 export const studyFocusIntervalSchema = z.object({
@@ -11,7 +12,7 @@ export const studyFocusIntervalSchema = z.object({
   resourceId: z.string().uuid(),
   startedAt: z.number().int().nonnegative(),
   endedAt: z.number().int().nonnegative(),
-}).strict().refine((value) => value.endedAt > value.startedAt && value.endedAt - value.startedAt <= 30_000, "Send an active study interval of at most 30 seconds.");
+}).strict().refine((value) => value.endedAt > value.startedAt && value.endedAt - value.startedAt <= 90_000, "Send an active study interval of at most 90 seconds.");
 
 export type StudyFocusInterval = z.infer<typeof studyFocusIntervalSchema>;
 
@@ -19,8 +20,8 @@ export async function recordStudyFocus(userId: string, sessionId: string, input:
   const normalizedSessionId = studySessionIdSchema.parse(sessionId);
   const interval = studyFocusIntervalSchema.parse(input);
   const now = Date.now();
-  if (interval.startedAt < now - 90_000 || interval.endedAt > now + 1_000) throw new AuthError("INVALID_STUDY_INTERVAL", "Record recent active study time.", 422);
-  return withUserTransaction(userId, async (tx) => {
+  if (interval.startedAt < now - 180_000 || interval.endedAt > now + 1_000) throw new AuthError("INVALID_STUDY_INTERVAL", "Record recent active study time.", 422);
+  const recorded = await withUserTransaction(userId, async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`study-time:${userId}`}, 0))`);
     const [previous] = await tx.select({ seconds: focusSessions.durationSec }).from(focusSessions).where(and(eq(focusSessions.userId, userId), eq(focusSessions.id, interval.id)));
     if (previous) return { seconds: previous.seconds ?? 0 };
@@ -56,4 +57,6 @@ export async function recordStudyFocus(userId: string, sessionId: string, input:
     if (event) await projectStudyBehavior(tx, event);
     return { seconds };
   });
+  if (recorded.seconds > 0) await invalidateHomeDashboardCache(userId);
+  return recorded;
 }

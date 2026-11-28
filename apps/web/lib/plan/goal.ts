@@ -1,5 +1,6 @@
 import { withUserTransaction } from "@learnspace/db";
 import { scheduleItems } from "@learnspace/db/schema";
+import { cacheDelete, homeDashboardCacheKey } from "@learnspace/shared/recommendation-cache";
 import { z } from "zod";
 import { openAiConfigured, structuredCompletion } from "../ai/openai";
 import { PLAN_KINDS, type PlanKind } from "./kinds";
@@ -70,5 +71,6 @@ export async function planGoal(userId: string, input: GoalPlanInput): Promise<{ 
       updatedAt: now,
     })));
   });
+  await cacheDelete(homeDashboardCacheKey(userId));
   return { created: todos.length };
 }

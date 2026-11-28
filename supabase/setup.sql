@@ -44,4 +44,5 @@ EXECUTE FUNCTION hosting.wake_discovery_worker();
 RESET ROLE;
 
 -- Reclaims expired leases, schedules due refreshes, keeps YouTube metrics fresh and runs recommendation upkeep.
-SELECT cron.schedule('discovery-worker-housekeeping', '*/5 * * * *', 'SELECT hosting.call_discovery_worker(true)');
+-- Urgent discovery refreshes still wake the worker immediately via outbox_events_wake_discovery_worker.
+SELECT cron.schedule('discovery-worker-housekeeping', '*/15 * * * *', 'SELECT hosting.call_discovery_worker(true)');

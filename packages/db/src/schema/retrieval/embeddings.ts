@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, primaryKey, text, timestamp, uniqueIndex, uuid, vector } from "drizzle-orm/pg-core";
+import { check, halfvec, integer, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { resourceChunks } from "./chunks.js";
 
@@ -32,11 +32,10 @@ export const chunkEmbeddings = retrievalSchema.table(
   {
     chunkId: uuid("chunk_id").notNull().references(() => resourceChunks.id, { onDelete: "restrict" }),
     embeddingProfileId: text("embedding_profile_id").notNull().references(() => embeddingProfiles.id, { onDelete: "restrict" }),
-    embedding: vector("embedding", { dimensions: ACTIVE_EMBEDDING_DIMENSIONS }).notNull(),
+    embedding: halfvec("embedding", { dimensions: ACTIVE_EMBEDDING_DIMENSIONS }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
     primaryKey({ columns: [table.chunkId, table.embeddingProfileId] }),
-    index("chunk_embeddings_cosine_hnsw_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );

@@ -75,10 +75,9 @@ test(
       assert.equal(session.activeResource?.video?.youtubeId, youtubeId);
       assert.equal((await transcriptStatus(user.id, resourceId)).status, "queued");
       const [request] = await migrator`UPDATE ops.transcript_requests
-        SET status = 'signed', caption_url = ${captionUrl}, language = 'en', expires_at = now() + interval '1 hour'
+        SET status = 'signed', language = 'en', expires_at = now() + interval '1 hour'
         WHERE resource_id = ${resourceId} RETURNING youtube_id`;
       assert.equal(request?.youtube_id, youtubeId);
-      assert.deepEqual(await transcriptStatus(user.id, resourceId), { status: "signed", captionUrl, language: "en" });
       assert.deepEqual(await submitTranscript(user.id, resourceId, { language: "en", segments: [[0, 1_000, "Hello"]] }), { status: "submitted" });
       const bindings = await migrator<{ binding_status: string; resource_version_id: string | null }[]>`
         SELECT binding_status, resource_version_id

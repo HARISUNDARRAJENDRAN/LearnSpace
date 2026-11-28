@@ -95,14 +95,14 @@ export function MasteryCheck({ sessionId, resourceId, folder = false, readySourc
   const writing = view?.state === "writing";
   useEffect(() => {
     if (!writing) return;
-    const timer = window.setInterval(() => void request(base).then((next) => { if (next.state !== "writing") { setView(next); open(next); } }, () => undefined), 2_000);
+    const timer = window.setInterval(() => void request(base).then((next) => { if (next.state !== "writing") { setView(next); open(next); } }, () => undefined), 3_500);
     return () => window.clearInterval(timer);
   }, [writing, base, open]);
   // The learner answers the first questions while the rest are written into the set; each new one appears as it lands.
   const filling = view?.check?.writing === true;
   useEffect(() => {
     if (!filling) return;
-    const timer = window.setInterval(() => void request(base).then(setView, () => undefined), 1_500);
+    const timer = window.setInterval(() => void request(base).then(setView, () => undefined), 3_000);
     return () => window.clearInterval(timer);
   }, [filling, base]);
 
@@ -120,7 +120,7 @@ export function MasteryCheck({ sessionId, resourceId, folder = false, readySourc
   useEffect(() => { if (scoredId && analysis === null) analyse(); }, [scoredId, analysis, analyse]);
   useEffect(() => {
     if (!scoredId || analysis !== "writing") return;
-    const timer = window.setInterval(() => void request(`${base}?check=${scoredId}`).then(setView, () => undefined), 2_500);
+    const timer = window.setInterval(() => void request(`${base}?check=${scoredId}`).then(setView, () => undefined), 4_000);
     return () => window.clearInterval(timer);
   }, [base, scoredId, analysis]);
 

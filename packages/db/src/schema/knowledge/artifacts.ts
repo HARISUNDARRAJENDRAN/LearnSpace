@@ -1,12 +1,11 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, index, jsonb, primaryKey, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, jsonb, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { knowledgeSchema } from "../namespaces.js";
 import { users } from "../identity/users.js";
 import { resources, resourceVersions } from "../catalog/resources.js";
 import { resourceChunks } from "../retrieval/chunks.js";
 import { studySessions } from "../study/sessions.js";
 import { agentRuns } from "../agent/runs.js";
-import { concepts } from "./concepts.js";
 
 export const artifactDetails = knowledgeSchema.table(
   "artifact_details",
@@ -77,28 +76,6 @@ export const artifactSources = knowledgeSchema.table(
       name: "artifact_sources_version_chunk_fkey",
       columns: [table.sourceVersionId, table.sourceChunkId],
       foreignColumns: [resourceChunks.resourceVersionId, resourceChunks.id],
-    }).onDelete("restrict"),
-  ],
-);
-
-export const artifactConcepts = knowledgeSchema.table(
-  "artifact_concepts",
-  {
-    artifactResourceId: uuid("artifact_resource_id").notNull(),
-    conceptId: uuid("concept_id").notNull().references(() => concepts.id, { onDelete: "restrict" }),
-    relationType: text("relation_type").notNull(),
-    confidence: real("confidence").notNull(),
-    source: text("source").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [
-    primaryKey({ name: "artifact_concepts_pk", columns: [table.artifactResourceId, table.conceptId, table.relationType, table.source] }),
-    index("artifact_concepts_concept_confidence_idx").on(table.conceptId, table.confidence.desc()),
-    check("artifact_concepts_confidence_chk", sql`${table.confidence} BETWEEN 0 AND 1`),
-    foreignKey({
-      name: "artifact_concepts_artifact_fkey",
-      columns: [table.artifactResourceId],
-      foreignColumns: [artifactDetails.resourceId],
     }).onDelete("restrict"),
   ],
 );

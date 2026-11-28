@@ -16,9 +16,7 @@ export async function retrieveRecommendationCandidates(tx: Transaction, userId: 
   if (validVector(vector)) {
     try {
       ann = await tx.transaction(async (savepoint) => {
-        await savepoint.execute(sql`SELECT set_config('hnsw.ef_search', ${String(config.annEfSearch)}, true)`);
-        await savepoint.execute(sql`SET LOCAL hnsw.iterative_scan = 'relaxed_order'`);
-        const result = await savepoint.execute(sql`SELECT r.id, 1 - (e.embedding <=> ${JSON.stringify(vector)}::vector) similarity FROM discovery.resource_embeddings e JOIN catalog.resources r ON r.id = e.resource_id WHERE e.model = ${config.embeddingModel} AND e.embedding IS NOT NULL AND ${eligible} AND ${focused ? topicFilter : sql`TRUE`} ORDER BY e.embedding <=> ${JSON.stringify(vector)}::vector LIMIT ${config.semanticCandidates}`);
+        const result = await savepoint.execute(sql`SELECT r.id, 1 - (e.embedding <=> ${JSON.stringify(vector)}::halfvec) similarity FROM discovery.resource_embeddings e JOIN catalog.resources r ON r.id = e.resource_id WHERE e.model = ${config.embeddingModel} AND e.embedding IS NOT NULL AND ${eligible} AND ${focused ? topicFilter : sql`TRUE`} ORDER BY e.embedding <=> ${JSON.stringify(vector)}::halfvec LIMIT ${config.semanticCandidates}`);
         return Array.from(result) as Array<{ id: string; similarity: number }>;
       });
       fallback = ann.length === 0;

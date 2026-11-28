@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { char, check, foreignKey, index, integer, jsonb, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, integer, jsonb, primaryKey, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { studySchema } from "../namespaces.js";
 import { sessionMode, sessionStatus } from "../domain-values.js";
 import { users } from "../identity/users.js";
@@ -36,6 +36,7 @@ export const studySessions = studySchema.table(
   },
   (table) => [
     index("study_sessions_user_status_active_idx").on(table.userId, table.status, table.lastActiveAt.desc()),
+    index("study_sessions_user_active_desc_idx").on(table.userId, table.lastActiveAt.desc()),
     index("study_sessions_goal_active_idx").on(table.learningGoalId, table.lastActiveAt.desc()),
     index("study_sessions_user_active_partial_idx").on(table.userId, table.lastActiveAt.desc()).where(sql`${table.status} = 'active'`),
     check("study_sessions_end_after_start_chk", sql`${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}`),
@@ -98,20 +99,6 @@ export const sessionResources = studySchema.table(
       foreignColumns: [table.studySessionId, table.resourceId],
     }).onDelete("restrict"),
   ],
-);
-
-export const sessionContextSnapshots = studySchema.table(
-  "session_context_snapshots",
-  {
-    id: uuid("id").defaultRandom().primaryKey(),
-    studySessionId: uuid("study_session_id").notNull().references(() => studySessions.id, { onDelete: "restrict" }),
-    version: integer("version").notNull(),
-    sourceEventId: uuid("source_event_id"),
-    context: jsonb("context").$type<Record<string, unknown>>().notNull(),
-    contentSha256: char("content_sha256", { length: 64 }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  },
-  (table) => [uniqueIndex("session_context_snapshots_session_version_uq").on(table.studySessionId, table.version)],
 );
 
 export const sessionCheckpoints = studySchema.table(

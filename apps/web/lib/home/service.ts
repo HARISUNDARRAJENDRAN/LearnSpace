@@ -1,5 +1,6 @@
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { concepts, libraryItems, paperDetails, resourceConcepts, resources, userResourceProgress, users, videoDetails } from "@learnspace/db/schema";
+import { cacheDelete, cacheGet, cacheSet, homeDashboardCacheKey } from "@learnspace/shared/recommendation-cache";
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import { type Activity, type ActivityDay, progression, type Progression } from "../plan/levels";
 import { listPlanSuggestions, type PlanItem } from "../plan/service";
@@ -249,8 +250,15 @@ export function localToday(timezone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 }
 
+export async function invalidateHomeDashboardCache(userId: string): Promise<void> {
+  await cacheDelete(homeDashboardCacheKey(userId));
+}
+
 export async function getLearnHome(userId: string): Promise<LearnHomeData> {
-  return withUserTransaction(userId, async (tx) => {
+  const key = homeDashboardCacheKey(userId);
+  const cached = await cacheGet<LearnHomeData>(key, 10_000);
+  if (cached) return cached;
+  const data = await withUserTransaction(userId, async (tx) => {
     const timezone = await loadTimezone(tx, userId);
     const today = localToday(timezone);
     const [xpDays, recentLessons, nextActions] = await Promise.all([
@@ -260,4 +268,6 @@ export async function getLearnHome(userId: string): Promise<LearnHomeData> {
     ]);
     return { today, progression: progression(xpDays, today), recentLessons, nextActions };
   });
+  await cacheSet(key, data, 45, 10_000);
+  return data;
 }

@@ -1,17 +1,13 @@
 import type { DiscoveryHomeResponse } from "@learnspace/shared";
+import { cacheDelete, cacheGet, cacheSet, homeDashboardCacheKey, redisCommands } from "@learnspace/shared/recommendation-cache";
 
 const homeFeedTtlSeconds = 20 * 60;
+const homeFeedL1TtlMs = 20_000;
 
 export type HomeFeedFingerprint = {
   profileFingerprint: string;
   catalogFingerprint: string;
 };
-
-function redisConfig(): { url: string; token: string } | null {
-  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.KV_REST_API_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.KV_REST_API_TOKEN;
-  return url && token ? { url: url.replace(/\/$/, ""), token } : null;
-}
 
 function homeFeedAliasKey(userId: string): string {
   return `ls:v1:discovery:home:${userId}:current`;
@@ -21,40 +17,23 @@ export function homeFeedCacheKey(userId: string, fingerprints: HomeFeedFingerpri
   return `ls:v1:discovery:home:${userId}:${fingerprints.profileFingerprint}:${fingerprints.catalogFingerprint}`;
 }
 
-async function redisCommand(command: string[]): Promise<unknown> {
-  const config = redisConfig();
-  if (!config) return null;
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(command),
-    cache: "no-store",
-  });
-  if (!response.ok) return null;
-  const body: unknown = await response.json();
-  return body && typeof body === "object" && "result" in body ? body.result : null;
-}
-
 export async function getRedisValue(key: string): Promise<string | null> {
-  const result = await redisCommand(["GET", key]);
-  return typeof result === "string" ? result : null;
+  const rows = await redisCommands([["GET", key]]);
+  return typeof rows?.[0] === "string" ? rows[0] : null;
 }
 
 export async function setRedisValue(key: string, value: string, ttlSeconds: number): Promise<void> {
-  await redisCommand(["SETEX", key, String(Math.max(1, Math.floor(ttlSeconds))), value]);
+  await redisCommands([["SETEX", key, String(Math.max(1, Math.floor(ttlSeconds))), value]]);
 }
 
 export async function getCachedHomeFeed(userId: string, fingerprints: HomeFeedFingerprint): Promise<DiscoveryHomeResponse | null> {
   try {
     const key = homeFeedCacheKey(userId, fingerprints);
-    const currentKey = await redisCommand(["GET", homeFeedAliasKey(userId)]);
-    if (currentKey !== key) return null;
-    const result = await redisCommand(["GET", key]);
-    if (typeof result !== "string") return null;
-    const parsed: unknown = JSON.parse(result);
+    const localHit = await cacheGet<DiscoveryHomeResponse>(key, homeFeedL1TtlMs);
+    if (localHit) return localHit;
+    const rows = await redisCommands([["GET", homeFeedAliasKey(userId)], ["GET", key]]);
+    if (rows?.[0] !== key || typeof rows?.[1] !== "string") return null;
+    const parsed: unknown = JSON.parse(rows[1]);
     return parsed && typeof parsed === "object" ? parsed as DiscoveryHomeResponse : null;
   } catch {
     return null;
@@ -64,8 +43,8 @@ export async function getCachedHomeFeed(userId: string, fingerprints: HomeFeedFi
 export async function setCachedHomeFeed(userId: string, fingerprints: HomeFeedFingerprint, value: DiscoveryHomeResponse): Promise<void> {
   try {
     const key = homeFeedCacheKey(userId, fingerprints);
-    await redisCommand(["SETEX", key, String(homeFeedTtlSeconds), JSON.stringify(value)]);
-    await redisCommand(["SETEX", homeFeedAliasKey(userId), String(homeFeedTtlSeconds), key]);
+    await cacheSet(key, value, homeFeedTtlSeconds, homeFeedL1TtlMs);
+    await redisCommands([["SETEX", homeFeedAliasKey(userId), String(homeFeedTtlSeconds), key]]);
   } catch {
     return;
   }
@@ -73,12 +52,9 @@ export async function setCachedHomeFeed(userId: string, fingerprints: HomeFeedFi
 
 export async function invalidateHomeFeedCache(userId: string): Promise<void> {
   try {
-    const currentKey = await redisCommand(["GET", homeFeedAliasKey(userId)]);
-    await redisCommand([
-      "DEL",
-      homeFeedAliasKey(userId),
-      ...(typeof currentKey === "string" ? [currentKey] : []),
-    ]);
+    const rows = await redisCommands([["GET", homeFeedAliasKey(userId)]]);
+    const currentKey = typeof rows?.[0] === "string" ? rows[0] : null;
+    await cacheDelete(homeDashboardCacheKey(userId), homeFeedAliasKey(userId), ...(currentKey ? [currentKey] : []));
   } catch {
     return;
   }

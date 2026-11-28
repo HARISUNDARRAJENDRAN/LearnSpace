@@ -10,4 +10,3 @@ export const knowledgeSchema = pgSchema("knowledge");
 export const agentSchema = pgSchema("agent");
 export const discoverySchema = pgSchema("discovery");
 export const opsSchema = pgSchema("ops");
-export const projectionSchema = pgSchema("projection");

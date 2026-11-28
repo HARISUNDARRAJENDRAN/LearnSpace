@@ -35,6 +35,7 @@ export const jobs = opsSchema.table(
     index("jobs_claim_idx").on(table.queue, table.priority.desc(), table.availableAt, table.createdAt).where(sql`${table.status} = 'pending'`),
     uniqueIndex("jobs_active_dedup_uq").on(table.queue, table.dedupKey).where(sql`${table.dedupKey} IS NOT NULL AND ${table.status} IN ('pending', 'running')`),
     index("jobs_running_lease_idx").on(table.status, table.leaseExpiresAt).where(sql`${table.status} = 'running'`),
+    index("jobs_discovery_finished_idx").on(table.queue, table.jobType, table.finishedAt.desc()).where(sql`${table.status} IN ('done', 'dead') AND ${table.finishedAt} IS NOT NULL`),
     index("jobs_correlation_idx").on(table.correlationId),
     check("jobs_attempts_chk", sql`${table.attempts} >= 0 AND ${table.maxAttempts} > 0 AND ${table.attempts} <= ${table.maxAttempts}`),
   ],

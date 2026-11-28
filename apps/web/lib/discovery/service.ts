@@ -1,5 +1,5 @@
 import { RECOMMENDATION_CONFIG as recommendationConfig, semanticRecommendationsEnabled } from "@learnspace/shared/recommendation-config";
-import { readRecommendationCache, writeRecommendationCache, invalidateRecommendations } from "@learnspace/shared/recommendation-cache";
+import { cacheGet, cacheSet, catalogFingerprintCacheKey, readRecommendationCache, recommendationCatalogKey, redisCommands, writeRecommendationCache, invalidateRecommendations } from "@learnspace/shared/recommendation-cache";
 import { retrievalVector } from "@learnspace/shared/recommendation-model";
 import { YOUTUBE_QUALITY_FEATURE_VERSION } from "@learnspace/shared/youtube-quality";
 import { loadCompactProfile } from "./compact-profile";
@@ -230,7 +230,11 @@ export async function loadDiscoveryProfile(tx: Transaction, userId: string): Pro
   };
 }
 
-async function catalogFingerprint(tx: Transaction): Promise<string> {
+async function catalogFingerprint(tx: Transaction, knownCatalogGeneration?: string): Promise<string> {
+  const gen = knownCatalogGeneration ?? String((await redisCommands([["GET", recommendationCatalogKey]]))?.[0] ?? "0");
+  const cacheKey = catalogFingerprintCacheKey(gen);
+  const cached = await cacheGet<string>(cacheKey, 30_000);
+  if (cached) return cached;
   const [resourceSummary, qualitySummary, conceptSummary] = await Promise.all([
     tx
       .select({ count: count(), latestUpdatedAt: max(resources.updatedAt) })
@@ -265,7 +269,7 @@ async function catalogFingerprint(tx: Transaction): Promise<string> {
         inArray(resources.type, ["video", "paper"]),
       )),
   ]);
-  return discoveryFingerprint({
+  const fingerprint = discoveryFingerprint({
     version: DISCOVERY_CATALOG_VERSION,
     resourceCount: resourceSummary[0]?.count ?? 0,
     latestResourceUpdatedAt: resourceSummary[0]?.latestUpdatedAt?.toISOString() ?? null,
@@ -274,6 +278,8 @@ async function catalogFingerprint(tx: Transaction): Promise<string> {
     resourceConceptCount: conceptSummary[0]?.count ?? 0,
     latestResourceConceptCreatedAt: conceptSummary[0]?.latestCreatedAt?.toISOString() ?? null,
   });
+  await cacheSet(cacheKey, fingerprint, 120, 30_000);
+  return fingerprint;
 }
 
 function profileFingerprint(profileLoad: ProfileLoad): string {
@@ -351,7 +357,34 @@ export async function loadDiscoveryResources(
   );
   const resourceTypes = ["video", "paper"] as const;
   const queryResources = (type?: (typeof resourceTypes)[number]) => tx
-    .select({ resource: resources, video: videoDetails, paper: paperDetails })
+    .select({
+      resource: {
+        id: resources.id,
+        type: resources.type,
+        provider: resources.provider,
+        externalId: resources.externalId,
+        canonicalUrl: resources.canonicalUrl,
+        title: resources.title,
+        description: resources.description,
+        language: resources.language,
+        qualityScore: resources.qualityScore,
+        metadata: resources.metadata,
+      },
+      video: {
+        youtubeId: videoDetails.youtubeId,
+        channelTitle: videoDetails.channelTitle,
+        durationMs: videoDetails.durationMs,
+        publishedAt: videoDetails.publishedAt,
+      },
+      paper: {
+        abstract: paperDetails.abstract,
+        venue: paperDetails.venue,
+        publicationDate: paperDetails.publicationDate,
+        submittedAt: paperDetails.submittedAt,
+        citationCount: paperDetails.citationCount,
+        metadata: paperDetails.metadata,
+      },
+    })
     .from(resources)
     .leftJoin(videoDetails, eq(videoDetails.resourceId, resources.id))
     .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
@@ -536,10 +569,10 @@ async function findReusableRun(
   surface: "home" | "discover",
   fingerprints: { profileFingerprint: string; catalogFingerprint: string },
   profile: LearnerProfile,
-): Promise<typeof recommendationRuns.$inferSelect | null> {
+): Promise<{ id: string; createdAt: Date } | null> {
   const minimumDate = new Date(now.getTime() - staleFeedTtlMs);
   const rows = await tx
-    .select()
+    .select({ id: recommendationRuns.id, createdAt: recommendationRuns.createdAt })
     .from(recommendationRuns)
     .where(and(
       eq(recommendationRuns.userId, userId),
@@ -556,13 +589,12 @@ async function findReusableRun(
   return rows[0] ?? null;
 }
 
-async function loadRankedRun(tx: Transaction, run: typeof recommendationRuns.$inferSelect): Promise<{ videos: RankedResource[]; papers: RankedResource[] }> {
+async function loadRankedRun(tx: Transaction, run: { id: string }): Promise<{ videos: RankedResource[]; papers: RankedResource[] }> {
   const rows = await tx
-    .select({ candidate: recommendationCandidates, resource: resources })
+    .select({ candidate: recommendationCandidates })
     .from(recommendationCandidates)
-    .innerJoin(resources, eq(resources.id, recommendationCandidates.resourceId))
     .where(eq(recommendationCandidates.recommendationRunId, run.id));
-  const resourcesForRun = await loadDiscoveryResources(tx, rows.map((row) => row.resource.id));
+  const resourcesForRun = await loadDiscoveryResources(tx, rows.map((row) => row.candidate.resourceId));
   const byId = new Map(resourcesForRun.map((resource) => [resource.id, resource]));
   const ranked = rows.flatMap(({ candidate }) => {
     const resource = byId.get(candidate.resourceId);
@@ -595,7 +627,7 @@ async function generateRun(
   resourcesForRanker: DiscoveryResource[],
   surface: "home" | "discover",
   fingerprints: { profileFingerprint: string; catalogFingerprint: string },
-): Promise<{ run: typeof recommendationRuns.$inferSelect; ranked: { videos: RankedResource[]; papers: RankedResource[] }; rankingMs: number }> {
+): Promise<{ run: { id: string; createdAt: Date }; ranked: { videos: RankedResource[]; papers: RankedResource[] }; rankingMs: number }> {
   const started = performance.now();
   const initialRanked = rankDiscoveryResources(resourcesForRanker, profileLoad.profile, now, surface === "discover" ? recommendationConfig.resultCount : 6);
   const rankingMs = performance.now() - started;
@@ -637,14 +669,20 @@ async function generateRun(
       mastery: [...(profileLoad.profile.mastery ?? new Map())],
       goalConceptIds: profileLoad.profile.goalConceptIds,
       sessionConceptIds: profileLoad.profile.sessionConceptIds,
-      featureSnapshots: Object.fromEntries([...ranked.videos, ...ranked.papers].map((candidate) => [candidate.resource.id, candidate.features ?? {}])),
+      featureSnapshots: Object.fromEntries(
+        [...ranked.videos, ...ranked.papers]
+          .filter((candidate) => candidate.finalRank !== null)
+          .map((candidate) => [candidate.resource.id, candidate.features ?? {}]),
+      ),
     },
     status: "completed",
     latencyMs: Math.round(performance.now() - started),
     completedAt: now,
-  }).returning();
+  }).returning({ id: recommendationRuns.id, createdAt: recommendationRuns.createdAt });
   if (!run) throw new Error("Recommendation run could not be created");
-  const candidates = [...ranked.videos, ...ranked.papers];
+  const candidates = [...ranked.videos, ...ranked.papers].filter(
+    (candidate) => candidate.finalRank !== null || candidate.candidateRank <= 60,
+  );
   if (candidates.length > 0) {
     await tx.insert(recommendationCandidates).values(candidates.map((candidate) => ({
       recommendationRunId: run.id,
@@ -747,8 +785,8 @@ export async function getHomeFeed(userId: string, surface: "home" | "discover" =
       timing.profile = performance.now() - profileStart;
       const fingerprints = {
         profileFingerprint: discoveryFingerprint({ revision, preferences: profileLoad.profile.conceptIds, topicId, generation: cache.generation, version: recommendationConfig.version, decayDay: new Date().toISOString().slice(0, 10) }),
-        // Read from the database, not the Redis generation, so newly discovered videos re-rank the feed with or without Redis.
-        catalogFingerprint: discoveryFingerprint({ catalog: await catalogFingerprint(tx), version: recommendationConfig.version }),
+        // Read from the database (cached in Redis by catalogGeneration), so newly discovered videos re-rank the feed with or without Redis.
+        catalogFingerprint: discoveryFingerprint({ catalog: await catalogFingerprint(tx, cache.catalogGeneration), version: recommendationConfig.version }),
       };
       const reusable = options.forceRefresh ? null : await findReusableRun(tx, userId, new Date(), "discover", fingerprints, profileLoad.profile);
       if (reusable) return responseFromRanked(reusable.id, reusable.createdAt, profileLoad, await loadRankedRun(tx, reusable), [], false, recommendationConfig.resultCount);

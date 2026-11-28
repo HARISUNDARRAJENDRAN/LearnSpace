@@ -284,7 +284,6 @@ test("the video tutor answers from the transcript, grades checks, persists the t
     await migrator`DELETE FROM study.mastery_checks WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
-    await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.study_sessions WHERE user_id IN ${migrator(users)}`;

@@ -493,12 +493,10 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${retrievalRun}`;
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${retrievalRun}`;
   }],
-  ["historical evidence retention and append-only mastery", async () => {
+  ["historical evidence retention", async () => {
     const evidenceEvent = "00000000-0000-0000-0000-000000000908";
     const evidenceRun = "00000000-0000-0000-0000-000000000909";
     const evidenceCitation = "00000000-0000-0000-0000-000000000910";
-    const masterySignal = "00000000-0000-0000-0000-000000000911";
-    await migrator`DELETE FROM knowledge.mastery_signals WHERE id = ${masterySignal}`;
     await migrator`DELETE FROM retrieval.citations WHERE id = ${evidenceCitation}`;
     await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${evidenceRun}`;
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${evidenceRun}`;
@@ -519,43 +517,6 @@ const tests: Array<[string, () => Promise<void>]> = [
       INSERT INTO retrieval.citations (id, retrieval_run_id, chunk_id, resource_version_id, ordinal, anchor_snapshot)
       VALUES (${evidenceCitation}, ${evidenceRun}, ${ids.publicChunk}, ${ids.publicVersion}, 1, '{}'::jsonb)
     `;
-    await worker`
-      INSERT INTO knowledge.mastery_signals (id, user_id, concept_id, study_session_id, source_event_id, signal_type, value, reliability, weight, observed_at, projector_version, metadata)
-      VALUES (${masterySignal}, ${ids.userA}, ${ids.concept}, ${ids.sessionA}, ${evidenceEvent}, 'exposure', 0.2, 0.9, 1, '2026-01-02T00:00:00.000Z', 'db-test', '{}'::jsonb)
-    `;
-    await expectRejected(
-      () => app.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`UPDATE knowledge.mastery_signals SET value = 0.9 WHERE id = ${masterySignal}`;
-      }),
-      "application updating append-only mastery",
-    );
-    await expectRejected(
-      () => app`DELETE FROM knowledge.mastery_signals WHERE id = ${masterySignal}`,
-      "application deleting append-only mastery",
-    );
-    await expectRejected(
-      () => worker`UPDATE knowledge.mastery_signals SET value = 0.9 WHERE id = ${masterySignal}`,
-      "worker updating append-only mastery",
-    );
-    await expectRejected(
-      () => worker`DELETE FROM knowledge.mastery_signals WHERE id = ${masterySignal}`,
-      "worker deleting append-only mastery",
-    );
-    await expectRejected(
-      () => worker`
-        INSERT INTO knowledge.mastery_signals (id, user_id, concept_id, study_session_id, source_event_id, signal_type, value, reliability, weight, observed_at, projector_version, metadata)
-        VALUES ('00000000-0000-0000-0000-000000000912', ${ids.userB}, ${ids.concept}, ${ids.sessionB}, ${evidenceEvent}, 'exposure', 0.2, 0.9, 1, '2026-01-02T00:00:00.000Z', 'db-test', '{}'::jsonb)
-      `,
-      "mastery signal with another user's source event",
-    );
-    await expectRejected(
-      () => worker`
-        INSERT INTO knowledge.mastery_signals (id, user_id, concept_id, study_session_id, source_event_id, signal_type, value, reliability, weight, observed_at, projector_version, metadata)
-        VALUES ('00000000-0000-0000-0000-000000000913', ${ids.userA}, ${ids.concept}, ${ids.sessionB}, ${evidenceEvent}, 'exposure', 0.2, 0.9, 1, '2026-01-02T00:00:00.000Z', 'db-test', '{}'::jsonb)
-      `,
-      "mastery signal with another session",
-    );
     await expectRejected(
       () => app`DELETE FROM activity.activity_events WHERE id = ${evidenceEvent}`,
       "application deleting activity history",
@@ -565,22 +526,16 @@ const tests: Array<[string, () => Promise<void>]> = [
       "application deleting retrieval history",
     );
     await expectRejected(
-      () => migrator`DELETE FROM activity.activity_events WHERE id = ${evidenceEvent}`,
-      "deleting activity evidence referenced by mastery",
-    );
-    await expectRejected(
       () => migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${evidenceRun}`,
       "deleting retrieval evidence referenced by citation",
     );
-    const evidenceCounts = await migrator<{ events: string; runs: string; citations: string; signals: string }[]>`
+    const evidenceCounts = await migrator<{ events: string; runs: string; citations: string }[]>`
       SELECT
         (SELECT count(*)::text FROM activity.activity_events WHERE id = ${evidenceEvent}) AS events,
         (SELECT count(*)::text FROM retrieval.retrieval_runs WHERE id = ${evidenceRun}) AS runs,
-        (SELECT count(*)::text FROM retrieval.citations WHERE id = ${evidenceCitation}) AS citations,
-        (SELECT count(*)::text FROM knowledge.mastery_signals WHERE id = ${masterySignal}) AS signals
+        (SELECT count(*)::text FROM retrieval.citations WHERE id = ${evidenceCitation}) AS citations
     `;
-    assert.deepEqual(evidenceCounts[0], { events: "1", runs: "1", citations: "1", signals: "1" });
-    await migrator`DELETE FROM knowledge.mastery_signals WHERE id = ${masterySignal}`;
+    assert.deepEqual(evidenceCounts[0], { events: "1", runs: "1", citations: "1" });
     await migrator`DELETE FROM retrieval.citations WHERE id = ${evidenceCitation}`;
     await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${evidenceRun}`;
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${evidenceRun}`;
@@ -699,13 +654,12 @@ const tests: Array<[string, () => Promise<void>]> = [
     assert.equal(validProgress[0]?.last_chunk_id, ids.publicChunk);
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${ids.userA} AND resource_id = ${ids.publicResource}`;
   }],
-  ["final agent artifact and optional provenance hardening", async () => {
+  ["final optional provenance hardening", async () => {
     await migrator`DELETE FROM retrieval.citations WHERE id = ${ids.hardeningCitation}`;
     await migrator`DELETE FROM retrieval.retrieved_chunks WHERE retrieval_run_id = ${ids.hardeningCitationRun}`;
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${ids.hardeningCitationRun}`;
     await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${ids.hardeningArtifactResource}`;
     await migrator`DELETE FROM catalog.resources WHERE id = ${ids.hardeningArtifactResource}`;
-    await migrator`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
     await migrator`DELETE FROM study.tutor_messages WHERE id IN (${ids.hardeningMessageA}, ${ids.hardeningMessageB}, ${ids.hardeningCrossSourceMessage})`;
     await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
@@ -768,39 +722,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     );
 
     await migrator`
-      INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
-      VALUES (${ids.hardeningAgentRunA}, ${ids.privateResourceA}, 'private-source')
-    `;
-    await ai.begin(async (tx) => {
-      await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-      await tx`
-        INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
-        VALUES (${ids.hardeningAgentRunA}, ${ids.publicResource}, 'public-source')
-      `;
-    });
-    await expectRejected(
-      () => ai.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          INSERT INTO agent.agent_artifacts (agent_run_id, resource_id, role)
-          VALUES (${ids.hardeningAgentRunA}, ${ids.privateResourceB}, 'foreign-private')
-        `;
-      }),
-      "agent artifact using another user's private resource",
-    );
-    await expectRejected(
-      () => ai.begin(async (tx) => {
-        await tx`SELECT set_config('app.user_id', ${ids.userA}, true)`;
-        await tx`
-          UPDATE agent.agent_artifacts
-          SET resource_id = ${ids.privateResourceB}
-          WHERE agent_run_id = ${ids.hardeningAgentRunA} AND resource_id = ${ids.privateResourceA} AND role = 'private-source'
-        `;
-      }),
-      "agent artifact update to another user's private resource",
-    );
-
-    await migrator`
       INSERT INTO retrieval.retrieval_runs (id, user_id, study_session_id, query_text, query_sha256, embedding_profile_id, scope, strategy_version, status)
       VALUES (${ids.hardeningCitationRun}, ${ids.userA}, ${ids.sessionA}, 'hardening citation', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'seed-1536', '{}'::jsonb, 'db-test', 'completed')
     `;
@@ -825,7 +746,6 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM retrieval.retrieval_runs WHERE id = ${ids.hardeningCitationRun}`;
     await migrator`DELETE FROM knowledge.artifact_details WHERE resource_id = ${ids.hardeningArtifactResource}`;
     await migrator`DELETE FROM catalog.resources WHERE id = ${ids.hardeningArtifactResource}`;
-    await migrator`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
     await migrator`DELETE FROM study.tutor_messages WHERE id IN (${ids.hardeningMessageA}, ${ids.hardeningMessageB})`;
     await migrator`DELETE FROM agent.model_invocations WHERE id IN (${ids.hardeningModelInvocationA}, ${ids.hardeningModelInvocationB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${ids.hardeningAgentRunA}, ${ids.hardeningAgentRunB})`;
@@ -836,20 +756,13 @@ const tests: Array<[string, () => Promise<void>]> = [
     const threadB = "00000000-0000-0000-0000-000000000923";
     const agentRunA = "00000000-0000-0000-0000-000000000924";
     const agentRunB = "00000000-0000-0000-0000-000000000925";
-    const agentStepA = "00000000-0000-0000-0000-000000000926";
-    const agentStepB = "00000000-0000-0000-0000-000000000927";
-    const toolInvocation = "00000000-0000-0000-0000-000000000928";
     const modelInvocation = "00000000-0000-0000-0000-000000000929";
     const recommendationRunA = "00000000-0000-0000-0000-000000000930";
     const recommendationRunB = "00000000-0000-0000-0000-000000000931";
-    const candidateA = "00000000-0000-0000-0000-000000000932";
-    const candidateB = "00000000-0000-0000-0000-000000000933";
     const impressionA = "00000000-0000-0000-0000-000000000934";
     const impressionB = "00000000-0000-0000-0000-000000000935";
     const interactionA = "00000000-0000-0000-0000-000000000936";
-    await migrator`DELETE FROM agent.tool_invocations WHERE id = ${toolInvocation}`;
     await migrator`DELETE FROM agent.model_invocations WHERE id = ${modelInvocation}`;
-    await migrator`DELETE FROM agent.agent_steps WHERE id IN (${agentStepA}, ${agentStepB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${agentRunA}, ${agentRunB})`;
     await migrator`DELETE FROM study.tutor_threads WHERE id IN (${threadA}, ${threadB})`;
     await migrator`DELETE FROM discovery.discovery_interactions WHERE id = ${interactionA}`;
@@ -869,18 +782,8 @@ const tests: Array<[string, () => Promise<void>]> = [
         (${agentRunB}, ${ids.userB}, ${ids.sessionB}, ${threadB}, 'retrieval', 'executing', 'Agent B', 'db-test', 5, 5, 1000)
     `;
     await migrator`
-      INSERT INTO agent.agent_steps (id, agent_run_id, step_key, sequence_no, kind, status, input)
-      VALUES
-        (${agentStepA}, ${agentRunA}, 'retrieve-a', 1, 'retrieve', 'done', '{}'::jsonb),
-        (${agentStepB}, ${agentRunB}, 'retrieve-b', 1, 'retrieve', 'done', '{}'::jsonb)
-    `;
-    await migrator`
-      INSERT INTO agent.tool_invocations (id, agent_run_id, agent_step_id, tool_name, status, input)
-      VALUES (${toolInvocation}, ${agentRunA}, ${agentStepA}, 'search', 'succeeded', '{}'::jsonb)
-    `;
-    await migrator`
-      INSERT INTO agent.model_invocations (id, agent_run_id, agent_step_id, provider, model_name, purpose)
-      VALUES (${modelInvocation}, ${agentRunA}, ${agentStepA}, 'db-test', 'model-a', 'retrieval')
+      INSERT INTO agent.model_invocations (id, agent_run_id, provider, model_name, purpose)
+      VALUES (${modelInvocation}, ${agentRunA}, 'db-test', 'model-a', 'retrieval')
     `;
     await expectRejected(
       () => migrator`
@@ -895,20 +798,6 @@ const tests: Array<[string, () => Promise<void>]> = [
         VALUES ('00000000-0000-0000-0000-000000000938', ${ids.userA}, ${ids.sessionA}, ${threadB}, 'retrieval', 'executing', 'Invalid thread', 'db-test', 5, 5, 1000)
       `,
       "agent run with another user's thread",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO agent.tool_invocations (id, agent_run_id, agent_step_id, tool_name, status, input)
-        VALUES ('00000000-0000-0000-0000-000000000939', ${agentRunA}, ${agentStepB}, 'search', 'succeeded', '{}'::jsonb)
-      `,
-      "tool invocation from another agent run",
-    );
-    await expectRejected(
-      () => migrator`
-        INSERT INTO agent.model_invocations (id, agent_run_id, agent_step_id, provider, model_name, purpose)
-        VALUES ('00000000-0000-0000-0000-000000000940', ${agentRunA}, ${agentStepB}, 'db-test', 'model-b', 'retrieval')
-      `,
-      "model invocation from another agent run",
     );
     assert.deepEqual(await visibleIds(ai, ids.userA, 'agent.agent_runs', 'id'), [agentRunA]);
     await migrator`
@@ -959,9 +848,7 @@ const tests: Array<[string, () => Promise<void>]> = [
     await migrator`DELETE FROM discovery.recommendation_impressions WHERE id IN (${impressionA}, ${impressionB})`;
     await migrator`DELETE FROM discovery.recommendation_candidates WHERE recommendation_run_id IN (${recommendationRunA}, ${recommendationRunB})`;
     await migrator`DELETE FROM discovery.recommendation_runs WHERE id IN (${recommendationRunA}, ${recommendationRunB})`;
-    await migrator`DELETE FROM agent.tool_invocations WHERE id = ${toolInvocation}`;
     await migrator`DELETE FROM agent.model_invocations WHERE id = ${modelInvocation}`;
-    await migrator`DELETE FROM agent.agent_steps WHERE id IN (${agentStepA}, ${agentStepB})`;
     await migrator`DELETE FROM agent.agent_runs WHERE id IN (${agentRunA}, ${agentRunB})`;
     await migrator`DELETE FROM study.tutor_threads WHERE id IN (${threadA}, ${threadB})`;
   }],
@@ -981,10 +868,10 @@ const tests: Array<[string, () => Promise<void>]> = [
       "embedding profile distance mismatch",
     );
     const rows = await ai<{ chunk_id: string; similarity: number }[]>`
-      SELECT chunk_id, 1 - (embedding <=> ${seededVector}::vector) AS similarity
+      SELECT chunk_id, 1 - (embedding <=> ${seededVector}::halfvec) AS similarity
       FROM retrieval.chunk_embeddings
       WHERE embedding_profile_id = 'seed-1536'
-      ORDER BY embedding <=> ${seededVector}::vector
+      ORDER BY embedding <=> ${seededVector}::halfvec
       LIMIT 1
     `;
     assert.equal(rows[0]?.chunk_id, ids.publicChunk);

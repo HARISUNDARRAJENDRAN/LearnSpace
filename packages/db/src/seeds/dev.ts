@@ -139,14 +139,8 @@ export async function seedDev(): Promise<void> {
     `;
 
     await tx`
-      INSERT INTO retrieval.chunk_concepts (chunk_id, concept_id, relation_type, confidence, source, extractor_version, created_at)
-      VALUES (${seedIds.publicChunk}, ${seedIds.concept}, 'about', 0.98, 'seed', '1.0.0', ${seededAt})
-      ON CONFLICT (chunk_id, concept_id, relation_type, source) DO UPDATE SET confidence = EXCLUDED.confidence
-    `;
-
-    await tx`
       INSERT INTO retrieval.chunk_embeddings (chunk_id, embedding_profile_id, embedding, created_at)
-      VALUES (${seedIds.publicChunk}, ${seedIds.embeddingProfile}, ${vectorLiteral}::vector, ${seededAt})
+      VALUES (${seedIds.publicChunk}, ${seedIds.embeddingProfile}, ${vectorLiteral}::halfvec, ${seededAt})
       ON CONFLICT (chunk_id, embedding_profile_id) DO UPDATE SET embedding = EXCLUDED.embedding
     `;
 

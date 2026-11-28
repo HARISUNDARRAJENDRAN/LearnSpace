@@ -156,6 +156,11 @@ test("A Discover course imports as a session of its own whose lessons unlock in 
       ["paper", "Track Test Author", "First abstract.", "current"],
       ["paper", "Track Test Author", "Second abstract.", "locked"],
     ]);
+    await migrator`UPDATE catalog.resources SET status = 'failed' WHERE id = ${trackResourceIds[0] ?? ""}`;
+    const failedIngestion = await study.getStudySession(learner.id, trackSession.sessionId);
+    assert.equal(failedIngestion.course?.sections[0]?.lessons[0]?.state, "current");
+    assert.equal(failedIngestion.course?.sections[0]?.lessons[0]?.resourceId, trackResourceIds[0]);
+    await migrator`UPDATE catalog.resources SET status = 'ready' WHERE id = ${trackResourceIds[0] ?? ""}`;
     await study.updateStudyProgress(learner.id, trackSession.sessionId, {
       resourceId: trackResourceIds[0] ?? "", progressPct: 100, anchor: { kind: "paper", page: 1 }, event: "complete", idempotencyKey: randomUUID(),
     });
@@ -163,8 +168,6 @@ test("A Discover course imports as a session of its own whose lessons unlock in 
   } finally {
     try {
       await migrator`DELETE FROM knowledge.artifact_details WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
-      await migrator`DELETE FROM knowledge.mastery_signals WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
-      await migrator`DELETE FROM knowledge.unresolved_questions WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
       await migrator`DELETE FROM discovery.discovery_interactions WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM discovery.recommendation_impressions WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM ops.outbox_events WHERE user_id = ${learner.id}`;
@@ -178,8 +181,6 @@ test("A Discover course imports as a session of its own whose lessons unlock in 
       await migrator`DELETE FROM study.session_transcript WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM study.tutor_threads WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
-      await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
-      await migrator`DELETE FROM projection.session_summary WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;
       await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM activity.activity_events WHERE user_id = ${learner.id}`;
       await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${learner.id})`;

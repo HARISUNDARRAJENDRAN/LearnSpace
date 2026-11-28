@@ -5,6 +5,7 @@ import {
   userSettings,
   users,
 } from "@learnspace/db/schema";
+import { authSessionCacheKey, cacheDelete, cacheGet, cacheSet } from "@learnspace/shared/recommendation-cache";
 import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {
@@ -14,6 +15,65 @@ import {
 } from "./crypto";
 
 const sessionLifetimeSeconds = 60 * 60 * 24 * 30;
+const sessionCacheTtlSeconds = 60;
+const sessionCacheL1TtlMs = 15_000;
+
+type SerializedSessionLookup = {
+  session: Omit<typeof authSessions.$inferSelect, "lastSeenAt" | "expiresAt" | "revokedAt" | "createdAt"> & {
+    lastSeenAt: string | null;
+    expiresAt: string;
+    revokedAt: string | null;
+    createdAt: string;
+  };
+  user: Omit<UserRecord, "createdAt" | "updatedAt" | "deletedAt"> & {
+    createdAt: string;
+    updatedAt: string;
+    deletedAt: string | null;
+  };
+  onboarding: { completedAt: string | null } | null;
+};
+
+function serializeSessionLookup(lookup: SessionLookup): SerializedSessionLookup {
+  return {
+    session: {
+      ...lookup.session,
+      lastSeenAt: lookup.session.lastSeenAt?.toISOString() ?? null,
+      expiresAt: lookup.session.expiresAt.toISOString(),
+      revokedAt: lookup.session.revokedAt?.toISOString() ?? null,
+      createdAt: lookup.session.createdAt.toISOString(),
+    },
+    user: {
+      ...lookup.user,
+      createdAt: lookup.user.createdAt.toISOString(),
+      updatedAt: lookup.user.updatedAt.toISOString(),
+      deletedAt: lookup.user.deletedAt?.toISOString() ?? null,
+    },
+    onboarding: lookup.onboarding === null
+      ? null
+      : { completedAt: lookup.onboarding.completedAt?.toISOString() ?? null },
+  };
+}
+
+function deserializeSessionLookup(cached: SerializedSessionLookup): SessionLookup {
+  return {
+    session: {
+      ...cached.session,
+      lastSeenAt: cached.session.lastSeenAt ? new Date(cached.session.lastSeenAt) : null,
+      expiresAt: new Date(cached.session.expiresAt),
+      revokedAt: cached.session.revokedAt ? new Date(cached.session.revokedAt) : null,
+      createdAt: new Date(cached.session.createdAt),
+    },
+    user: {
+      ...cached.user,
+      createdAt: new Date(cached.user.createdAt),
+      updatedAt: new Date(cached.user.updatedAt),
+      deletedAt: cached.user.deletedAt ? new Date(cached.user.deletedAt) : null,
+    },
+    onboarding: cached.onboarding === null
+      ? null
+      : { completedAt: cached.onboarding.completedAt ? new Date(cached.onboarding.completedAt) : null },
+  };
+}
 
 async function getAuthDatabase() {
   const { getAuthDatabase } = await import("@learnspace/db");
@@ -322,7 +382,7 @@ export async function resetPasswordWithChallenge(
       .update(users)
       .set({ passwordHash, updatedAt: now })
       .where(eq(users.id, challenge.userId));
-    await tx
+    const revoked = await tx
       .update(authSessions)
       .set({ revokedAt: now, revocationReason: "password_reset" })
       .where(
@@ -330,7 +390,11 @@ export async function resetPasswordWithChallenge(
           eq(authSessions.userId, challenge.userId),
           isNull(authSessions.revokedAt),
         ),
-      );
+      )
+      .returning({ refreshTokenHash: authSessions.refreshTokenHash });
+    if (revoked.length > 0) {
+      await cacheDelete(...revoked.map((row) => authSessionCacheKey(row.refreshTokenHash)));
+    }
     return true;
   });
 }
@@ -372,9 +436,18 @@ export type SessionLookup = {
  * statement is sent as a simple query: one round trip, where a bound one takes two.
  */
 export async function findSessionWithOnboarding(token: string): Promise<SessionLookup | null> {
-  const database = await getAuthDatabase();
   const hash = hashToken(token);
+  const cacheKey = authSessionCacheKey(hash);
   const now = new Date();
+  const cached = await cacheGet<SerializedSessionLookup>(cacheKey, sessionCacheL1TtlMs);
+  if (cached) {
+    const lookup = deserializeSessionLookup(cached);
+    if (lookup.user.status === "active" && lookup.session.revokedAt === null && lookup.session.expiresAt > now) {
+      return lookup;
+    }
+    await cacheDelete(cacheKey);
+  }
+  const database = await getAuthDatabase();
   const rows = await database
     .select({ session: authSessions, user: users, settingsUserId: userSettings.userId, onboardingCompletedAt: userSettings.onboardingCompletedAt })
     .from(authSessions)
@@ -414,7 +487,19 @@ export async function findSessionWithOnboarding(token: string): Promise<SessionL
       );
   }
 
-  return { session, user, onboarding: row.settingsUserId === null ? null : { completedAt: row.onboardingCompletedAt } };
+  const lookup: SessionLookup = {
+    session,
+    user,
+    onboarding: row.settingsUserId === null ? null : { completedAt: row.onboardingCompletedAt },
+  };
+  // Only cache onboarded sessions so onboarding completion redirects take effect immediately.
+  if (lookup.onboarding?.completedAt !== null) {
+    const remainingSeconds = Math.floor((session.expiresAt.getTime() - now.getTime()) / 1000);
+    if (remainingSeconds > 5) {
+      await cacheSet(cacheKey, serializeSessionLookup(lookup), Math.min(sessionCacheTtlSeconds, remainingSeconds), sessionCacheL1TtlMs);
+    }
+  }
+  return lookup;
 }
 
 export async function findSessionByToken(
@@ -425,14 +510,16 @@ export async function findSessionByToken(
 }
 
 export async function revokeSessionByToken(token: string, reason: string): Promise<void> {
+  const hash = hashToken(token);
   const database = await getAuthDatabase();
   await database
     .update(authSessions)
     .set({ revokedAt: new Date(), revocationReason: reason })
     .where(
       and(
-        eq(authSessions.refreshTokenHash, hashToken(token)),
+        eq(authSessions.refreshTokenHash, hash),
         isNull(authSessions.revokedAt),
       ),
     );
+  await cacheDelete(authSessionCacheKey(hash));
 }

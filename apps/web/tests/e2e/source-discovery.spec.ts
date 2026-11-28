@@ -59,10 +59,7 @@ test.afterAll(async () => {
     await db`DELETE FROM ops.idempotency_records WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM activity.activity_events WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM study.user_resource_progress WHERE user_id IN ${db(userIds)}`;
-    await db`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id IN ${db(userIds)})`;
-    await db`DELETE FROM agent.tool_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id IN ${db(userIds)})`;
-    await db`DELETE FROM agent.agent_steps WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM agent.agent_runs WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM study.study_sessions WHERE user_id IN ${db(userIds)}`;

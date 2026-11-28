@@ -133,10 +133,7 @@ test("signup → interests → Discover preview → full feed → topic controls
         await db`DELETE FROM discovery.recommendation_runs WHERE user_id = ${userId}`;
         await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
         await db`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
-        await db`DELETE FROM agent.agent_artifacts WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
         await db`DELETE FROM agent.model_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
-        await db`DELETE FROM agent.tool_invocations WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
-        await db`DELETE FROM agent.agent_steps WHERE agent_run_id IN (SELECT id FROM agent.agent_runs WHERE user_id = ${userId})`;
         await db`DELETE FROM agent.agent_runs WHERE user_id = ${userId}`;
         await db`DELETE FROM study.schedule_items WHERE user_id = ${userId}`;
         await db`DELETE FROM identity.users WHERE id = ${userId}`;

@@ -1,6 +1,5 @@
 import {
   AGENT_RUN_STATUSES,
-  AGENT_STEP_STATUSES,
   GOAL_STATUSES,
   JOB_STATUSES,
   OUTBOX_STATUSES,
@@ -23,6 +22,5 @@ export const goalStatus = studySchema.enum("goal_status", GOAL_STATUSES);
 export const sessionMode = studySchema.enum("session_mode", SESSION_MODES);
 export const sessionStatus = studySchema.enum("session_status", SESSION_STATUSES);
 export const agentRunStatus = agentSchema.enum("run_status", AGENT_RUN_STATUSES);
-export const agentStepStatus = agentSchema.enum("step_status", AGENT_STEP_STATUSES);
 export const jobStatus = opsSchema.enum("job_status", JOB_STATUSES);
 export const outboxStatus = opsSchema.enum("outbox_status", OUTBOX_STATUSES);

@@ -31,6 +31,7 @@ export const outboxEvents = opsSchema.table(
   },
   (table) => [
     index("outbox_events_publish_idx").on(table.availableAt, table.createdAt).where(sql`${table.status} = 'pending'`),
+    index("outbox_events_pending_type_idx").on(table.eventType, table.availableAt, table.createdAt).where(sql`${table.status} = 'pending'`),
     index("outbox_events_aggregate_idx").on(table.aggregateType, table.aggregateId, table.createdAt),
     index("outbox_events_correlation_idx").on(table.correlationId),
     check("outbox_events_session_user_pair_chk", sql`${table.studySessionId} IS NULL OR ${table.userId} IS NOT NULL`),

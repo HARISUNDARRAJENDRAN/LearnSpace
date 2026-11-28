@@ -87,7 +87,6 @@ test.afterAll(async () => {
     await db`DELETE FROM ops.idempotency_records WHERE user_id IN ${db(userIds)}`;
     await db`DELETE FROM activity.activity_events WHERE user_id IN ${db(userIds)} OR resource_id IN ${db(resourceIds)}`;
     await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${db(userIds)})`;
-    await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${db(userIds)})`;
     await db`DELETE FROM study.user_resource_progress WHERE user_id IN ${db(userIds)} OR resource_id IN ${db(resourceIds)}`;
     await db`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${db(userIds)}) OR resource_id IN ${db(resourceIds)}`;
     await db`DELETE FROM study.study_sessions WHERE user_id IN ${db(userIds)}`;
@@ -187,6 +186,18 @@ test("E2E A — video Study starts internally, persists progress, and resumes fr
   await expect(studyTool(page, "Code")).toHaveCount(0);
   await page.getByRole("button", { name: "AI", exact: true }).click();
   await expect(page.locator(".application-sidebar")).toHaveClass(/is-collapsed/);
+
+  const desktopViewport = page.viewportSize()!;
+  await page.getByRole("link", { name: "Back to Home" }).click();
+  await page.setViewportSize({ width: 355, height: 768 });
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const drawer = page.getByRole("complementary", { name: "Application navigation" });
+  await expect(drawer.getByRole("link", { name: "Home", exact: true })).toBeVisible();
+  await expect(drawer.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
+  await drawer.getByRole("link", { name: "AI Chat" }).click();
+  await expect(page).toHaveURL(/\?tool=chat$/);
+  await expect(drawer).not.toHaveClass(/is-open/);
+  await page.setViewportSize(desktopViewport);
 
   await page.getByRole("button", { name: "Expand sidebar" }).click();
   const nestedSession = page.locator(".application-session").filter({ hasText: "A deterministic Study video" });

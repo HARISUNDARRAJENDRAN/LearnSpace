@@ -1,3 +1,4 @@
+import { cacheDelete, homeDashboardCacheKey } from "@learnspace/shared/recommendation-cache";
 import { withUserTransaction, type Transaction } from "@learnspace/db";
 import { scheduleItems } from "@learnspace/db/schema";
 import { and, eq, sql } from "drizzle-orm";
@@ -353,6 +354,7 @@ export async function observePlan(userId: string, now = new Date()): Promise<{ c
       await tx.insert(scheduleItems).values({ userId, kind: action.kind, status: "planned", source: "agent", title: action.title, description: action.reason, startsAt, endsAt, resourceId, createdAt: now, updatedAt: now });
     }
   });
+  await cacheDelete(homeDashboardCacheKey(userId));
   return { changed: true };
 }
 
@@ -369,6 +371,7 @@ export async function tickPlanItem(userId: string, itemId: string, done: boolean
   if (!done) {
     await withUserTransaction(userId, (tx) => tx.update(scheduleItems).set({ status: "planned", completedAt: null, progressPct: 0, observerNote: null, evaluatedAt: null, updatedAt: now })
       .where(and(eq(scheduleItems.userId, userId), eq(scheduleItems.id, id))));
+    await cacheDelete(homeDashboardCacheKey(userId));
     return { verified: false, note: "Reopened." };
   }
   if (current.status === "done") return { verified: true, note: "Already done." };
@@ -402,5 +405,6 @@ export async function tickPlanItem(userId: string, itemId: string, done: boolean
     progressPct: verdict.done ? 100 : Math.min(99, verdict.progressPct), observerNote: verdict.note ?? item.observerNote, evaluatedAt: now,
     ...(verdict.done ? { status: "done", completedAt: now } : {}),
   }).where(and(eq(scheduleItems.id, id), eq(scheduleItems.status, "planned"), sql`${scheduleItems.updatedAt} = ${item.updatedAt}::timestamptz`)));
+  await cacheDelete(homeDashboardCacheKey(userId));
   return { verified: verdict.done, note };
 }

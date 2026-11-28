@@ -1,4 +1,4 @@
-import { char, index, jsonb, text, timestamp, uniqueIndex, uuid, vector } from "drizzle-orm/pg-core";
+import { char, halfvec, index, jsonb, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { retrievalSchema } from "../namespaces.js";
 import { resourceVersions } from "../catalog/resources.js";
 import { ACTIVE_EMBEDDING_DIMENSIONS } from "./embeddings.js";
@@ -12,7 +12,7 @@ export const answerCache = retrievalSchema.table(
     contractVersion: text("contract_version").notNull(),
     scopeKey: text("scope_key").notNull(),
     questionSha256: char("question_sha256", { length: 64 }).notNull(),
-    questionEmbedding: vector("question_embedding", { dimensions: ACTIVE_EMBEDDING_DIMENSIONS }),
+    questionEmbedding: halfvec("question_embedding", { dimensions: ACTIVE_EMBEDDING_DIMENSIONS }),
     answer: jsonb("answer").$type<Record<string, unknown>>().notNull(),
     chunkIds: uuid("chunk_ids").array().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

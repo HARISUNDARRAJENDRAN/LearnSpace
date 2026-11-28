@@ -235,7 +235,6 @@ test("Luny answers out loud with her lesson commands taken out, each exchange is
     await migrator`DELETE FROM agent.agent_runs WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
-    await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.study_sessions WHERE user_id IN ${migrator(users)}`;
@@ -331,7 +330,6 @@ test("a long lecture's guide is written in parts over waves, and an earlier one-
     await migrator`DELETE FROM agent.agent_runs WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${owner.id})`;
-    await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${owner.id})`;
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id = ${owner.id}`;
     await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id = ${owner.id})`;
     await migrator`DELETE FROM study.study_sessions WHERE user_id = ${owner.id}`;

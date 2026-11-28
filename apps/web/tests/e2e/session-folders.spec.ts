@@ -213,7 +213,6 @@ test("folders open a shared canvas for papers and videos across modes and browse
     await db`DELETE FROM ops.outbox_events WHERE user_id = ${userId}`;
     await db`DELETE FROM ops.idempotency_records WHERE user_id = ${userId}`;
     await db`DELETE FROM activity.activity_events WHERE user_id = ${userId}`;
-    await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.user_resource_progress WHERE user_id = ${userId}`;
     await db`DELETE FROM study.tutor_messages WHERE thread_id IN (SELECT id FROM study.tutor_threads WHERE user_id = ${userId})`;
     await db`DELETE FROM study.tutor_threads WHERE user_id = ${userId}`;

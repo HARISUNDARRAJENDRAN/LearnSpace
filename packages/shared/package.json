@@ -99,7 +99,7 @@
     "build": "tsc --build",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts src/tutor.test.ts src/notes.test.ts"
+    "test": "tsx --test src/contracts.test.ts src/exa-discovery.test.ts src/source-discovery.test.ts src/youtube-quality.test.ts src/transcripts.test.ts src/tutor.test.ts src/notes.test.ts src/recommendation-cache.test.ts"
   },
   "dependencies": {
     "ioredis": "^6.0.0",

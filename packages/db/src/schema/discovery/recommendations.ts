@@ -24,6 +24,9 @@ export const recommendationRuns = discoverySchema.table(
   (table) => [
     index("recommendation_runs_user_created_idx").on(table.userId, table.createdAt.desc()),
     index("recommendation_runs_surface_created_idx").on(table.surface, table.createdAt.desc()),
+    index("recommendation_runs_reuse_idx")
+      .on(table.userId, table.surface, table.strategyVersion, table.featureVersion, table.createdAt.desc())
+      .where(sql`${table.status} = 'completed'`),
     uniqueIndex("recommendation_runs_user_id_uq").on(table.userId, table.id),
     foreignKey({
       name: "recommendation_runs_user_session_fkey",

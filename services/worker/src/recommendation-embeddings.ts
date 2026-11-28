@@ -70,7 +70,7 @@ export async function backfillResourceEmbeddings(db: Sql, provider: EmbeddingPro
       }
       const attempts = item.hash === item.row.source_hash ? (item.row.attempts ?? 0) + 1 : 1;
       const updated = vectors
-        ? await tx`UPDATE discovery.resource_embeddings SET embedding = ${JSON.stringify(vectors[index])}::vector,
+        ? await tx`UPDATE discovery.resource_embeddings SET embedding = ${JSON.stringify(vectors[index])}::halfvec,
             attempts = 0, last_error = NULL, retry_at = now(), updated_at = now()
             WHERE resource_id = ${row.id} AND model = ${config.embeddingModel} AND source_hash = ${item.hash} AND retry_at = ${item.lease}::text::timestamptz RETURNING resource_id`
         : await tx`UPDATE discovery.resource_embeddings SET attempts = ${attempts}, last_error = ${failure},

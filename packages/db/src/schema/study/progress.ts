@@ -27,6 +27,8 @@ export const userResourceProgress = studySchema.table(
     primaryKey({ columns: [table.userId, table.resourceId] }),
     check("user_resource_progress_pct_chk", sql`${table.progressPct} IS NULL OR ${table.progressPct} BETWEEN 0 AND 100`),
     index("user_resource_progress_user_status_updated_idx").on(table.userId, table.status, table.updatedAt.desc()),
+    index("user_resource_progress_user_updated_idx").on(table.userId, table.updatedAt.desc()),
+    index("user_resource_progress_user_opened_idx").on(table.userId, table.lastOpenedAt.desc()).where(sql`${table.lastOpenedAt} IS NOT NULL`),
     foreignKey({
       name: "user_resource_progress_user_session_fkey",
       columns: [table.userId, table.lastSessionId],

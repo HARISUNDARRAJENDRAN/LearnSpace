@@ -88,7 +88,7 @@ export function selectEvidence(ranked: Scored[], scope: TutorScope): { chosen: S
 /** Retrieves evidence from one transcript version only, and records the run with every scored candidate. */
 export async function retrieveEvidence(tx: Transaction, input: { userId: string; sessionId: string; agentRunId: string; versionId: string; question: string; tsquery: string; scope: TutorScope; vector: number[] | null; recentChunkIds: string[] }): Promise<Retrieval> {
   const started = performance.now();
-  const vectorSql = input.vector ? sql`1 - (e.embedding <=> ${JSON.stringify(input.vector)}::vector)` : sql`NULL::float8`;
+  const vectorSql = input.vector ? sql`1 - (e.embedding <=> ${JSON.stringify(input.vector)}::halfvec)` : sql`NULL::float8`;
   const lexicalSql = input.tsquery ? sql`ts_rank_cd(c.search_tsv, to_tsquery('simple', ${input.tsquery}))` : sql`0::float8`;
   const rows = await tx.execute<{ id: string; ordinal: number; start_ms: number | null; end_ms: number | null; token_count: number; lexical: number; vector: number | null }>(sql`
     SELECT c.id, c.ordinal, c.start_ms, c.end_ms, c.token_count, ${lexicalSql} AS lexical, ${vectorSql} AS vector

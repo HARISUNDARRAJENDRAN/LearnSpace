@@ -227,7 +227,6 @@ test("a watched video completes only once its mastery check is passed", { skip: 
     await migrator`DELETE FROM agent.agent_runs WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM activity.activity_events WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_checkpoints WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
-    await migrator`DELETE FROM study.session_context_snapshots WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.user_resource_progress WHERE user_id IN ${migrator(users)}`;
     await migrator`DELETE FROM study.session_resources WHERE study_session_id IN (SELECT id FROM study.study_sessions WHERE user_id IN ${migrator(users)})`;
     await migrator`DELETE FROM study.study_sessions WHERE user_id IN ${migrator(users)}`;

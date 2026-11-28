@@ -49,7 +49,12 @@ const referenceUrl = (doi: string | null, arxivId: string | null, metadata: Reco
 
 /** Loads paper metadata using the same source tables and current version as the paper read model. */
 export async function loadPaperContext(tx: Transaction, userId: string, resourceId: string, versionId: string): Promise<PaperContext> {
-  const [row] = await tx.select({ resource: resources, paper: paperDetails })
+  const [row] = await tx.select({
+    title: resources.title,
+    abstract: paperDetails.abstract,
+    venue: paperDetails.venue,
+    publicationDate: paperDetails.publicationDate,
+  })
     .from(resources).innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
     .where(and(eq(resources.id, resourceId), eq(resources.type, "paper"), eq(resources.currentVersionId, versionId), isNull(resources.deletedAt), or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"])))).limit(1);
   if (!row) throw new AuthError("PAPER_NOT_FOUND", "This paper is not available.", 404);
@@ -59,8 +64,8 @@ export async function loadPaperContext(tx: Transaction, userId: string, resource
     tx.select().from(paperReferences).where(eq(paperReferences.paperResourceId, resourceId)).orderBy(asc(paperReferences.ordinal)),
   ]);
   return {
-    resourceId, versionId, title: row.resource.title, authors: authorRows.map(({ name }) => name), abstract: row.paper.abstract,
-    venue: row.paper.venue, publicationDate: row.paper.publicationDate ? String(row.paper.publicationDate) : null,
+    resourceId, versionId, title: row.title, authors: authorRows.map(({ name }) => name), abstract: row.abstract,
+    venue: row.venue, publicationDate: row.publicationDate ? String(row.publicationDate) : null,
     outline: headings.map(({ content, anchor, page }) => ({ title: content, page, sectionId: string(anchor.sectionId) })),
     references: referenceRows.map((reference) => ({
       ordinal: reference.ordinal, raw: reference.rawReference, title: string(reference.metadata.title),

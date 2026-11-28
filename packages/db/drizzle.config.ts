@@ -19,7 +19,6 @@ export default defineConfig({
     "knowledge",
     "ops",
     "practice",
-    "projection",
     "retrieval",
     "study",
   ],

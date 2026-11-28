@@ -131,7 +131,6 @@ test.afterAll(async () => {
     await db`DELETE FROM ops.outbox_events WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM activity.activity_events WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.session_checkpoints WHERE study_session_id IN ${db(sessionIds)}`;
-    await db`DELETE FROM study.session_context_snapshots WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.user_resource_progress WHERE last_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.focus_sessions WHERE study_session_id IN ${db(sessionIds)}`;
     await db`DELETE FROM study.schedule_items WHERE study_session_id IN ${db(sessionIds)}`;
