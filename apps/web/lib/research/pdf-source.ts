@@ -47,12 +47,6 @@ export async function paperPdfUrl(userId: string, resourceId: string): Promise<U
       const discovered = await discoverOpenAccessPdfForDoi(doi);
       const discoveredCandidate = (discovered.arxivId ? arxivPdfUrl(discovered.arxivId) : null) ?? discovered.pdfUrl;
       url = discoveredCandidate ? trustedPdfUrl(discoveredCandidate) : null;
-      if (url) {
-        const discoveredHref = url.href;
-        await withUserTransaction(userId, async (tx) => {
-          await tx.update(paperDetails).set({ pdfSourceUrl: discoveredHref }).where(and(eq(paperDetails.resourceId, resourceId), isNull(paperDetails.pdfSourceUrl)));
-        }).catch(() => undefined);
-      }
     }
   }
 

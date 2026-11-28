@@ -1116,28 +1116,6 @@ async function persistResolvedResource(tx: Transaction, userId: string, parsed: 
    const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), ...(data.pdfUrl ? { pdfSourceUrl: data.pdfUrl } : {}), ...(data.arxivId ? { arxivId: data.arxivId } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
   const resourceId = resource?.id ?? (await findExistingResource(tx, userId, parsed))?.resource.id;
   if (!resourceId) throw new Error("Resolved resource could not be created");
-  if (parsed.mode === "research") {
-    const arxivId = parsed.provider === "arxiv" ? parsed.id : data.arxivId ?? null;
-    const doi = parsed.provider === "doi" ? parsed.id : null;
-    const pdfSourceUrl = data.pdfUrl ?? (arxivId ? `https://arxiv.org/pdf/${arxivId}` : null);
-    await tx.insert(paperDetails).values({
-      resourceId,
-      abstract: data.description,
-      venue: data.venue,
-      pdfSourceUrl,
-      ...(arxivId ? { arxivId } : {}),
-      ...(doi ? { doi } : {}),
-      metadata: { ...(data.authors.length > 0 ? { authors: data.authors } : {}) },
-    }).onConflictDoNothing();
-    // If a global catalog copy already owns the unique arxiv_id/doi, still persist the private copy's paper_details row.
-    await tx.insert(paperDetails).values({
-      resourceId,
-      abstract: data.description,
-      venue: data.venue,
-      pdfSourceUrl,
-      metadata: { ...(data.authors.length > 0 ? { authors: data.authors } : {}) },
-    }).onConflictDoNothing();
-  }
   await ensureIngestionRequest(tx, userId, resourceId, parsed, correlationId);
   await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, resourceId);
   return resourceId;
