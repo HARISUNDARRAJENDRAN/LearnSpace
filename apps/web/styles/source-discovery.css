@@ -242,12 +242,16 @@
 .source-discovery-message-icon { display: grid; width: 36px; height: 36px; place-items: center; margin-bottom: 3px; border-radius: 50%; background: #eef2ff; color: #5069eb; }
 .source-discovery-message-icon svg { width: 18px; height: 18px; }
 .source-discovery-message p { max-width: 470px; margin: 0; color: #353a43; font-size: 14px; line-height: 1.45; }
+.source-discovery-message-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 9px; }
 .source-discovery-message button { display: inline-flex; align-items: center; gap: 6px; margin-top: 9px; color: #3154d9; }
+.source-discovery-message-actions button { margin-top: 0; }
 .source-discovery-message button svg { width: 15px; height: 15px; }
 
 .source-discovery-direct-form { min-height: 260px; }
 .source-discovery-direct-form .source-discovery-url-input { width: min(100%, 520px); }
 .source-discovery-url-input { display: flex; height: 44px; align-items: center; gap: 8px; padding: 0 5px 0 13px; border: 1px solid #cfd8e8; border-radius: 23px; background: #fff; }
+.source-discovery-url-input.is-invalid { border-color: #dc6868; }
+.source-discovery-direct-error { max-width: 520px; margin: 10px 0 0 !important; color: #b42318 !important; font-size: 13px !important; }
 .source-discovery-url-input > svg { width: 16px; height: 16px; color: #6f7a8c; }
 .source-discovery-url-input input { min-width: 0; flex: 1; border: 0; outline: 0; color: #333944; font: inherit; font-size: 13px; }
 .source-discovery-url-input button { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 50%; background: #f2f5ff; color: #4763d8; cursor: pointer; }

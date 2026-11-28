@@ -313,12 +313,15 @@ html:has(.application-page)::-webkit-scrollbar-thumb:hover { background: rgba(0,
 
 .application-nav {
   display: flex;
+  min-width: 0;
   min-height: 0;
   flex: 1;
   flex-direction: column;
   gap: 14px;
   margin-top: 11px;
-  overflow: hidden auto;
+  padding-right: 4px;
+  overflow-x: clip;
+  overflow-y: auto;
   /* Reaching the end of the sidebar's list never carries the scroll on to the page. */
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -516,15 +519,22 @@ span.application-session-toggle svg { width: 12px; height: 12px; }
 .application-disclosure > * { min-height: 0; overflow: hidden; }
 .application-disclosure:not([data-open]) > * { visibility: hidden; transition: visibility 0s var(--motion-slow); }
 
+.application-sessions,
+.application-folder-tree,
+.application-folder-tree > section,
+.application-folder-tree > details { min-width: 0; }
+
 .application-session-tree,
-.application-session-parts { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.application-session-parts { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 1px; margin: 0; padding: 0; list-style: none; }
+.application-session-tree > li,
+.application-session-parts > li { min-width: 0; }
 .application-session-tree { padding: 1px 0 2px 14px; }
 .application-session-row { position: relative; display: flex; min-width: 0; height: 29px; align-items: center; gap: 2px; padding: 0 3px 0 2px; border-radius: 6px; transition: background-color var(--motion-normal) var(--motion-ease-standard); }
 .application-session-row:hover,
 .application-session-row:focus-within { background: rgba(0,0,0,.035); }
 .application-session.is-active > .application-session-row { background: rgba(0,0,0,.05); }
 .application-session-link { display: flex; min-width: 0; height: 100%; flex: 1; align-items: center; gap: 6px; padding: 0 2px 0 4px; color: #4a4a48; font-size: 13px; text-decoration: none; }
-.application-session-link > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.application-session-link > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .application-session-link > small { flex: none; padding: 1px 5px; border-radius: 999px; background: rgba(0,0,0,.05); color: #7d7d7a; font-size: 10px; }
 .application-session.is-active .application-session-link { color: #232321; font-weight: 500; }
 .application-session-more { opacity: 0; }

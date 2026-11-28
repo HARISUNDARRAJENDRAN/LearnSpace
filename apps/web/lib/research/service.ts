@@ -22,6 +22,7 @@ import { AuthError } from "../auth/errors";
 import { rankPaperResourcesForUser } from "../discovery/service";
 import { listStudySessions } from "../study/service";
 import { scoreResearchAffinity, type ResearchAffinitySignal } from "./affinity";
+import { cleanLatexText, cleanPaperText } from "./text";
 
 // A save alone (6) or a save plus one open (~7.8) is not a favourite; a save plus real reading, or repeated engagement, is.
 const IMPLICIT_FAVORITE_SCORE = 8;
@@ -85,8 +86,8 @@ async function paperSummaries(tx: Transaction, userId: string, paperRows: PaperR
   for (const [resourceId, engagement] of engagementCounts) pushSignal(signalsByAuthor, authorIdsByPaper.get(resourceId) ?? [], { kind: "engaged", occurredAt: engagement.occurredAt, count: engagement.count });
   const papers = paperRows.map(({ resource, paper }) => ({
     resourceId: resource.id,
-    title: resource.title,
-    abstract: paper.abstract,
+    title: cleanLatexText(resource.title),
+    abstract: cleanPaperText(paper.abstract),
     authors: authorsByPaper.get(resource.id) ?? [],
     authorIds: authorIdsByPaper.get(resource.id) ?? [],
     venue: paper.venue,

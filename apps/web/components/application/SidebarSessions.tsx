@@ -247,7 +247,7 @@ export function SidebarSessions({ mode, onClose, onExpand }: { mode: "learn" | "
         </details>
         {recent.length ? <details>
           <summary>Recent Sessions</summary>
-          <ul className="application-session-tree">{recent.map((session) => <li key={session.id}><Link className="application-session-link" href={session.route ?? studyHomeHref(mode)} prefetch={false} onClick={onClose}><span>{session.title}</span></Link></li>)}</ul>
+          <ul className="application-session-tree">{recent.map((session) => <li key={session.id}><Link className="application-session-link" href={session.route ?? studyHomeHref(mode)} title={session.title} prefetch={false} onClick={onClose}><span>{session.title}</span></Link></li>)}</ul>
         </details> : null}
         <details onToggle={(event) => setShowEnded(event.currentTarget.open)}>
           <summary>Ended sessions</summary>

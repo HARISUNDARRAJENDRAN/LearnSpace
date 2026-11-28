@@ -13,6 +13,8 @@ import { instantDiscovery } from "@learnspace/shared/exa-discovery";
 import { getRedisValue, setRedisValue } from "../discovery/cache";
 import { gatherVideos, type PickedVideo, pickVideos, provisionalPicks, type VideoIntent } from "./video-agent";
 import { retrieveResearchPapers, type ResearchPaper } from "../research/retrieval/service";
+import { cleanLatexText, cleanPaperText } from "../research/text";
+import { resolveArxivMetadata, resolveDoiMetadata } from "./paper-resolver";
 
 const sourceResultLimit = SOURCE_DISCOVERY_MAX_RESULTS;
 const sourceCoverageMinimum = SOURCE_DISCOVERY_MIN_RESULTS;
@@ -905,8 +907,8 @@ function paperSearchCandidate(paper: ResearchPaper, rank: number, runId: string)
     type: "paper",
     provider: "arxiv",
     externalId: paper.arxivId,
-    title: paper.title,
-    description: paper.abstract,
+    title: cleanLatexText(paper.title),
+    description: cleanPaperText(paper.abstract),
     canonicalUrl: paper.canonicalUrl,
     thumbnailUrl: null,
     author: paper.authors[0]?.name ?? "arXiv",
@@ -1000,50 +1002,11 @@ export async function getSourceDiscoveryRun(userId: string, runId: string): Prom
 
 type ResolvedData = { title: string; description: string | null; thumbnailUrl: string | null; author: string | null; durationMs: number | null; authors: string[]; venue: string | null; year: number | null };
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(12_000), headers: { Accept: "application/atom+xml,text/xml,application/xml" } });
-  if (!response.ok) throw sourceError("SOURCE_UNAVAILABLE", "The source provider could not be reached.", 502);
-  const text = await response.text();
-  if (text.length > 1_500_000) throw sourceError("SOURCE_UNAVAILABLE", "The source response was too large.", 502);
-  return text;
-}
-
 async function fetchJson(url: string): Promise<Record<string, unknown>> {
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(12_000), headers: { Accept: "application/json" } });
   if (!response.ok) throw sourceError("SOURCE_UNAVAILABLE", "The source provider could not be reached.", 502);
   const body: unknown = await response.json();
   return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
-}
-
-function xmlText(entry: string, tag: string): string | null {
-  const value = entry.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, "i"))?.[1]?.trim();
-  if (!value) return null;
-  return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-}
-
-function paperMetadataFromXml(xml: string, arxivId: string): { title: string; abstract: string | null; authors: string[]; year: number | null; venue: string | null } {
-  const entry = xml.match(/<entry>([\s\S]*?)<\/entry>/i)?.[1] ?? "";
-  const published = xmlText(entry, "published");
-  return {
-    title: xmlText(entry, "title") ?? `arXiv paper ${arxivId}`,
-    abstract: xmlText(entry, "summary"),
-    authors: [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)].map((match) => match[1]?.trim()).filter((value): value is string => Boolean(value)),
-    year: published ? new Date(published).getUTCFullYear() : null,
-    venue: "arXiv",
-  };
-}
-
-function paperMetadataFromCrossref(body: Record<string, unknown>, doi: string): { title: string; abstract: string | null; authors: string[]; year: number | null; venue: string | null } {
-  const message = recordValue(body, "message");
-  const title = asString(arrayValue(recordValue(message, "title"))[0]) ?? doi;
-  const authors = arrayValue(recordValue(message, "author")).flatMap((author) => {
-    const given = asString(recordValue(author, "given"));
-    const family = asString(recordValue(author, "family"));
-    return given || family ? [[given, family].filter(Boolean).join(" ")] : [];
-  });
-  const published = recordValue(message, "published-print") ?? recordValue(message, "published-online");
-  const firstPart = arrayValue(arrayValue(recordValue(published, "date-parts"))[0]);
-  return { title, abstract: asString(recordValue(message, "abstract"))?.replace(/<[^>]+>/g, "") ?? null, authors, year: typeof firstPart[0] === "number" ? firstPart[0] : null, venue: asString(arrayValue(recordValue(message, "container-title"))[0]) };
 }
 
 function previewFrom(resourceId: string, parsed: NonNullable<ReturnType<typeof classifySourceUrl>>, data: ResolvedData): SourcePreview {
@@ -1169,17 +1132,27 @@ export async function resolveSource(userId: string, input: SourceDiscoveryResolv
   if (existing) {
     const metadata = existing.resource.metadata ?? {};
     const authors = arrayValue(recordValue(existing.paper?.metadata, "authors") ?? recordValue(metadata, "authors")).filter((value): value is string => typeof value === "string");
-    data = { title: existing.resource.title, description: existing.resource.description ?? existing.paper?.abstract ?? null, thumbnailUrl: asString(recordValue(metadata, "thumbnailUrl")), author: existing.video?.channelTitle ?? authors[0] ?? existing.paper?.venue ?? null, durationMs: existing.video?.durationMs ?? null, authors, venue: existing.paper?.venue ?? null, year: existing.paper?.publicationDate ? new Date(existing.paper.publicationDate).getUTCFullYear() : null };
+    const rawDescription = existing.resource.description ?? existing.paper?.abstract ?? null;
+    data = {
+      title: parsed.mode === "research" ? cleanLatexText(existing.resource.title) : existing.resource.title,
+      description: parsed.mode === "research" ? cleanPaperText(rawDescription) : rawDescription,
+      thumbnailUrl: asString(recordValue(metadata, "thumbnailUrl")),
+      author: existing.video?.channelTitle ?? authors[0] ?? existing.paper?.venue ?? null,
+      durationMs: existing.video?.durationMs ?? null,
+      authors,
+      venue: existing.paper?.venue ?? null,
+      year: existing.paper?.publicationDate ? new Date(existing.paper.publicationDate).getUTCFullYear() : null,
+    };
   } else {
     try {
       if (parsed.provider === "youtube") {
         const body = await fetchJson(`https://www.youtube.com/oembed?url=${encodeURIComponent(parsed.canonicalUrl)}&format=json`);
         data = { title: asString(body.title) ?? "YouTube video", description: null, thumbnailUrl: asString(body.thumbnail_url), author: asString(body.author_name), durationMs: null, authors: [], venue: null, year: null };
       } else if (parsed.provider === "arxiv") {
-        const paper = paperMetadataFromXml(await fetchText(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(parsed.id)}`), parsed.id);
+        const paper = await resolveArxivMetadata(parsed.id);
         data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year };
       } else {
-        const paper = paperMetadataFromCrossref(await fetchJson(`https://api.crossref.org/works/${encodeURIComponent(parsed.id)}`), parsed.id);
+        const paper = await resolveDoiMetadata(parsed.id);
         data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year };
       }
     } catch (error) {

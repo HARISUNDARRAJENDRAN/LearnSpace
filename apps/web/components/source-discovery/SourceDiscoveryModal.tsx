@@ -1,6 +1,6 @@
 "use client";
 
-import type { SourceDiscoveryCandidate, SourceDiscoveryMode, SourceDiscoverySearchResponse, SourcePreview, SourceRankingIntent } from "@learnspace/shared";
+import { classifySourceUrl, type SourceDiscoveryCandidate, type SourceDiscoveryMode, type SourceDiscoverySearchResponse, type SourcePreview, type SourceRankingIntent, sourceModeForUrl } from "@learnspace/shared";
 import { ArrowRight, FileText, Link2, LoaderCircle, Search, Sparkles, Video, X } from "lucide-react";
 import Image from "next/image";
 import { type FormEvent, type RefObject, useEffect, useId, useRef, useState } from "react";
@@ -77,6 +77,8 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
   const [candidates, setCandidates] = useState<SourceDiscoveryCandidate[]>([]);
   const [preview, setPreview] = useState<SourcePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [directError, setDirectError] = useState<string | null>(null);
+  const [errorEditable, setErrorEditable] = useState(false);
   const [detectedMode, setDetectedMode] = useState<SourceDiscoveryMode | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [rankingIntent, setRankingIntent] = useState<SourceRankingIntent>("best_match");
@@ -93,6 +95,8 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
       setCandidates([]);
       setPreview(null);
       setError(null);
+      setDirectError(null);
+      setErrorEditable(false);
       setDetectedMode(null);
       setRunId(null);
       setRankingIntent("best_match");
@@ -104,6 +108,8 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
     setCandidates([]);
     setPreview(null);
     setError(null);
+    setDirectError(null);
+    setErrorEditable(false);
     setDetectedMode(null);
     setRunId(null);
     setRankingIntent("best_match");
@@ -186,16 +192,59 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
     }
   }
 
-  async function resolveUrl(value: string, sourceMode = mode) {
+  function focusEditableUrl(origin: "direct" | "search") {
+    setError(null);
+    setErrorEditable(false);
+    setState("idle");
+    window.requestAnimationFrame(() => {
+      const target = origin === "direct" ? directRef.current : searchRef.current;
+      target?.focus();
+      target?.select();
+    });
+  }
+
+  async function resolveUrl(value: string, sourceMode = mode, origin: "direct" | "search" = directOpen ? "direct" : "search") {
     const url = value.trim();
     if (!url) return;
     lastResolvedUrl.current = url;
     requestRef.current?.abort();
+    const detected = sourceModeForUrl(url);
+    const parsed = classifySourceUrl(url);
+    if (detected && detected !== sourceMode) {
+      setDetectedMode(detected);
+      setDirectError(null);
+      setErrorEditable(false);
+      setError(detected === "learn" ? "This looks like a YouTube video. Videos are studied in Learn mode." : "This looks like a research paper. Research papers are opened in Research mode.");
+      setState("mode_mismatch");
+      return;
+    }
+    if (!parsed) {
+      const validationMessage = detected ? "That source URL is not valid." : "Use a YouTube, arXiv, or DOI URL.";
+      if (origin === "direct") {
+        setDirectOpen(true);
+        setDirectError(validationMessage);
+        setError(null);
+        setErrorEditable(false);
+        setState("idle");
+        window.requestAnimationFrame(() => {
+          directRef.current?.focus();
+          directRef.current?.select();
+        });
+      } else {
+        setDirectError(null);
+        setError(validationMessage);
+        setErrorEditable(true);
+        setState("error");
+      }
+      return;
+    }
     const controller = new AbortController();
     requestRef.current = controller;
     const version = ++requestVersion.current;
     setState("resolving_url");
     setError(null);
+    setDirectError(null);
+    setErrorEditable(false);
     setPreview(null);
     setDetectedMode(null);
     try {
@@ -209,12 +258,31 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
       if (version !== requestVersion.current) return;
       if (!response.ok) {
         const errorBody = body as ErrorBody;
-        if (errorBody.error?.code === "SOURCE_MODE_MISMATCH") {
-          setDetectedMode(errorBody.error.detectedMode ?? null);
+        const code = errorBody.error?.code;
+        if (code === "SOURCE_MODE_MISMATCH") {
+          setDetectedMode(errorBody.error?.detectedMode ?? null);
           setError(messageFrom(errorBody));
           setState("mode_mismatch");
+        } else if (response.status === 400 || response.status === 422 || code === "UNSUPPORTED_SOURCE_URL" || code === "MALFORMED_SOURCE_URL") {
+          const message = messageFrom(errorBody);
+          if (origin === "direct") {
+            setDirectOpen(true);
+            setDirectError(message);
+            setError(null);
+            setErrorEditable(false);
+            setState("idle");
+            window.requestAnimationFrame(() => {
+              directRef.current?.focus();
+              directRef.current?.select();
+            });
+          } else {
+            setError(message);
+            setErrorEditable(true);
+            setState("error");
+          }
         } else {
           setError(messageFrom(errorBody));
+          setErrorEditable(false);
           setState("error");
         }
         return;
@@ -227,6 +295,7 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
       if (caught instanceof DOMException && caught.name === "AbortError") return;
       if (version === requestVersion.current) {
         setError("We couldn't resolve that source. Check the URL and try again.");
+        setErrorEditable(false);
         setState("error");
       }
     } finally {
@@ -278,8 +347,10 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
     event?.preventDefault();
     const value = query.trim();
     if (!value) return;
+    setDirectError(null);
+    setErrorEditable(false);
     if (isUrl(value)) {
-      await resolveUrl(value);
+      await resolveUrl(value, mode, "search");
       return;
     }
     requestRef.current?.abort();
@@ -353,6 +424,8 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
     setCandidates([]);
     setPreview(null);
     setError(null);
+    setDirectError(null);
+    setErrorEditable(false);
     setRunId(null);
     setAgent(null);
   }
@@ -361,7 +434,7 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
     if (!detectedMode) return;
     if (onSaveSource) {
       selectSource(detectedMode);
-      void resolveUrl(lastResolvedUrl.current || query, detectedMode);
+      void resolveUrl(lastResolvedUrl.current || query, detectedMode, directOpen ? "direct" : "search");
     } else {
       onSwitchMode?.(detectedMode);
     }
@@ -406,10 +479,10 @@ export function SourceDiscoveryModal({ mode: initialMode, isOpen, onClose, onSwi
             {(state === "results" || (state === "searching" && candidates.length > 0)) ? <div className="source-discovery-results" aria-live="polite">{candidates.length > 0 ? <>{agent ? <AgentStatus agent={agent} count={candidates.length} /> : null}{candidates.map((candidate) => <ResultRow key={candidate.resourceId ?? candidate.canonicalUrl ?? candidate.title} candidate={candidate} mode={mode} startLabel={startLabel} onStart={onClose} onSaveSource={onSaveSource} />)}{state === "searching" && !agent ? <div className="source-discovery-more" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /> Finding a few more strong matches…</div> : null}{state === "results" && error ? <div className="source-discovery-more source-discovery-more-error" role="alert"><span>{error}</span><button type="button" onClick={() => void (directOpen ? resolveUrl(directUrl) : submitSearch())}>Try again</button></div> : null}</> : <div className="source-discovery-empty-results"><p>{error ?? (research ? "We couldn't find strong research papers for that topic." : "We couldn't find strong learning videos for that topic.")}</p><span>Try making the topic more specific.</span></div>}</div> : null}
             {state === "preview" && preview ? <Preview preview={preview} label={startLabel} onStart={onClose} onSaveSource={onSaveSource} /> : null}
             {state === "mode_mismatch" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon"><Link2 aria-hidden="true" /></div><p>{error}</p><span>{onSaveSource ? "Use the matching source type to preview this link." : detectedMode === "research" ? "Research papers are opened in Research mode." : "Videos are studied in Learn mode."}</span><button type="button" onClick={switchMode}>Switch to {detectedMode === "research" ? onSaveSource ? "Papers" : "Research" : onSaveSource ? "YouTube" : "Learn"} <ArrowRight aria-hidden="true" /></button></div> : null}
-            {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><button type="button" onClick={() => void (directOpen ? resolveUrl(directUrl) : submitSearch())}>Try again</button></div> : null}
-            {state === "idle" && !directOpen ? <div className="source-discovery-empty"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><button className="source-discovery-direct-trigger" type="button" onClick={() => { setDirectOpen(true); window.requestAnimationFrame(() => directRef.current?.focus()); }}>{directLabel}</button></div> : null}
+            {state === "error" ? <div className="source-discovery-message" role="alert"><div className="source-discovery-message-icon">{research ? <FileText aria-hidden="true" /> : <Video aria-hidden="true" />}</div><p>{error}</p><div className="source-discovery-message-actions">{errorEditable ? <button type="button" onClick={() => focusEditableUrl(directOpen ? "direct" : "search")}>Edit URL</button> : <><button type="button" onClick={() => void (directOpen ? resolveUrl(directUrl, mode, "direct") : submitSearch())}>Try again</button>{directOpen ? <button type="button" onClick={() => focusEditableUrl("direct")}>Edit URL</button> : null}</>}</div></div> : null}
+            {state === "idle" && !directOpen ? <div className="source-discovery-empty"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><button className="source-discovery-direct-trigger" type="button" onClick={() => { setDirectOpen(true); setDirectError(null); window.requestAnimationFrame(() => directRef.current?.focus()); }}>{directLabel}</button></div> : null}
             {state === "resolving_url" ? <div className="source-discovery-loading" aria-live="polite"><LoaderCircle className="source-discovery-spinner" aria-hidden="true" /><p>Resolving your source…</p><span>Checking the provider and preparing a preview…</span></div> : null}
-            {directOpen && state !== "preview" && state !== "mode_mismatch" && state !== "error" && state !== "resolving_url" ? <div className="source-discovery-direct-form"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><div className="source-discovery-url-input"><Link2 aria-hidden="true" /><input ref={directRef} value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void resolveUrl(directUrl); } }} placeholder={research ? "Paste an arXiv or DOI URL" : "Paste a YouTube URL"} aria-label={directLabel} type="url" /><button type="button" onClick={() => void resolveUrl(directUrl)} aria-label="Resolve source"><ArrowRight aria-hidden="true" /></button></div></div> : null}
+            {directOpen && state !== "preview" && state !== "mode_mismatch" && state !== "error" && state !== "resolving_url" ? <div className="source-discovery-direct-form"><h3>{emptyTitle}</h3><p>{emptySubtitle}</p><div className={`source-discovery-url-input${directError ? " is-invalid" : ""}`}><Link2 aria-hidden="true" /><input ref={directRef} value={directUrl} onChange={(event) => { setDirectUrl(event.target.value); if (directError) setDirectError(null); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void resolveUrl(directUrl, mode, "direct"); } }} placeholder={research ? "Paste an arXiv or DOI URL" : "Paste a YouTube URL"} aria-label={directLabel} aria-invalid={directError ? "true" : undefined} type="url" /><button type="button" onClick={() => void resolveUrl(directUrl, mode, "direct")} aria-label="Resolve source"><ArrowRight aria-hidden="true" /></button></div>{directError ? <p className="source-discovery-direct-error" role="alert">{directError}</p> : null}</div> : null}
           </div>
           {onBrowseLibrary ? <button className="source-discovery-direct-trigger" type="button" onClick={onBrowseLibrary}>Browse LearnSpace</button> : null}
         </div>

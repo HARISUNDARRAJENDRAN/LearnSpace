@@ -2,6 +2,7 @@ import { Ellipsis } from "lucide-react";
 import type { ResearchPaper } from "@learnspace/shared";
 import { StartStudyButton, SaveResourceButton } from "../study/StudyActions";
 import { AuthorAvatar, ResearchAuthorLink } from "./ResearchAuthor";
+import { cleanLatexText, cleanPaperText } from "../../lib/research/text";
 
 // shortcut: reading time is estimated from a typical paper length until parsed page counts are stored.
 function estimateReadTime(paper: ResearchPaper) {
@@ -22,12 +23,14 @@ function formatDate(date: string | null) {
 // A typeset first-page miniature built from the paper's own metadata (no stock imagery).
 function PaperPage({ paper }: { paper: ResearchPaper }) {
   const year = paper.publicationDate?.slice(0, 4);
+  const title = cleanLatexText(paper.title);
+  const abstract = cleanPaperText(paper.abstract);
   return <div className="research-paper-page" aria-hidden="true">
     <span className="research-paper-page-meta">{[paper.venue, year].filter(Boolean).join(" · ") || "Paper"}</span>
-    <span className="research-paper-page-title">{paper.title}</span>
+    <span className="research-paper-page-title">{title}</span>
     {paper.authors.length ? <span className="research-paper-page-authors">{paper.authors.slice(0, 3).join(", ")}</span> : null}
     <span className="research-paper-page-rule" />
-    <span className="research-paper-page-text">{paper.abstract}</span>
+    <span className="research-paper-page-text">{abstract}</span>
   </div>;
 }
 
@@ -37,6 +40,8 @@ export function ResearchPaperRow({ paper, status }: { paper: ResearchPaper; stat
   const authorName = paper.authors[0];
   const date = formatDate(paper.publicationDate);
   const source = paperSourceUrl(paper);
+  const title = cleanLatexText(paper.title);
+  const abstract = cleanPaperText(paper.abstract);
   return <article className="research-paper-row">
     <div className="research-paper-copy">
       <div className="research-paper-byline">
@@ -45,8 +50,8 @@ export function ResearchPaperRow({ paper, status }: { paper: ResearchPaper; stat
         {date ? <time dateTime={paper.publicationDate ?? undefined}>{date}</time> : null}
         {paper.venue ? <span className="research-paper-venue">{paper.venue}</span> : null}
       </div>
-      <StartStudyButton className="research-paper-title" resourceId={paper.resourceId} origin="research" label={paper.title} />
-      {paper.abstract ? <p className="research-paper-excerpt">{paper.abstract}</p> : <p className="research-paper-excerpt is-missing">Abstract not available yet.</p>}
+      <StartStudyButton className="research-paper-title" resourceId={paper.resourceId} origin="research" label={title} />
+      {abstract ? <p className="research-paper-excerpt">{abstract}</p> : <p className="research-paper-excerpt is-missing">Abstract not available yet.</p>}
       <div className="research-paper-footer">
         {paper.conceptNames[0] ? <span className="research-concept-chip">{paper.conceptNames[0]}</span> : null}
         <span>{status ?? estimateReadTime(paper)}</span>
