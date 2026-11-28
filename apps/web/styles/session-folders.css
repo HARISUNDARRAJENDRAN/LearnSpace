@@ -1,15 +1,42 @@
-.application-folder-tree > details { margin: 2px 0 6px; }
-.application-folder-tree > details > summary {
-  padding: 5px 6px 5px 14px;
-  color: #625f5a;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
+.application-folder-tree {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
 }
+.application-folder-tree > details { margin: 0; }
+.application-folder-tree > details > summary {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 8px 0 14px;
+  color: rgba(0, 0, 0, .46);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  list-style: none;
+}
+.application-folder-tree > details > summary::-webkit-details-marker { display: none; }
+.application-folder-tree > details > summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-left: auto;
+  margin-right: 4px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--motion-normal) var(--motion-ease-standard);
+}
+.application-folder-tree > details[open] > summary::after {
+  transform: rotate(45deg);
+}
+.application-folder-tree > details > summary:hover { color: #3d3d3a; }
 .application-folder-tree > details > summary:focus-visible { outline: 2px solid #262625; outline-offset: -2px; }
 .application-folder-link svg { flex: none; width: 14px; height: 14px; color: currentColor; }
 .application-folder-link[aria-current="page"] { font-weight: 600; color: #17171a; background: #eaeae8; }
-.application-folder-empty { margin: 3px 0 5px 16px; color: #696762; font-size: 12px; }
+.application-folder-empty { margin: 2px 0 4px 14px; color: #8c8a85; font-size: 12px; }
 .application-folder-tree > details > ul > li > a { min-height: 27px; }
 
 .folder-workspace,
@@ -96,11 +123,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding-inline: 9px 3px;
-  color: #626262;
-  font-size: .75rem;
+  min-height: 26px;
+  padding: 0 4px 0 14px;
+  color: rgba(0, 0, 0, .46);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
-.application-folder-link { padding-left: 10px; }
+.application-folder-link { padding-left: 6px; }
 .folder-workspace {
   display: flex;
   flex-direction: column;
@@ -150,11 +181,11 @@
 }
 
 .application-sessions-trigger { width: 100%; border: 0; background: transparent; text-align: left; font-family: inherit; cursor: pointer; }
-.application-sessions-chevron { width: 14px; height: 14px; margin-left: auto; color: #626262; }
+.application-sessions-chevron { width: 14px; height: 14px; margin-left: auto; color: rgba(0, 0, 0, .42); stroke-width: 1.8; transition: transform var(--motion-normal) var(--motion-ease-standard); }
 .application-sessions-trigger[aria-expanded="true"] .application-sessions-chevron { transform: rotate(90deg); }
-.application-folder-add { display: grid; flex: none; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: 6px; color: #292927; background: transparent; cursor: pointer; }
-.application-folder-add svg { width: 15px; height: 15px; }
-.application-folder-add:hover { background: #eaeae8; }
+.application-folder-add { display: grid; flex: none; width: 22px; height: 22px; place-items: center; padding: 0; border: 0; border-radius: 5px; color: rgba(0, 0, 0, .46); background: transparent; cursor: pointer; transition: background-color var(--motion-normal) var(--motion-ease-standard), color var(--motion-normal) var(--motion-ease-standard); }
+.application-folder-add svg { width: 14px; height: 14px; stroke-width: 1.8; }
+.application-folder-add:hover { background: rgba(0, 0, 0, .05); color: #292927; }
 .application-page.is-sidebar-collapsed .application-sessions-trigger > :is(span:nth-child(2), .application-sessions-chevron) { display: none; }
 .application-ended-sessions { font-size: 12px; padding: 0 8px; }
 .application-ended-sessions ul { list-style: none; padding: 0; margin: 0; }
@@ -163,24 +194,10 @@
 .application-ended-sessions .session-folder-item-actions { grid-column: 2; }
 .application-ended-sessions .session-folder-item-actions button { min-height: 26px; padding-inline: 6px; }
 
-.session-folder-share { display: grid; gap: 13px; }
-.session-folder-share-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  padding: 10px 11px;
-  border: 1px solid var(--sf-line);
-  border-radius: 9px;
-  background: var(--sf-surface);
-  color: var(--sf-muted);
-  font-size: 12.5px;
-  line-height: 1.45;
-}
-.session-folder-share-note svg { margin-top: 2px; color: #3f9a64; }
+.session-folder-share { display: grid; gap: 12px; }
 .session-folder-share-status { color: var(--sf-muted); }
 .session-folder-share-field { display: grid; gap: 5px; font-weight: 550; }
 .session-folder-share-field > span { color: var(--sf-muted); font-size: 12px; }
 .session-folder-share-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
 .session-folder-share-row > .session-folder-button.is-primary { border-color: var(--sf-accent); background: var(--sf-accent); color: #fff; }
 .session-folder-share-row > .session-folder-button.is-primary:hover { background: #111; }
-.session-folder-share-controls { justify-content: space-between; }
