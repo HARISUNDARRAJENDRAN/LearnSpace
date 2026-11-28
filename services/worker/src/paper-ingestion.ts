@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import postgres from "postgres";
 import { parsePaperPdf, MAX_PDF_BYTES, type ParseOutput, type PdfSource } from "@learnspace/pdf-parser";
+import { arxivIdFromUrl, TRUSTED_PDF_HOSTS, trustedPdfUrl } from "@learnspace/shared";
 import { TRANSCRIPT_EMBEDDING_PROFILE } from "@learnspace/shared/tutor";
 import { instantDiscovery } from "@learnspace/shared/exa-discovery";
 import type { EmbeddingProvider } from "./embeddings.js";
@@ -36,38 +37,153 @@ export type Passage = {
   metadata: JsonValue;
 };
 type DownloadedPdf = { bytes: Uint8Array; url: URL; downloadedAt: string; durationMs: number };
-type PaperRow = { id: string; has_details: boolean; pdf_source_url: string | null; arxiv_id: string | null; title: string; status: string; metadata: Record<string, unknown> };
+type PaperRow = {
+  id: string;
+  provider?: string | null;
+  external_id?: string | null;
+  canonical_url?: string | null;
+  has_details: boolean;
+  pdf_source_url: string | null;
+  arxiv_id: string | null;
+  doi?: string | null;
+  title: string;
+  status: string;
+  metadata: Record<string, unknown>;
+};
 type VersionRow = { id: string; processing_status: string; processing_attempts: number; lease_expires_at: Date | null; retry_after: Date | null; metadata: Record<string, unknown>; resource_metadata: Record<string, unknown>; refreshReady?: boolean };
 type IngestionDeps = {
   fetchPdf?: (url: URL) => Promise<DownloadedPdf>;
   parse?: typeof parsePaperPdf;
   referenceClient?: PaperReferenceClient;
+  discoverDoiPdf?: (doi: string) => Promise<{ pdfUrl: string | null; arxivId: string | null }>;
+  scrapeMarkdown?: (url: string) => Promise<string | null>;
   now?: () => number;
 };
 
-const PDF_HOSTS = new Set(["arxiv.org", "export.arxiv.org"]);
 const MAX_ATTEMPTS = 4;
 const LEASE_SECONDS = 600;
 const MAX_PARAGRAPH_CHARS = 1_800;
 const CHUNKER_VERSION = 3;
 const REFERENCE_RESOLVER_VERSION = 2;
 const MAX_EXA_REFERENCE_SEARCHES = 20;
+const REFERENCE_RESOLUTION_BUDGET_MS = 8_000;
 let nextExaRequestAt = 0;
 
 const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
 const tokenCount = (text: string) => Math.max(1, Math.ceil(text.length / 4));
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 
-function trustedPdfUrl(raw: string): URL | null {
-  try {
-    const url = new URL(raw);
-    return url.protocol === "https:" && !url.username && !url.password && !url.port && PDF_HOSTS.has(url.hostname) ? url : null;
-  } catch { return null; }
-}
-
 function arxivPdfUrl(arxivId: string): string | null {
   return /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i.test(arxivId)
     ? `https://arxiv.org/pdf/${arxivId}` : null;
+}
+
+export async function discoverOpenAccessPdfForDoi(doi: string, fetcher: typeof fetch = fetch): Promise<{ pdfUrl: string | null; arxivId: string | null }> {
+  const arxivFromDoi = doi.match(/^10\.48550\/arxiv\.(.+)$/i)?.[1]?.replace(/v\d+$/i, "").toLowerCase();
+  if (arxivFromDoi && arxivPdfUrl(arxivFromDoi)) {
+    return { pdfUrl: arxivPdfUrl(arxivFromDoi), arxivId: arxivFromDoi };
+  }
+  try {
+    const response = await fetcher(
+      `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?select=open_access,best_oa_location,primary_location,locations,ids`,
+      { headers: { Accept: "application/json", "User-Agent": "LearnSpace/1.0 (+https://learn-space.app)" }, signal: AbortSignal.timeout(4_000) },
+    );
+    if (!response.ok) return { pdfUrl: null, arxivId: null };
+    const body = record(await response.json());
+    const locations = Array.isArray(body.locations) ? body.locations.map(record) : [];
+    const allLocations = [record(body.best_oa_location), record(body.primary_location), ...locations];
+    let arxivId: string | null = null;
+    const rawIdsArxiv = record(body.ids).arxiv;
+    if (typeof rawIdsArxiv === "string") arxivId = arxivIdFromUrl(rawIdsArxiv) ?? rawIdsArxiv.replace(/^arxiv:/i, "").replace(/v\d+$/i, "").toLowerCase();
+    if (!arxivId) {
+      for (const loc of allLocations) {
+        const candidate = typeof loc.landing_page_url === "string" ? arxivIdFromUrl(loc.landing_page_url) : null;
+        const pdfCandidate = typeof loc.pdf_url === "string" ? arxivIdFromUrl(loc.pdf_url) : null;
+        if (candidate || pdfCandidate) { arxivId = candidate ?? pdfCandidate; break; }
+      }
+    }
+    const candidates = [
+      arxivId ? arxivPdfUrl(arxivId) : null,
+      typeof record(body.best_oa_location).pdf_url === "string" ? String(record(body.best_oa_location).pdf_url) : null,
+      typeof record(body.open_access).oa_url === "string" ? String(record(body.open_access).oa_url) : null,
+      ...allLocations.map((loc) => (typeof loc.pdf_url === "string" ? loc.pdf_url : null)),
+    ];
+    for (const candidate of candidates) {
+      const trusted = candidate ? trustedPdfUrl(candidate) : null;
+      if (trusted) return { pdfUrl: trusted.href, arxivId };
+    }
+    return { pdfUrl: null, arxivId };
+  } catch {
+    return { pdfUrl: null, arxivId: null };
+  }
+}
+
+export async function firecrawlPaperMarkdown(url: string, apiKey: string, fetcher: typeof fetch = fetch): Promise<string | null> {
+  const response = await fetcher("https://api.firecrawl.dev/v2/scrape", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`Firecrawl HTTP ${response.status}`);
+  const body = await response.json() as { success?: boolean; data?: { markdown?: string } };
+  const markdown = body.data?.markdown?.trim() ?? "";
+  return markdown.length >= 200 ? markdown : null;
+}
+
+/** Converts Firecrawl article Markdown into the same ParseOutput contract used by pdf-inspector. */
+export function markdownToParseOutput(markdown: string, durationMs = 0): ParseOutput {
+  const trimmed = markdown.trim();
+  const headings: ParseOutput["headings"] = [];
+  const tables: ParseOutput["tables"] = [];
+  const captions: ParseOutput["captions"] = [];
+  const equations: ParseOutput["equations"] = [];
+  const references: ParseOutput["references"] = [];
+  const citationMarkers: ParseOutput["citationMarkers"] = [];
+  const stack: string[] = [];
+  let inReferences = false;
+  const lines = trimmed.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line);
+    if (heading?.[1] && heading[2]) {
+      const level = heading[1].length;
+      const title = heading[2].trim();
+      stack.length = level - 1;
+      stack[level - 1] = title;
+      headings.push({ level, text: title, page: 1, hierarchy: stack.filter(Boolean) });
+      inReferences = /^(references|bibliography|works cited)$/i.test(title);
+    } else if (/^\|.*\|$/.test(line)) {
+      const block = [line];
+      while (i + 1 < lines.length && /^\s*\|.*\|\s*$/.test(lines[i + 1] ?? "")) {
+        i += 1;
+        block.push(lines[i]?.trim() ?? "");
+      }
+      tables.push({ page: 1, markdown: block.join("\n") });
+    } else {
+      if (/^(?:figure|fig\.?|table)\s*[\d.]+\s*[:.)-]/i.test(line)) captions.push({ page: 1, text: line });
+      if (/^\$\$.*\$\$$/.test(line) || /^\\\[.*\\\]$/.test(line)) equations.push({ page: 1, source: line });
+      if (inReferences && /^(?:\[\d+\]|\d+[.)])\s+/.test(line)) references.push({ page: 1, text: line });
+      for (const match of line.matchAll(/\[(?:\d+(?:\s*[,–-]\s*\d+)*)\]|\([A-Z][^)]*\b(?:19|20)\d{2}[a-z]?\)/g)) citationMarkers.push({ page: 1, marker: match[0] });
+    }
+  }
+  return {
+    text: trimmed,
+    markdown: trimmed,
+    pages: [{ page: 1, text: trimmed, needsOcr: false, ocrReason: null }],
+    headings,
+    tables,
+    captions,
+    equations,
+    references,
+    citationMarkers,
+    coordinates: [],
+    classification: { type: "TextBased", confidence: 1, pagesNeedingOcr: [], reasonsByPage: [] },
+    metadata: { path: "standard-detection", parser: "firecrawl-markdown", version: "2", parserSha: "firecrawl-v2", durationMs, parserProcessingMs: durationMs },
+    taggedStructure: [],
+    unrecovered: [],
+  };
 }
 
 export async function downloadPaperPdf(start: URL, fetcher: typeof fetch = fetch, now = () => performance.now()): Promise<DownloadedPdf> {
@@ -117,8 +233,8 @@ export async function downloadPaperPdf(start: URL, fetcher: typeof fetch = fetch
 /** Fast parsing is permitted only after the standard detector confirms clean native text from a born-digital host. */
 export function choosePaperPdfSource(url: URL | string, detection: Pick<ParseOutput, "pages" | "classification" | "unrecovered">): PdfSource {
   let host = "";
-  try { host = new URL(url).hostname; } catch { return "untrusted"; }
-  const cleanNative = PDF_HOSTS.has(host)
+  try { host = new URL(url).hostname.toLowerCase(); } catch { return "untrusted"; }
+  const cleanNative = TRUSTED_PDF_HOSTS.has(host)
     && detection.classification.type.toLowerCase() === "textbased"
     && detection.pages.length > 0
     && detection.pages.some((page) => page.text.trim().length > 0)
@@ -294,6 +410,7 @@ export function chunkPaper(parsed: ParseOutput, references = paperReferences(par
   }
   let headingPath: string[] = [];
   for (const page of parsed.pages) {
+    if (page.needsOcr) continue;
     let paragraph = 0;
     const lines = page.text.split(/\r?\n/);
     let block: string[] = [];
@@ -498,11 +615,13 @@ function storedReferences(metadata: Record<string, unknown>): Array<{ ordinal: n
 async function resolveReferences(references: Reference[], client?: PaperReferenceClient): Promise<Array<{ ordinal: number; raw: string; status: string; confidence: number | null; candidate: ReferenceCandidate | null }>> {
   const resolvedClient = client ?? (process.env.EXA_API_KEY ? exaReferenceClient(process.env.EXA_API_KEY) : undefined);
   const output: Array<{ ordinal: number; raw: string; status: string; confidence: number | null; candidate: ReferenceCandidate | null }> = [];
+  const deadline = performance.now() + REFERENCE_RESOLUTION_BUDGET_MS;
   let exaSearches = 0;
   for (const reference of references) {
     try {
       const inline = referenceTextIdentifiers(reference.raw);
-      const canSearch = !inline.doi && !inline.arxivId && Boolean(resolvedClient) && exaSearches < MAX_EXA_REFERENCE_SEARCHES;
+      const withinBudget = performance.now() < deadline;
+      const canSearch = !inline.doi && !inline.arxivId && Boolean(resolvedClient) && exaSearches < MAX_EXA_REFERENCE_SEARCHES && withinBudget;
       if (canSearch) exaSearches += 1;
       const resolved = await resolvePaperReference(reference, canSearch ? resolvedClient : undefined);
       output.push({ ...reference, ...resolved });
@@ -566,7 +685,7 @@ async function refreshReadyVersion(sql: SqlClient, paper: PaperRow, version: Ver
   const parseStarted = performance.now();
   const result = await buildParsed(bytes, url, deps.parse ?? parsePaperPdf);
   const parseMs = result.durationMs || Math.round(performance.now() - parseStarted);
-  if (result.parsed.classification.pagesNeedingOcr.length || result.parsed.pages.some((page) => page.needsOcr)) {
+  if (!result.parsed.pages.some((page) => !page.needsOcr && page.text.trim())) {
     return { status: "failed", versionId: version.id, error: "needs_ocr" };
   }
   const rawReferences = paperReferences(result.parsed);
@@ -635,27 +754,130 @@ async function failAcquisition(sql: SqlClient, paper: PaperRow, code: string, de
     WHERE id = ${paper.id}`;
 }
 
+async function ensurePaperDetails(sql: SqlClient, paper: PaperRow, pdfUrl: string | null): Promise<void> {
+  if (!paper.has_details) {
+    const venue = paper.provider === "arxiv" ? "arXiv" : (typeof paper.metadata.venue === "string" ? paper.metadata.venue : null);
+    await sql`
+      INSERT INTO catalog.paper_details (resource_id, abstract, venue, pdf_source_url)
+      SELECT id, description, ${venue}, ${pdfUrl} FROM catalog.resources
+      WHERE id = ${paper.id}
+      ON CONFLICT (resource_id) DO NOTHING`;
+  } else if (pdfUrl && !paper.pdf_source_url) {
+    await sql`UPDATE catalog.paper_details SET pdf_source_url = ${pdfUrl} WHERE resource_id = ${paper.id} AND pdf_source_url IS NULL`;
+  }
+}
+
+async function ingestMarkdownPaper(
+  sql: SqlClient,
+  paper: PaperRow,
+  sourceUrl: string,
+  markdown: string,
+  downloadMs: number,
+  provider: EmbeddingProvider | null,
+  start: number,
+  deps: IngestionDeps,
+): Promise<{ status: "ready" | "busy" | "skipped" | "failed"; versionId?: string; error?: string }> {
+  await ensurePaperDetails(sql, paper, null);
+  await sql`UPDATE catalog.resources SET metadata = metadata - 'paperIngestion' WHERE id = ${paper.id}`;
+  const bytes = new TextEncoder().encode(markdown);
+  const hash = sha256(bytes);
+  const downloadedAt = new Date().toISOString();
+  const version = await claimVersion(sql, paper.id, hash, bytes.byteLength, sourceUrl, downloadedAt, downloadMs);
+  if (!version) return { status: "skipped" };
+  const versionId = version.id;
+  const timings: Record<string, number> = { ...record(version.metadata.timings) as Record<string, number>, downloadMs };
+  let refRows = storedReferences(version.metadata);
+  let parserComplete = version.metadata.parserComplete === true;
+  try {
+    if (!parserComplete) {
+      const parseStarted = performance.now();
+      const parsed = markdownToParseOutput(markdown);
+      timings.parseMs = Math.round(performance.now() - parseStarted);
+      const chunkStarted = performance.now();
+      refRows = paperReferences(parsed);
+      const passages = chunkPaper(parsed, refRows);
+      if (passages.length === 0) {
+        await failVersion(sql, versionId, version.processing_attempts, "needs_ocr", "No readable text was extracted from this article.", false);
+        return { status: "failed", versionId, error: "needs_ocr" };
+      }
+      timings.chunkMs = Math.round(performance.now() - chunkStarted);
+      const parsedInfo = { ...parserMetadata(parsed, "untrusted"), parserComplete: true, rawReferences: refRows, chunkerVersion: CHUNKER_VERSION };
+      await sql.begin(async (tx) => {
+        await tx`INSERT INTO retrieval.resource_chunks ${tx(passages.map((passage) => ({ resource_version_id: versionId, ...passage })))}`;
+        await tx`UPDATE catalog.resource_versions SET mime_type = 'text/markdown', parser_name = 'firecrawl-markdown', parser_version = 'firecrawl-v2', metadata = metadata || ${tx.json({ ...parsedInfo, timings })}, lease_expires_at = now() + ${LEASE_SECONDS} * interval '1 second' WHERE id = ${versionId} AND processing_status = 'processing'`;
+      });
+      parserComplete = true;
+    }
+    const referenceStart = performance.now();
+    const resolved = await resolveReferences(refRows, deps.referenceClient);
+    timings.resolveMs = Math.round(performance.now() - referenceStart);
+    await updateVersionMetadata(sql, versionId, { resolvedReferences: resolved, referenceResolverVersion: REFERENCE_RESOLVER_VERSION, exaSearchConfigured: Boolean(process.env.EXA_API_KEY), timings });
+    if (!provider) throw new Error("embedding provider is unavailable");
+    const embeddingStart = performance.now();
+    const embedded = await embedPassages(sql, provider, versionId);
+    timings.embedMs = Math.round(performance.now() - embeddingStart);
+    timings.totalMs = Math.round((deps.now ?? (() => performance.now()))() - start);
+    await commitReady(sql, paper.id, versionId, resolved, { timings, embeddedChunks: embedded, downloadUrl: sourceUrl, chunkerVersion: CHUNKER_VERSION, referenceResolverVersion: REFERENCE_RESOLVER_VERSION, exaSearchConfigured: Boolean(process.env.EXA_API_KEY) });
+    console.info(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, versionId, status: "ready", source: "firecrawl", chunks: await countPassages(sql, versionId), refs: refRows.length, ...referenceCounts(resolved), embeddedChunks: embedded, ...timings }));
+    return { status: "ready", versionId };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "paper markdown ingestion failed";
+    await failVersion(sql, versionId, version.processing_attempts, "ingestion_failed", detail, true);
+    console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, versionId, status: "failed", source: "firecrawl", error: detail.slice(0, 300) }));
+    return { status: "failed", versionId, error: detail };
+  }
+}
+
 async function attemptPaper(sql: SqlClient, paper: PaperRow, provider: EmbeddingProvider | null, deps: IngestionDeps): Promise<{ status: "ready" | "busy" | "skipped" | "failed"; versionId?: string; error?: string }> {
   const start = (deps.now ?? (() => performance.now()))();
   const acquisition = record(paper.metadata.paperIngestion);
   if (acquisitionAttempts(paper) >= MAX_ATTEMPTS || (typeof acquisition.retryAfter === "string" && Date.parse(acquisition.retryAfter) > Date.now())) return { status: "skipped" };
-  const pdfUrl = paper.arxiv_id ? arxivPdfUrl(paper.arxiv_id) : paper.pdf_source_url;
+
+  const doi = paper.doi ?? (paper.provider === "doi" ? paper.external_id ?? null : null);
+  const metadataPdfUrl = typeof paper.metadata.pdfSourceUrl === "string" ? paper.metadata.pdfSourceUrl : null;
+  const metadataArxivId = typeof paper.metadata.arxivId === "string" ? paper.metadata.arxivId : null;
+  let pdfUrl = (paper.arxiv_id ? arxivPdfUrl(paper.arxiv_id) : null)
+    ?? (metadataArxivId ? arxivPdfUrl(metadataArxivId) : null)
+    ?? paper.pdf_source_url
+    ?? metadataPdfUrl;
+
+  if (!pdfUrl && doi) {
+    const discovered = await (deps.discoverDoiPdf ?? discoverOpenAccessPdfForDoi)(doi);
+    pdfUrl = (discovered.arxivId ? arxivPdfUrl(discovered.arxivId) : null) ?? discovered.pdfUrl;
+  }
+
   const startUrl = pdfUrl ? trustedPdfUrl(pdfUrl) : null;
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY?.trim() || null;
+  const tryFirecrawlDoi = async (): Promise<{ status: "ready" | "busy" | "skipped" | "failed"; versionId?: string; error?: string } | null> => {
+    if (!doi || (!deps.scrapeMarkdown && !firecrawlKey)) return null;
+    const targetUrl = `https://doi.org/${doi}`;
+    const scrapeStart = performance.now();
+    try {
+      const markdown = deps.scrapeMarkdown
+        ? await deps.scrapeMarkdown(targetUrl)
+        : await firecrawlPaperMarkdown(targetUrl, firecrawlKey!);
+      if (!markdown) return null;
+      return await ingestMarkdownPaper(sql, paper, targetUrl, markdown, Math.round(performance.now() - scrapeStart), provider, start, deps);
+    } catch {
+      return null;
+    }
+  };
+
   if (!startUrl) {
+    const firecrawlOutcome = await tryFirecrawlDoi();
+    if (firecrawlOutcome) return firecrawlOutcome;
     const error = "paper PDF URL is not allow-listed";
     await failAcquisition(sql, paper, "source_not_allowed", error, false);
     console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, status: "failed", error }));
     return { status: "failed", error };
   }
-  // A discovered copy has its own resource, even when another copy already owns the unique arXiv ID.
-  if (!paper.has_details) await sql`
-    INSERT INTO catalog.paper_details (resource_id, abstract, venue, pdf_source_url)
-    SELECT id, description, 'arXiv', ${startUrl.href} FROM catalog.resources
-    WHERE id = ${paper.id} AND provider = 'arxiv'
-    ON CONFLICT (resource_id) DO NOTHING`;
+
+  await ensurePaperDetails(sql, paper, startUrl.href);
   let download: DownloadedPdf;
   try { download = await (deps.fetchPdf ?? ((url) => downloadPaperPdf(url, fetch, deps.now)))(startUrl); }
   catch (error) {
+    const firecrawlOutcome = await tryFirecrawlDoi();
+    if (firecrawlOutcome) return firecrawlOutcome;
     const detail = error instanceof Error ? error.message : "paper download failed";
     await failAcquisition(sql, paper, "download_failed", detail, true);
     console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, status: "failed", downloadMs: Math.round((deps.now ?? (() => performance.now()))() - start), error: detail.slice(0, 300) }));
@@ -689,14 +911,14 @@ async function attemptPaper(sql: SqlClient, paper: PaperRow, provider: Embedding
       const parsedStarted = performance.now();
       const result = await buildParsed(download.bytes, download.url, deps.parse ?? parsePaperPdf);
       timings.parseMs = result.durationMs || Math.round(performance.now() - parsedStarted);
-      if (result.parsed.classification.pagesNeedingOcr.length || result.parsed.pages.some((page) => page.needsOcr)) {
-        await failVersion(sql, versionId, version.processing_attempts, "needs_ocr", "PDF pages require OCR; OCR is not available in this pipeline.", false);
-        console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, versionId, status: "failed", failureCode: "needs_ocr", ...timings }));
-        return { status: "failed", versionId, error: "needs_ocr" };
-      }
       const chunkStarted = performance.now();
       refRows = paperReferences(result.parsed);
       const passages = chunkPaper(result.parsed, refRows);
+      if (passages.length === 0) {
+        await failVersion(sql, versionId, version.processing_attempts, "needs_ocr", "No readable text was extracted from this PDF.", false);
+        console.warn(JSON.stringify({ metric: "paper_ingestion", resourceId: paper.id, versionId, status: "failed", failureCode: "needs_ocr", ...timings }));
+        return { status: "failed", versionId, error: "needs_ocr" };
+      }
       timings.chunkMs = Math.round(performance.now() - chunkStarted);
       parsedInfo = { ...parserMetadata(result.parsed, result.source), parserComplete: true, rawReferences: refRows, chunkerVersion: CHUNKER_VERSION };
       await sql.begin(async (tx) => {
@@ -741,11 +963,14 @@ async function countBBoxPassages(sql: SqlClient, versionId: string): Promise<num
 
 async function nextPaper(sql: SqlClient): Promise<PaperRow | null> {
   const [row] = await sql<PaperRow[]>`
-    SELECT r.id, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url, COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id, r.title, r.status, r.metadata
+    SELECT r.id, r.provider, r.external_id, r.canonical_url, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url,
+      COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id,
+      COALESCE(p.doi, CASE WHEN r.provider = 'doi' THEN r.external_id END) AS doi,
+      r.title, r.status, r.metadata
     FROM catalog.resources r LEFT JOIN catalog.paper_details p ON p.resource_id = r.id
     LEFT JOIN catalog.resource_versions current ON current.id = r.current_version_id
     WHERE r.type = 'paper' AND r.deleted_at IS NULL AND r.status = 'pending'
-      AND (p.resource_id IS NOT NULL OR r.provider = 'arxiv')
+      AND (p.resource_id IS NOT NULL OR r.provider IN ('arxiv', 'doi'))
       AND coalesce((r.metadata->'paperIngestion'->>'attempts')::int, 0) < ${MAX_ATTEMPTS}
       AND (r.metadata->'paperIngestion'->>'retryAfter' IS NULL OR (r.metadata->'paperIngestion'->>'retryAfter')::timestamptz <= now())
       AND (
@@ -764,10 +989,13 @@ async function nextPaper(sql: SqlClient): Promise<PaperRow | null> {
 
 export async function ingestPaperById(sql: SqlClient, resourceId: string, provider: EmbeddingProvider | null, deps: IngestionDeps = {}) {
   const [paper] = await sql<PaperRow[]>`
-    SELECT r.id, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url, COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id, r.title, r.status, r.metadata
+    SELECT r.id, r.provider, r.external_id, r.canonical_url, p.resource_id IS NOT NULL AS has_details, p.pdf_source_url,
+      COALESCE(p.arxiv_id, CASE WHEN r.provider = 'arxiv' THEN r.external_id END) AS arxiv_id,
+      COALESCE(p.doi, CASE WHEN r.provider = 'doi' THEN r.external_id END) AS doi,
+      r.title, r.status, r.metadata
     FROM catalog.resources r LEFT JOIN catalog.paper_details p ON p.resource_id = r.id
     WHERE r.id = ${resourceId} AND r.type = 'paper' AND r.deleted_at IS NULL
-      AND (p.resource_id IS NOT NULL OR r.provider = 'arxiv')`;
+      AND (p.resource_id IS NOT NULL OR r.provider IN ('arxiv', 'doi'))`;
   return paper ? attemptPaper(sql, paper, provider, deps) : { status: "skipped" as const };
 }
 

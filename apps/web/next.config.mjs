@@ -30,7 +30,12 @@ const nextConfig = {
   transpilePackages: ["@learnspace/db", "@learnspace/shared"],
   serverExternalPackages: ["@learnspace/pdf-parser"],
   // Paper ingestion's parser forks a child script that loads a native module; the bundle cannot see either file.
-  outputFileTracingIncludes: Object.fromEntries(["/app/study/paper/*", "/api/v1/study-sessions/*/tutor"].map((route) => [route, ["../../packages/pdf-parser/package.json", "../../packages/pdf-parser/dist/child.js", "../../packages/pdf-parser/native/*.node"]])),
+  outputFileTracingIncludes: Object.fromEntries(
+    ["/app/study/paper/*", "/api/v1/study-sessions/*/tutor", "/api/v1/session-folders/*"].map((route) => [
+      route,
+      ["../../packages/pdf-parser/package.json", "../../packages/pdf-parser/dist/child.js", "../../packages/pdf-parser/native/*.node"],
+    ]),
+  ),
   // YouTube already serves sized thumbnails; resizing them again would spend image-optimization quota for no gain.
   images: { unoptimized: true },
   // Cross-origin isolates the app's pages, so Luna's on-device voice models run on every CPU core instead of one (about

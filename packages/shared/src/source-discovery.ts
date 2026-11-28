@@ -49,6 +49,43 @@ export type SourceDiscoveryResolveRequest = z.infer<typeof sourceDiscoveryResolv
 
 export type SourceProvider = "youtube" | "arxiv" | "doi";
 
+/** Scholarly hosts whose open-access PDFs LearnSpace may fetch and parse on a learner's behalf. */
+export const TRUSTED_PDF_HOSTS: ReadonlySet<string> = new Set([
+  "arxiv.org",
+  "export.arxiv.org",
+  "jair.org",
+  "www.jair.org",
+  "nature.com",
+  "www.nature.com",
+  "media.springernature.com",
+  "link.springer.com",
+  "openreview.net",
+  "proceedings.mlr.press",
+  "proceedings.neurips.cc",
+  "papers.nips.cc",
+  "aclanthology.org",
+  "jmlr.org",
+  "www.jmlr.org",
+  "ojs.aaai.org",
+  "cdn.aaai.org",
+  "pmc.ncbi.nlm.nih.gov",
+  "europepmc.org",
+  "www.biorxiv.org",
+  "www.medrxiv.org",
+  "journals.plos.org",
+  "www.pnas.org",
+  "direct.mit.edu",
+  "www.mdpi.com",
+  "www.science.org",
+]);
+
+export function trustedPdfUrl(raw: string): URL | null {
+  let url: URL;
+  try { url = new URL(raw); } catch { return null; }
+  if (url.protocol !== "https:" || url.username || url.password || url.port || !TRUSTED_PDF_HOSTS.has(url.hostname.toLowerCase())) return null;
+  return url;
+}
+
 export type ClassifiedSourceUrl = {
   provider: SourceProvider;
   mode: SourceDiscoveryMode;

@@ -6,22 +6,31 @@ const REQUEST_WINDOW_SECONDS = 600;
 
 type Sql = ReturnType<typeof postgres>;
 
-/** Claims unfinished papers and reopens those that failed because the parser process could not start. */
+/** Claims unfinished papers and reopens papers that failed with recoverable parser or acquisition errors. */
 export async function claimPaperIngestion(sql: Sql, resourceId: string): Promise<boolean> {
   const rows = await sql`
     UPDATE catalog.resources r
-    SET metadata = r.metadata || jsonb_build_object('paperIngestionRequestedAt', now()),
+    SET metadata = (r.metadata - 'paperIngestion') || jsonb_build_object('paperIngestionRequestedAt', now()),
         status = CASE WHEN r.status = 'failed' THEN 'pending'::catalog.resource_status ELSE r.status END
     WHERE r.id = ${resourceId} AND r.type = 'paper' AND r.deleted_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM catalog.resource_versions v WHERE v.id = r.current_version_id AND v.processing_status = 'ready')
       AND (
         (r.status NOT IN ('failed', 'archived') AND (r.metadata->>'paperIngestionRequestedAt' IS NULL
           OR (r.metadata->>'paperIngestionRequestedAt')::timestamptz < now() - ${REQUEST_WINDOW_SECONDS} * interval '1 second'))
-        OR (r.status = 'failed' AND EXISTS (
-          SELECT 1 FROM catalog.resource_versions v
-          WHERE v.resource_id = r.id AND v.processing_status = 'failed' AND v.failure_code = 'parse_failed'
-            AND v.failure_detail = 'PDF parser child exited with code 1'
-        ))
+        OR (r.status = 'failed'
+          AND (r.metadata->>'paperIngestionRequestedAt' IS NULL
+            OR (r.metadata->>'paperIngestionRequestedAt')::timestamptz < now() - ${REQUEST_WINDOW_SECONDS} * interval '1 second')
+          AND (
+            r.metadata->'paperIngestion'->>'failureCode' IN ('source_not_allowed', 'download_failed')
+            OR EXISTS (
+              SELECT 1 FROM catalog.resource_versions v
+              WHERE v.resource_id = r.id AND v.processing_status = 'failed'
+                AND (
+                  v.failure_code = 'needs_ocr'
+                  OR (v.failure_code = 'parse_failed' AND v.failure_detail = 'PDF parser child exited with code 1')
+                )
+            )
+          ))
       )
     RETURNING r.id`;
   return rows.length > 0;

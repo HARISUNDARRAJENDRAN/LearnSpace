@@ -9,6 +9,7 @@ import {
   downloadPaperPdf,
   exaReferenceClient,
   ingestPaperById,
+  markdownToParseOutput,
   matchChunkBBox,
   paperReferences,
   paperIngestionUpkeep,
@@ -132,6 +133,17 @@ test("inline identifiers resolve before Exa and scholarly search uses Exa only",
   assert.equal(result.candidate?.source, "exa");
 });
 
+test("markdownToParseOutput converts Firecrawl article Markdown into chunkable paper passages", () => {
+  const md = "# Grandmaster level in StarCraft II\n\nWe train AlphaStar with multi-agent reinforcement learning [1].\n\n## Methods\n\nLeague play prevents strategy cycling.\n\n## References\n\n[1] Silver et al. Mastering the game of Go. Nature, 2016.";
+  const output = markdownToParseOutput(md, 42);
+  const refs = paperReferences(output);
+  const passages = chunkPaper(output, refs);
+  assert.equal(output.metadata.parser, "firecrawl-markdown");
+  assert.equal(refs.length, 1);
+  assert.ok(passages.some((passage) => passage.chunk_type === "heading" && passage.content === "Methods"));
+  assert.ok(passages.some((passage) => passage.chunk_type === "paragraph" && passage.content.includes("League play")));
+});
+
 const dbAvailable = Boolean(process.env.DATABASE_MIGRATOR_URL && process.env.DATABASE_WORKER_URL);
 test("paper ingestion does not repeat parse or embedding for a hash and only publishes ready versions", { skip: dbAvailable ? false : "local worker database URLs are required" }, async () => {
   const migrator = postgres(process.env.DATABASE_MIGRATOR_URL!, { max: 1, prepare: false });
@@ -145,7 +157,15 @@ test("paper ingestion does not repeat parse or embedding for a hash and only pub
   const changedBytes = new TextEncoder().encode("%PDF-1.7 second version");
   let parseCalls = 0;
   let embedCalls = 0;
-  const parse = async (_bytes: Uint8Array, _options: { source: "verified-native" | "untrusted" }): Promise<ParseOutput> => { parseCalls += 1; return parsed("# Method\n\nA grounded paragraph.", []); };
+  const parse = async (bytes: Uint8Array, _options: { source: "verified-native" | "untrusted" }): Promise<ParseOutput> => {
+    parseCalls += 1;
+    const result = parsed("# Method\n\nA grounded paragraph.", []);
+    if (bytes === changedBytes) {
+      result.pages.push({ page: 2, text: "Unreliable text", needsOcr: true, ocrReason: "scanned" });
+      result.classification.pagesNeedingOcr = [2];
+    }
+    return result;
+  };
   const referenceClient: PaperReferenceClient = { async search() { return []; } };
   const provider = {
     async embedDocuments(texts: string[]) {
@@ -206,6 +226,10 @@ test("paper ingestion does not repeat parse or embedding for a hash and only pub
     failEmbedding = false;
     assert.equal((await run(changedBytes)).status, "ready");
     assert.equal(parseCalls, parseCallsAfterNew);
+    const [coverage] = await worker<{ unreadable: number }[]>`SELECT count(*)::int AS unreadable
+      FROM retrieval.resource_chunks c JOIN catalog.resource_versions v ON v.id = c.resource_version_id
+      WHERE v.resource_id = ${resourceId} AND v.source_sha256 = ${changedHash} AND c.page_from = 2`;
+    assert.equal(coverage?.unreadable, 0);
     assert.notEqual((await worker<{ current_version_id: string }[]>`SELECT current_version_id FROM catalog.resources WHERE id = ${resourceId}`)[0]!.current_version_id, firstPointer);
 
     const failedBytes = new TextEncoder().encode("%PDF-1.7 third version");

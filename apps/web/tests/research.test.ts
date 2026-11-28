@@ -143,7 +143,41 @@ test("resolveDoiMetadata routes DataCite arXiv DOIs through arXiv resolution and
     throw new Error(`unexpected request ${url}`);
   }) as typeof fetch;
 
-  const jair = await resolveDoiMetadata("10.1613/jair.1.14174", { fetch: openAlexDoiFetch, skipCache: true });
+  const jair = await resolveDoiMetadata("10.1613/jair.1.14174", { fetch: openAlexDoiFetch, skipCache: true, firecrawlApiKey: null });
   assert.equal(jair.title, "A Survey of Zero-Shot Generalisation");
   assert.equal(jair.venue, "JAIR");
+
+  // Firecrawl rescues metadata resolution when arXiv and OpenAlex are unavailable.
+  const firecrawlFetch = (async (input) => {
+    const url = String(input);
+    if (url === "https://api.firecrawl.dev/v2/scrape") {
+      return Response.json({
+        success: true,
+        data: {
+          metadata: {
+            title: "[1902.00183] Learning Action Representations for RL",
+            citation_author: ["Yash Chandak"],
+            citation_date: "2019/02/01",
+          },
+          markdown: "# Learning Action Representations for RL\n\n## Abstract\n\nStructured action spaces improve generalization across unseen actions in RL.",
+        },
+      });
+    }
+    return new Response("Rate limited", { status: 429 });
+  }) as typeof fetch;
+
+  const viaFirecrawl = await resolveArxivMetadata("1902.00183", {
+    fetch: firecrawlFetch,
+    arxivMinIntervalMs: 0,
+    skipCache: true,
+    firecrawlApiKey: "fc-test-key",
+  });
+  assert.equal(viaFirecrawl.title, "Learning Action Representations for RL");
+  assert.equal(viaFirecrawl.pdfUrl, "https://arxiv.org/pdf/1902.00183");
+  assert.match(viaFirecrawl.abstract ?? "", /Structured action spaces/);
+
+  // Scholarly OA PDF hosts (like JAIR and Nature) are trusted while arbitrary hosts remain blocked.
+  assert.equal(trustedPdfUrl("https://jair.org/index.php/jair/article/download/14174/26890")?.hostname, "jair.org");
+  assert.equal(trustedPdfUrl("https://www.nature.com/articles/s41586-019-1724-z.pdf")?.hostname, "www.nature.com");
+  assert.equal(trustedPdfUrl("https://example.org/paper.pdf"), null);
 });

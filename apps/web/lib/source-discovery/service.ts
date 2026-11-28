@@ -1000,7 +1000,7 @@ export async function getSourceDiscoveryRun(userId: string, runId: string): Prom
   });
 }
 
-type ResolvedData = { title: string; description: string | null; thumbnailUrl: string | null; author: string | null; durationMs: number | null; authors: string[]; venue: string | null; year: number | null };
+type ResolvedData = { title: string; description: string | null; thumbnailUrl: string | null; author: string | null; durationMs: number | null; authors: string[]; venue: string | null; year: number | null; pdfUrl?: string | null; arxivId?: string | null };
 
 async function fetchJson(url: string): Promise<Record<string, unknown>> {
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(12_000), headers: { Accept: "application/json" } });
@@ -1113,9 +1113,31 @@ async function persistResolvedResource(tx: Transaction, userId: string, parsed: 
     await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, existing.resource.id);
     return existing.resource.id;
   }
-   const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
+   const [resource] = await tx.insert(resources).values({ ownerUserId: userId, type: parsed.mode === "learn" ? "video" : "paper", provider: parsed.provider, externalId: parsed.id, canonicalUrl: parsed.canonicalUrl, title: data.title, description: data.description, visibility: "private", status: "pending", metadata: { ...(data.thumbnailUrl ? { thumbnailUrl: data.thumbnailUrl } : {}), ...(data.author ? { channelTitle: data.author } : {}), ...(data.authors.length > 0 ? { authors: data.authors } : {}), ...(data.venue ? { venue: data.venue } : {}), ...(data.year ? { year: data.year } : {}), ...(data.pdfUrl ? { pdfSourceUrl: data.pdfUrl } : {}), ...(data.arxivId ? { arxivId: data.arxivId } : {}), importedBy: "source-picker", ingestionStatus: "queued" } }).onConflictDoNothing().returning({ id: resources.id });
   const resourceId = resource?.id ?? (await findExistingResource(tx, userId, parsed))?.resource.id;
   if (!resourceId) throw new Error("Resolved resource could not be created");
+  if (parsed.mode === "research") {
+    const arxivId = parsed.provider === "arxiv" ? parsed.id : data.arxivId ?? null;
+    const doi = parsed.provider === "doi" ? parsed.id : null;
+    const pdfSourceUrl = data.pdfUrl ?? (arxivId ? `https://arxiv.org/pdf/${arxivId}` : null);
+    await tx.insert(paperDetails).values({
+      resourceId,
+      abstract: data.description,
+      venue: data.venue,
+      pdfSourceUrl,
+      ...(arxivId ? { arxivId } : {}),
+      ...(doi ? { doi } : {}),
+      metadata: { ...(data.authors.length > 0 ? { authors: data.authors } : {}) },
+    }).onConflictDoNothing();
+    // If a global catalog copy already owns the unique arxiv_id/doi, still persist the private copy's paper_details row.
+    await tx.insert(paperDetails).values({
+      resourceId,
+      abstract: data.description,
+      venue: data.venue,
+      pdfSourceUrl,
+      metadata: { ...(data.authors.length > 0 ? { authors: data.authors } : {}) },
+    }).onConflictDoNothing();
+  }
   await ensureIngestionRequest(tx, userId, resourceId, parsed, correlationId);
   await linkSelectedRecommendation(tx, userId, recommendationRunId, parsed, resourceId);
   return resourceId;
@@ -1150,10 +1172,10 @@ export async function resolveSource(userId: string, input: SourceDiscoveryResolv
         data = { title: asString(body.title) ?? "YouTube video", description: null, thumbnailUrl: asString(body.thumbnail_url), author: asString(body.author_name), durationMs: null, authors: [], venue: null, year: null };
       } else if (parsed.provider === "arxiv") {
         const paper = await resolveArxivMetadata(parsed.id);
-        data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year };
+        data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year, pdfUrl: paper.pdfUrl, arxivId: paper.arxivId ?? parsed.id };
       } else {
         const paper = await resolveDoiMetadata(parsed.id);
-        data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year };
+        data = { title: paper.title, description: paper.abstract, thumbnailUrl: null, author: paper.authors[0] ?? null, durationMs: null, authors: paper.authors, venue: paper.venue, year: paper.year, pdfUrl: paper.pdfUrl, arxivId: paper.arxivId };
       }
     } catch (error) {
       if (error instanceof AuthError) throw error;

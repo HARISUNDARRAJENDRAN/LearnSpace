@@ -207,8 +207,10 @@
 .paper-page-link:hover { background: rgb(64 140 255 / .14); }
 .paper-page-link:focus-visible { outline: 2px solid rgb(64 140 255 / .7); outline-offset: 1px; }
 .paper-page-number { position: absolute; inset: 0; display: grid; place-items: center; color: #b6bebf; font-size: 13px; }
-.paper-reader-state { display: grid; gap: 6px; max-width: 420px; margin: 80px auto; padding: 20px; border-radius: 12px; background: #fff; color: #49474e; font-size: 13px; text-align: center; }
+.paper-reader-state { display: grid; gap: 8px; max-width: 440px; margin: 80px auto; padding: 20px; border-radius: 12px; background: #fff; color: #49474e; font-size: 13px; text-align: center; }
 .paper-reader-state strong { color: #18282c; }
+.paper-reader-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+.paper-reader-state-actions a { display: inline-flex; align-items: center; text-decoration: none; }
 .paper-reader-ask { position: absolute; z-index: 5; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; border: 0; border-radius: 999px; background: #18282c; color: #fff; cursor: pointer; font-size: 12px; font-weight: 550; transform: translate(-50%, calc(-100% - 8px)); box-shadow: 0 6px 20px rgb(0 0 0 / .18); }
 .paper-reader-ask svg { width: 13px; height: 13px; }
 

@@ -218,7 +218,12 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
   useEffect(() => { frameHome(); }, [card.width, card.height, fillsPane, frameHome]);
   const papers = course?.sections.flatMap((section) => section.lessons) ?? [];
   const doneCount = papers.filter((item) => item.state === "completed").length;
-  const reader = <PaperReader ref={readerRef} resourceId={active.resourceId} title={active.title} initialPage={initialPage} sections={paper.sections} onPageChange={onPageChange} onAsk={ask} />;
+  const sourceUrl = paper.content?.arxivId
+    ? `https://arxiv.org/abs/${paper.content.arxivId}`
+    : paper.content?.doi
+      ? `https://doi.org/${paper.content.doi}`
+      : null;
+  const reader = <PaperReader ref={readerRef} resourceId={active.resourceId} title={active.title} initialPage={initialPage} sections={paper.sections} onPageChange={onPageChange} onAsk={ask} onOpenFocus={() => setFocusMode(true)} sourceUrl={sourceUrl} />;
 
   const panelView = (target: PanelView) => (opened.includes(target) ? { hidden: panel !== target } : null);
   const notesPanel = panelView("notes");

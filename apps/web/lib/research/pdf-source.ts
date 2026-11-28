@@ -1,38 +1,61 @@
 import { withUserTransaction } from "@learnspace/db";
 import { paperDetails, resources } from "@learnspace/db/schema";
+import { trustedPdfUrl } from "@learnspace/shared";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { AuthError } from "../auth/errors";
+import { discoverOpenAccessPdfForDoi } from "../source-discovery/paper-resolver";
 
-/** Hosts whose PDFs LearnSpace fetches on a learner's behalf. Anything else is opened at its source, never proxied. */
-const PDF_HOSTS = new Set(["arxiv.org", "export.arxiv.org"]);
+export { trustedPdfUrl };
 export const MAX_PAPER_PDF_BYTES = 40 * 1024 * 1024;
-const MAX_REDIRECTS = 3;
-const ARXIV_ID = /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i;
-
-export function trustedPdfUrl(raw: string): URL | null {
-  let url: URL;
-  try { url = new URL(raw); } catch { return null; }
-  if (url.protocol !== "https:" || url.username || url.password || url.port || !PDF_HOSTS.has(url.hostname)) return null;
-  return url;
-}
+const MAX_REDIRECTS = 5;
+const ARXIV_ID = /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[a-z-]+)?\/\d{7})(?:v\d+)?$/i;
 
 export function arxivPdfUrl(arxivId: string): string | null {
   return ARXIV_ID.test(arxivId) ? `https://arxiv.org/pdf/${arxivId}` : null;
 }
 
-/** The PDF a learner may read for a catalogue paper they can see: arXiv first (stable, verified), else an allow-listed source URL. */
+function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** The PDF a learner may read for a catalogue paper they can see: arXiv first (stable, verified), else an allow-listed OA source URL. */
 export async function paperPdfUrl(userId: string, resourceId: string): Promise<URL> {
   const [row] = await withUserTransaction(userId, (tx) => tx
-    .select({ provider: resources.provider, externalId: resources.externalId, arxivId: paperDetails.arxivId, pdfSourceUrl: paperDetails.pdfSourceUrl })
+    .select({
+      provider: resources.provider,
+      externalId: resources.externalId,
+      metadata: resources.metadata,
+      arxivId: paperDetails.arxivId,
+      doi: paperDetails.doi,
+      pdfSourceUrl: paperDetails.pdfSourceUrl,
+    })
     .from(resources)
     .leftJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
     .where(and(eq(resources.id, resourceId), eq(resources.type, "paper"), isNull(resources.deletedAt), or(eq(resources.ownerUserId, userId), inArray(resources.visibility, ["public", "unlisted"]))))
     .limit(1));
   if (!row) throw new AuthError("PAPER_NOT_FOUND", "This paper is not available.", 404);
-  // Discovery stores the arXiv ID before the ingestion worker writes paper details.
-  const arxivId = row.arxivId ?? (row.provider === "arxiv" ? row.externalId : null);
-  const candidate = (arxivId ? arxivPdfUrl(arxivId) : null) ?? row.pdfSourceUrl;
-  const url = candidate ? trustedPdfUrl(candidate) : null;
+  // Discovery stores the arXiv ID or OA PDF URL before the ingestion worker writes paper details.
+  const arxivId = row.arxivId ?? (row.provider === "arxiv" ? row.externalId : null) ?? metadataString(row.metadata, "arxivId");
+  const candidate = (arxivId ? arxivPdfUrl(arxivId) : null) ?? row.pdfSourceUrl ?? metadataString(row.metadata, "pdfSourceUrl");
+  let url = candidate ? trustedPdfUrl(candidate) : null;
+
+  // Lazily discover open-access PDFs for already-imported DOI papers (e.g. JAIR, OpenReview, PMLR, PMC).
+  if (!url) {
+    const doi = row.doi ?? (row.provider === "doi" ? row.externalId : null);
+    if (doi) {
+      const discovered = await discoverOpenAccessPdfForDoi(doi);
+      const discoveredCandidate = (discovered.arxivId ? arxivPdfUrl(discovered.arxivId) : null) ?? discovered.pdfUrl;
+      url = discoveredCandidate ? trustedPdfUrl(discoveredCandidate) : null;
+      if (url) {
+        const discoveredHref = url.href;
+        await withUserTransaction(userId, async (tx) => {
+          await tx.update(paperDetails).set({ pdfSourceUrl: discoveredHref }).where(and(eq(paperDetails.resourceId, resourceId), isNull(paperDetails.pdfSourceUrl)));
+        }).catch(() => undefined);
+      }
+    }
+  }
+
   if (!url) throw new AuthError("PAPER_PDF_UNAVAILABLE", "This paper's PDF can only be opened at its source.", 404);
   return url;
 }

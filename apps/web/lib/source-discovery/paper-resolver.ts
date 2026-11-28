@@ -1,3 +1,4 @@
+import { arxivIdFromUrl, trustedPdfUrl } from "@learnspace/shared";
 import { AuthError } from "../auth/errors";
 import { getRedisValue, setRedisValue } from "../discovery/cache";
 import { cleanLatexText, cleanPaperText } from "../research/text";
@@ -8,6 +9,8 @@ export type ResolvedPaperMetadata = {
   authors: string[];
   year: number | null;
   venue: string | null;
+  pdfUrl: string | null;
+  arxivId: string | null;
 };
 
 export type PaperResolverOptions = {
@@ -18,14 +21,18 @@ export type PaperResolverOptions = {
   timeoutMs?: number;
   /** Bypass in-memory and Redis metadata caches (primarily for tests). */
   skipCache?: boolean;
+  /** Firecrawl API key override (defaults to process.env.FIRECRAWL_API_KEY). */
+  firecrawlApiKey?: string | null;
 };
 
 const USER_AGENT = "LearnSpace/1.0 (+https://learn-space.app)";
 const CACHE_TTL_SECONDS = 24 * 60 * 60;
 const MEMORY_CACHE_TTL_MS = CACHE_TTL_SECONDS * 1_000;
 const MEMORY_CACHE_MAX_ENTRIES = 500;
-const DEFAULT_TIMEOUT_MS = 6_000;
+const DEFAULT_TIMEOUT_MS = 5_000;
+const FIRECRAWL_TIMEOUT_MS = 12_000;
 const DEFAULT_ARXIV_MIN_INTERVAL_MS = 3_000;
+const OPENALEX_SELECT = "title,authorships,publication_year,abstract_inverted_index,primary_location,best_oa_location,open_access,locations,ids";
 
 const memoryCache = new Map<string, { value: ResolvedPaperMetadata; expiresAt: number }>();
 let nextArxivApiRequestAt = 0;
@@ -70,14 +77,39 @@ function decodeHtmlEntities(value: string): string {
     });
 }
 
+function normalizeArxivId(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  const fromUrl = arxivIdFromUrl(trimmed);
+  if (fromUrl) return fromUrl;
+  const cleaned = trimmed.replace(/^arxiv:/i, "").replace(/v\d+$/i, "").toLowerCase();
+  return /^(?:[a-z-]+(?:\.[a-z-]+)?\/\d{7}|\d{4}\.\d{4,5})$/i.test(cleaned) ? cleaned : null;
+}
+
+function pickTrustedPdfUrl(candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const trusted = trustedPdfUrl(candidate.trim());
+    if (trusted) return trusted.href;
+  }
+  return null;
+}
+
 function finalizeMetadata(metadata: ResolvedPaperMetadata): ResolvedPaperMetadata {
   const title = cleanLatexText(metadata.title);
+  const arxivId = normalizeArxivId(metadata.arxivId);
+  const pdfUrl = pickTrustedPdfUrl([
+    metadata.pdfUrl,
+    arxivId ? `https://arxiv.org/pdf/${arxivId}` : null,
+  ]);
   return {
     title: title || metadata.title.trim(),
     abstract: cleanPaperText(metadata.abstract),
     authors: metadata.authors.map((author) => decodeHtmlEntities(author).replace(/\s+/g, " ").trim()).filter(Boolean),
     year: typeof metadata.year === "number" && Number.isFinite(metadata.year) ? metadata.year : null,
     venue: metadata.venue ? decodeHtmlEntities(metadata.venue).replace(/\s+/g, " ").trim() : null,
+    pdfUrl,
+    arxivId,
   };
 }
 
@@ -102,6 +134,8 @@ async function readCachedMetadata(key: string): Promise<ResolvedPaperMetadata | 
       authors: Array.isArray(parsed.authors) ? parsed.authors.filter((item): item is string => typeof item === "string") : [],
       year: typeof parsed.year === "number" ? parsed.year : null,
       venue: typeof parsed.venue === "string" ? parsed.venue : null,
+      pdfUrl: typeof parsed.pdfUrl === "string" ? parsed.pdfUrl : null,
+      arxivId: typeof parsed.arxivId === "string" ? parsed.arxivId : null,
     };
     writeMemoryCache(key, value);
     return value;
@@ -166,12 +200,15 @@ export function parseArxivAtomXml(xml: string, arxivId: string): ResolvedPaperMe
   const authors = [...entry.matchAll(/<author>[\s\S]*?<name>([\s\S]*?)<\/name>[\s\S]*?<\/author>/gi)]
     .map((match) => match[1]?.trim())
     .filter((value): value is string => Boolean(value));
+  const cleanId = normalizeArxivId(arxivId) ?? arxivId;
   return finalizeMetadata({
-    title: rawTitle || `arXiv paper ${arxivId}`,
+    title: rawTitle || `arXiv paper ${cleanId}`,
     abstract: xmlText(entry, "summary"),
     authors,
     year: Number.isFinite(parsedYear) ? parsedYear : null,
     venue: "arXiv",
+    pdfUrl: `https://arxiv.org/pdf/${cleanId}`,
+    arxivId: cleanId,
   });
 }
 
@@ -189,7 +226,7 @@ function metaContents(html: string, name: string): string[] {
   return results;
 }
 
-export function parseArxivAbsHtml(html: string): ResolvedPaperMetadata | null {
+export function parseArxivAbsHtml(html: string, arxivId?: string): ResolvedPaperMetadata | null {
   const title = metaContents(html, "citation_title")[0];
   if (!title) return null;
   const authors = metaContents(html, "citation_author");
@@ -207,7 +244,16 @@ export function parseArxivAbsHtml(html: string): ResolvedPaperMetadata | null {
       ).replace(/^Abstract:\s*/i, "");
     }
   }
-  return finalizeMetadata({ title, abstract, authors, year, venue: "arXiv" });
+  const cleanId = normalizeArxivId(arxivId ?? metaContents(html, "citation_arxiv_id")[0]);
+  return finalizeMetadata({
+    title,
+    abstract,
+    authors,
+    year,
+    venue: "arXiv",
+    pdfUrl: cleanId ? `https://arxiv.org/pdf/${cleanId}` : metaContents(html, "citation_pdf_url")[0] ?? null,
+    arxivId: cleanId,
+  });
 }
 
 function reconstructAbstractFromInvertedIndex(index: unknown): string | null {
@@ -226,7 +272,31 @@ function reconstructAbstractFromInvertedIndex(index: unknown): string | null {
   return positioned.map(([, word]) => word).join(" ");
 }
 
-export function parseOpenAlexWork(body: Record<string, unknown>, defaultVenue: string | null = null): ResolvedPaperMetadata | null {
+function openAlexPdfAndArxiv(body: Record<string, unknown>): { pdfUrl: string | null; arxivId: string | null } {
+  const locations = arrayValue(body.locations);
+  const candidates: Array<string | null> = [
+    asString(recordValue(body.best_oa_location, "pdf_url")),
+    asString(recordValue(body.open_access, "oa_url")),
+    asString(recordValue(body.primary_location, "pdf_url")),
+    ...locations.map((loc) => asString(recordValue(loc, "pdf_url"))),
+  ];
+  let arxivId = normalizeArxivId(asString(recordValue(body.ids, "arxiv")));
+  if (!arxivId) {
+    for (const loc of [body.best_oa_location, body.primary_location, ...locations]) {
+      const landing = asString(recordValue(loc, "landing_page_url"));
+      const pdf = asString(recordValue(loc, "pdf_url"));
+      const found = normalizeArxivId(landing) ?? normalizeArxivId(pdf);
+      if (found) { arxivId = found; break; }
+    }
+  }
+  const pdfUrl = pickTrustedPdfUrl([
+    arxivId ? `https://arxiv.org/pdf/${arxivId}` : null,
+    ...candidates,
+  ]);
+  return { pdfUrl, arxivId };
+}
+
+export function parseOpenAlexWork(body: Record<string, unknown>, defaultVenue: string | null = null, fallbackArxivId?: string): ResolvedPaperMetadata | null {
   const title = asString(body.title) ?? asString(body.display_name);
   if (!title) return null;
   const authors = arrayValue(body.authorships)
@@ -235,19 +305,33 @@ export function parseOpenAlexWork(body: Record<string, unknown>, defaultVenue: s
   const year = typeof body.publication_year === "number" ? body.publication_year : null;
   const venue = asString(recordValue(recordValue(body.primary_location, "source"), "display_name")) ?? defaultVenue;
   const abstract = reconstructAbstractFromInvertedIndex(body.abstract_inverted_index);
-  return finalizeMetadata({ title, abstract, authors, year, venue });
+  const { pdfUrl, arxivId } = openAlexPdfAndArxiv(body);
+  return finalizeMetadata({
+    title,
+    abstract,
+    authors,
+    year,
+    venue,
+    pdfUrl,
+    arxivId: arxivId ?? fallbackArxivId ?? null,
+  });
 }
 
-export function parseSemanticScholarPaper(body: Record<string, unknown>): ResolvedPaperMetadata | null {
+export function parseSemanticScholarPaper(body: Record<string, unknown>, fallbackArxivId?: string): ResolvedPaperMetadata | null {
   const title = asString(body.title);
   if (!title) return null;
   const authors = arrayValue(body.authors)
     .map((author) => asString(recordValue(author, "name")))
     .filter((value): value is string => Boolean(value));
   const year = typeof body.year === "number" ? body.year : null;
-  const venue = asString(body.venue) ?? "arXiv";
+  const venue = asString(body.venue) ?? (fallbackArxivId ? "arXiv" : null);
   const abstract = asString(body.abstract);
-  return finalizeMetadata({ title, abstract, authors, year, venue });
+  const arxivId = normalizeArxivId(asString(recordValue(body.externalIds, "ArXiv"))) ?? normalizeArxivId(fallbackArxivId);
+  const pdfUrl = pickTrustedPdfUrl([
+    arxivId ? `https://arxiv.org/pdf/${arxivId}` : null,
+    asString(recordValue(body.openAccessPdf, "url")),
+  ]);
+  return finalizeMetadata({ title, abstract, authors, year, venue, pdfUrl, arxivId });
 }
 
 export function parseCrossrefWork(body: Record<string, unknown>, doi: string): ResolvedPaperMetadata | null {
@@ -263,13 +347,91 @@ export function parseCrossrefWork(body: Record<string, unknown>, doi: string): R
   const published = recordValue(message, "published-print") ?? recordValue(message, "published-online");
   const firstPart = arrayValue(arrayValue(recordValue(published, "date-parts"))[0]);
   const rawAbstract = asString(recordValue(message, "abstract"))?.replace(/<[^>]+>/g, " ") ?? null;
+  const pdfLinks = arrayValue(recordValue(message, "link"))
+    .filter((entry) => /pdf/i.test(asString(recordValue(entry, "content-type")) ?? ""))
+    .map((entry) => asString(recordValue(entry, "URL")));
   return finalizeMetadata({
     title: title || doi,
     abstract: rawAbstract,
     authors,
     year: typeof firstPart[0] === "number" ? firstPart[0] : null,
     venue: asString(arrayValue(recordValue(message, "container-title"))[0]),
+    pdfUrl: pickTrustedPdfUrl(pdfLinks),
+    arxivId: null,
   });
+}
+
+export function parseFirecrawlPaperScrape(
+  body: Record<string, unknown>,
+  defaults: { venue?: string | null; arxivId?: string | null } = {},
+): ResolvedPaperMetadata | null {
+  if (body.success === false) return null;
+  const data = recordValue(body, "data");
+  const metadata = recordValue(data, "metadata");
+  const markdown = asString(recordValue(data, "markdown")) ?? "";
+  const rawTitle = asString(recordValue(metadata, "citation_title"))
+    ?? asString(recordValue(metadata, "ogTitle"))
+    ?? asString(recordValue(metadata, "title"))
+    ?? markdown.match(/^#\s+(.+)$/m)?.[1]?.trim()
+    ?? null;
+  if (!rawTitle) return null;
+  const title = rawTitle
+    .replace(/^\[[\d.v]+\]\s*/i, "")
+    .replace(/\s*\|\s*(?:Nature|arXiv|ScienceDirect|SpringerLink|OpenReview).*$/i, "")
+    .trim();
+  if (!title) return null;
+
+  const metaAuthors = recordValue(metadata, "citation_author");
+  const authors = Array.isArray(metaAuthors)
+    ? metaAuthors.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : typeof metaAuthors === "string" && metaAuthors.trim()
+      ? [metaAuthors.trim()]
+      : [];
+
+  const dateRaw = asString(recordValue(metadata, "citation_date"))
+    ?? asString(recordValue(metadata, "publishedTime"))
+    ?? asString(recordValue(metadata, "dc.date"));
+  const yearMatch = dateRaw?.match(/\b(19\d{2}|20\d{2})\b/);
+  const year = yearMatch?.[1] ? Number.parseInt(yearMatch[1], 10) : null;
+
+  const abstractFromMarkdown = markdown.match(/(?:^|\n)(?:##\s*Abstract\s*\n+|Abstract:\s*)([\s\S]{40,2200}?)(?:\n##\s|\n\*\*|\nSubjects:|\nComments:|$)/i)?.[1]?.trim() ?? null;
+  const abstract = asString(recordValue(metadata, "citation_abstract"))
+    ?? abstractFromMarkdown
+    ?? asString(recordValue(metadata, "description"))
+    ?? null;
+
+  const pdfUrl = pickTrustedPdfUrl([
+    asString(recordValue(metadata, "citation_pdf_url")),
+    defaults.arxivId ? `https://arxiv.org/pdf/${defaults.arxivId}` : null,
+  ]);
+  const venue = asString(recordValue(metadata, "citation_journal_title")) ?? defaults.venue ?? null;
+  return finalizeMetadata({
+    title,
+    abstract,
+    authors,
+    year,
+    venue,
+    pdfUrl,
+    arxivId: defaults.arxivId ?? null,
+  });
+}
+
+async function firecrawlScrapePaper(
+  fetcher: typeof fetch,
+  url: string,
+  apiKey: string,
+  timeoutMs: number,
+  defaults: { venue?: string | null; arxivId?: string | null } = {},
+): Promise<ResolvedPaperMetadata | null> {
+  const response = await fetcher("https://api.firecrawl.dev/v2/scrape", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({ url, formats: ["markdown"], onlyMainContent: true }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) throw sourceUnavailable();
+  const body = await response.json() as Record<string, unknown>;
+  return parseFirecrawlPaperScrape(body, defaults);
 }
 
 async function respectArxivSpacing(minIntervalMs: number): Promise<void> {
@@ -278,6 +440,35 @@ async function respectArxivSpacing(minIntervalMs: number): Promise<void> {
   nextArxivApiRequestAt = Math.max(Date.now(), nextArxivApiRequestAt) + minIntervalMs;
   if (waitMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, Math.min(waitMs, minIntervalMs)));
+  }
+}
+
+function resolvedFirecrawlKey(options: PaperResolverOptions): string | null {
+  if (options.firecrawlApiKey !== undefined) return options.firecrawlApiKey?.trim() || null;
+  return process.env.FIRECRAWL_API_KEY?.trim() || null;
+}
+
+/** Fast OpenAlex lookup to discover an allowlisted open-access PDF URL or arXiv preprint for a DOI. */
+export async function discoverOpenAccessPdfForDoi(
+  doi: string,
+  options: Pick<PaperResolverOptions, "fetch" | "timeoutMs"> = {},
+): Promise<{ pdfUrl: string | null; arxivId: string | null }> {
+  const arxivFromDoi = doi.match(/^10\.48550\/arxiv\.(.+)$/i)?.[1];
+  if (arxivFromDoi) {
+    const cleanId = normalizeArxivId(arxivFromDoi);
+    return { pdfUrl: cleanId ? `https://arxiv.org/pdf/${cleanId}` : null, arxivId: cleanId };
+  }
+  const fetcher = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 3_500;
+  try {
+    const json = await fetchProviderJson(
+      fetcher,
+      `https://api.openalex.org/works/https://doi.org/${encodeURIComponent(doi)}?select=open_access,best_oa_location,primary_location,locations,ids`,
+      timeoutMs,
+    );
+    return openAlexPdfAndArxiv(json);
+  } catch {
+    return { pdfUrl: null, arxivId: null };
   }
 }
 
@@ -291,6 +482,7 @@ export async function resolveArxivMetadata(arxivId: string, options: PaperResolv
   const fetcher = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const minIntervalMs = options.arxivMinIntervalMs ?? (process.env.NODE_ENV === "test" ? 0 : DEFAULT_ARXIV_MIN_INTERVAL_MS);
+  const firecrawlKey = resolvedFirecrawlKey(options);
 
   const encodedId = encodeURIComponent(arxivId);
   const attempts: Array<() => Promise<ResolvedPaperMetadata | null>> = [
@@ -301,23 +493,26 @@ export async function resolveArxivMetadata(arxivId: string, options: PaperResolv
     },
     async () => {
       const html = await fetchProviderText(fetcher, `https://arxiv.org/abs/${encodedId}`, "text/html,application/xhtml+xml", timeoutMs);
-      return parseArxivAbsHtml(html);
+      return parseArxivAbsHtml(html, arxivId);
     },
     async () => {
       const json = await fetchProviderJson(
         fetcher,
-        `https://api.openalex.org/works/https://doi.org/10.48550/arXiv.${encodedId}?select=title,authorships,publication_year,abstract_inverted_index,primary_location`,
+        `https://api.openalex.org/works/https://doi.org/10.48550/arXiv.${encodedId}?select=${OPENALEX_SELECT}`,
         timeoutMs,
       );
-      return parseOpenAlexWork(json, "arXiv");
+      return parseOpenAlexWork(json, "arXiv", arxivId);
     },
+    ...(firecrawlKey
+      ? [async () => firecrawlScrapePaper(fetcher, `https://arxiv.org/abs/${encodedId}`, firecrawlKey, Math.max(timeoutMs, FIRECRAWL_TIMEOUT_MS), { venue: "arXiv", arxivId })]
+      : []),
     async () => {
       const json = await fetchProviderJson(
         fetcher,
-        `https://api.semanticscholar.org/graph/v1/paper/ARXIV:${encodedId}?fields=title,abstract,authors,year,venue`,
+        `https://api.semanticscholar.org/graph/v1/paper/ARXIV:${encodedId}?fields=title,abstract,authors,year,venue,openAccessPdf,externalIds`,
         timeoutMs,
       );
-      return parseSemanticScholarPaper(json);
+      return parseSemanticScholarPaper(json, arxivId);
     },
   ];
 
@@ -350,21 +545,33 @@ export async function resolveDoiMetadata(doi: string, options: PaperResolverOpti
 
   const fetcher = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const firecrawlKey = resolvedFirecrawlKey(options);
   const encodedDoi = encodeURIComponent(doi);
 
   const attempts: Array<() => Promise<ResolvedPaperMetadata | null>> = [
     async () => {
       const json = await fetchProviderJson(fetcher, `https://api.crossref.org/works/${encodedDoi}`, timeoutMs);
-      return parseCrossrefWork(json, doi);
+      const parsed = parseCrossrefWork(json, doi);
+      if (!parsed) return null;
+      if (!parsed.pdfUrl && !parsed.arxivId) {
+        const oa = await discoverOpenAccessPdfForDoi(doi, { fetch: fetcher, timeoutMs: Math.min(timeoutMs, 3_000) });
+        if (oa.pdfUrl || oa.arxivId) {
+          return finalizeMetadata({ ...parsed, pdfUrl: oa.pdfUrl ?? parsed.pdfUrl, arxivId: oa.arxivId ?? parsed.arxivId });
+        }
+      }
+      return parsed;
     },
     async () => {
       const json = await fetchProviderJson(
         fetcher,
-        `https://api.openalex.org/works/https://doi.org/${encodedDoi}?select=title,authorships,publication_year,abstract_inverted_index,primary_location`,
+        `https://api.openalex.org/works/https://doi.org/${encodedDoi}?select=${OPENALEX_SELECT}`,
         timeoutMs,
       );
       return parseOpenAlexWork(json);
     },
+    ...(firecrawlKey
+      ? [async () => firecrawlScrapePaper(fetcher, `https://doi.org/${encodedDoi}`, firecrawlKey, Math.max(timeoutMs, FIRECRAWL_TIMEOUT_MS))]
+      : []),
   ];
 
   for (const attempt of attempts) {

@@ -21,6 +21,8 @@ type Props = {
   onAsk?: (selection: PaperSelection) => void;
   /** Extra toolbar controls, e.g. the Focus mode toggle. */
   actions?: React.ReactNode;
+  onOpenFocus?: () => void;
+  sourceUrl?: string | null;
 };
 
 const MIN_SCALE = 0.6;
@@ -129,7 +131,7 @@ function PdfPage({ doc, number, scale, width, height, visible, lib, onGoPage, ma
   </div>;
 }
 
-export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperReader({ resourceId, title, initialPage = 1, sections, onPageChange, onAsk, actions }, ref) {
+export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperReader({ resourceId, title, initialPage = 1, sections, onPageChange, onAsk, actions, onOpenFocus, sourceUrl }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lib, setLib] = useState<PdfModule | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -266,7 +268,14 @@ export const PaperReader = forwardRef<PaperReaderHandle, Props>(function PaperRe
     </div>
     <div ref={scrollRef} className="paper-reader-scroll" data-lenis-prevent onScroll={measure} onPointerUp={onPointerUp} data-own-wheel onPointerDown={(event) => event.stopPropagation()}>
       {state === "loading" ? <div className="paper-reader-state" role="status">Opening the paper…</div> : null}
-      {state === "error" ? <div className="paper-reader-state" role="alert"><strong>This PDF couldn&apos;t be opened here.</strong><span>The source may be unavailable. The parsed text is still in Focus mode, Notes and Luny.</span></div> : null}
+      {state === "error" ? <div className="paper-reader-state" role="alert">
+        <strong>This PDF couldn&apos;t be opened here.</strong>
+        <span>The publisher may not provide a direct open-access PDF. The parsed text is still in Focus mode, Notes and Luny.</span>
+        {(onOpenFocus || sourceUrl) ? <div className="paper-reader-state-actions">
+          {onOpenFocus ? <button type="button" className="session-primary-button" onClick={onOpenFocus}>Read in Focus mode</button> : null}
+          {sourceUrl ? <a className="session-secondary-button" href={sourceUrl} target="_blank" rel="noreferrer">Open at publisher</a> : null}
+        </div> : null}
+      </div> : null}
       {/* biome-ignore lint/suspicious/noArrayIndexKey: the page number is the page's identity. */}
       {doc && lib ? <div className="paper-reader-pages">{sizes.map((size, index) => <PdfPage key={index + 1} doc={doc} lib={lib} number={index + 1} scale={scale} width={size.width * scale} height={size.height * scale} visible={visible.has(index + 1)} onGoPage={scrollToPage} mark={mark?.page === index + 1 ? mark : null} onMarkPlaced={onMarkPlaced} />)}</div> : null}
       {selection && onAsk ? <button type="button" className="paper-reader-ask" style={{ left: selection.x, top: selection.y }} onPointerUp={(event) => event.stopPropagation()} onClick={() => { onAsk({ text: selection.text, page: selection.page }); setSelection(null); window.getSelection()?.removeAllRanges(); }}><Sparkles aria-hidden="true" /> Ask Luny</button> : null}
