@@ -182,11 +182,17 @@ test("folders preserve mixed-mode histories and enforce ownership, idempotency, 
     const model: TutorModel = async (request) => {
       calls.push(request.user);
       const text = request.instructions.includes("You are LearnSpace's tutor")
-        ? JSON.stringify({ needsReasoning: false, outcome: "answer",
+        ? JSON.stringify({
+          needsReasoning: false, outcome: "answer",
           blocks: [{ type: "text", basis: "source", cite: request.user.includes("The lecture plans") ? [1, 2] : [1], text: "Compare representations and rollouts." }],
-          followUps: [], learner: { goal: null, concepts: [], openQuestions: [], nextStep: "Compare the sources" } })
-        : JSON.stringify({ questions: Array.from({ length: 5 }, (_, i) => ({ type: "choice", concept: "Rollout", cite: [1, 2],
-          question: `Question ${i + 1}?`, options: ["Correct", "Wrong", "Also wrong", "Another wrong option"], answer: 0, explanation: "Read the passages." })) });
+          followUps: [], learner: { goal: null, concepts: [], openQuestions: [], nextStep: "Compare the sources" }
+        })
+        : JSON.stringify({
+          questions: Array.from({ length: 5 }, (_, i) => ({
+            type: "choice", concept: "Rollout", cite: [1, 2],
+            question: `Question ${i + 1}?`, options: ["Correct", "Wrong", "Also wrong", "Another wrong option"], answer: 0, explanation: "Read the passages."
+          }))
+        });
       return { text, refusal: null, usage: { inputTokens: 1, cachedTokens: 0, cacheWriteTokens: 0, outputTokens: 1, reasoningTokens: 0, fast: false }, firstOutputMs: 1, latencyMs: 1 };
     };
     const ask = async (question: string) => {

@@ -31,7 +31,7 @@ const nextConfig = {
   serverExternalPackages: ["@learnspace/pdf-parser"],
   // Paper ingestion's parser forks a child script that loads a native module; the bundle cannot see either file.
   outputFileTracingIncludes: Object.fromEntries(
-    ["/app/study/paper/*", "/api/v1/study-sessions/*/tutor", "/api/v1/session-folders/*"].map((route) => [
+    ["/app/study/paper/*", "/api/v1/study-sessions/*/tutor", "/api/v1/session-folders/*", "/api/v1/shared-folders/*"].map((route) => [
       route,
       ["../../packages/pdf-parser/package.json", "../../packages/pdf-parser/dist/child.js", "../../packages/pdf-parser/native/*.node"],
     ]),
@@ -43,6 +43,8 @@ const nextConfig = {
   // without it run the models on one thread.
   headers: async () => [
     { source: "/:path*", headers: [...securityHeaders, ...(process.env.NODE_ENV === "production" ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : [])] },
+    { source: "/share/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "X-Robots-Tag", value: "noindex, nofollow" }] },
+    { source: "/api/v1/shared-folders/:path*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }, { key: "X-Robots-Tag", value: "noindex, nofollow" }] },
     { source: "/app/:path*", headers: [{ key: "Document-Isolation-Policy", value: "isolate-and-credentialless" }] },
   ],
 };

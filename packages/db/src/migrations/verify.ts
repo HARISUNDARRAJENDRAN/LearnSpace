@@ -51,6 +51,8 @@ const sensitiveRlsManifest: Record<string, readonly string[]> = {
   "study.session_folders": ["session_folders_owner_select", "session_folders_owner_insert", "session_folders_owner_update", "session_folders_owner_delete"],
   "study.session_folder_memberships": ["session_folder_memberships_owner_select", "session_folder_memberships_owner_insert", "session_folder_memberships_owner_update", "session_folder_memberships_owner_delete"],
   "study.session_folder_resources": ["session_folder_resources_owner_select", "session_folder_resources_owner_insert", "session_folder_resources_owner_update", "session_folder_resources_owner_delete"],
+  "study.session_folder_shares": ["session_folder_shares_owner_select", "session_folder_shares_owner_insert", "session_folder_shares_owner_update", "session_folder_shares_owner_delete"],
+  "study.session_folder_share_imports": ["session_folder_imports_owner_select", "session_folder_imports_owner_insert", "session_folder_imports_owner_delete"],
   "study.session_resources": ["session_resources_owner_policy", "session_resources_worker_policy"],
   "study.session_context_snapshots": ["session_snapshots_owner_policy", "session_snapshots_worker_policy"],
   "study.session_checkpoints": ["session_checkpoints_owner_policy", "session_checkpoints_worker_policy"],
@@ -222,7 +224,7 @@ try {
     WHERE n.nspname IN ('identity', 'catalog', 'study', 'activity', 'retrieval', 'practice', 'knowledge', 'agent', 'discovery', 'ops', 'projection')
       AND c.relkind IN ('r', 'p')
   `);
-  await requireCondition(tableCount === 94, `expected 94 target tables, found ${tableCount}`);
+  await requireCondition(tableCount === 96, `expected 96 target tables, found ${tableCount}`);
 
   const onboardingColumnCount = await count(`
     SELECT count(*)::text AS count
@@ -281,11 +283,12 @@ try {
     JOIN pg_namespace AS n ON n.oid = p.pronamespace
     WHERE (n.nspname, p.proname, pg_get_function_identity_arguments(p.oid)) IN (
       ('study', 'validate_user_resource_progress_chunk', ''),
+      ('study', 'resolve_shared_folder', 'p_token_hash text'),
       ('retrieval', 'validate_citation_message_context', '')
     )
   `;
   await requireCondition(
-    validationFunctionRows.length === 2 &&
+    validationFunctionRows.length === 3 &&
       validationFunctionRows.every((row) => row.security_definer && row.settings?.some((setting) => setting.startsWith("search_path=pg_catalog")) === true),
     "validation functions are not safely configured",
   );

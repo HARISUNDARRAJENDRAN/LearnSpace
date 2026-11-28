@@ -15,6 +15,7 @@ import {
   type StartingLevelOptionId,
 } from "@learnspace/shared/onboarding";
 import { ArrowLeft, ArrowRight, Check, Search, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Logo } from "../marketing/SiteNav";
 import { prefetchSpeechModels } from "../study/voice/prefetch";
@@ -136,10 +137,14 @@ function apiErrorMessage(data: ApiError): string {
 export function OnboardingFlow({
   firstName,
   initialState,
+  nextPath,
 }: {
   firstName: string;
   initialState: InitialState;
+  nextPath?: string;
 }) {
+  const router = useRouter();
+  const totalSteps = nextPath ? 6 : 7;
   const [step, setStep] = useState(0);
   const [flow, setFlow] = useState(() => initialFlow(initialState.draft));
   const [selectedConcepts, setSelectedConcepts] = useState(() =>
@@ -355,9 +360,9 @@ export function OnboardingFlow({
           <Logo />
           {step > 0 ? (
             <span className="onboarding-progress">
-              Step {step} of 7
+              Step {step} of {totalSteps}
               <span className="onboarding-progress-steps" aria-hidden="true">
-                {[1, 2, 3, 4, 5, 6, 7].map((index) => (
+                {Array.from({ length: totalSteps }, (_, index) => index + 1).map((index) => (
                   <span key={index} className={index <= step ? "is-done" : undefined} />
                 ))}
               </span>
@@ -532,8 +537,19 @@ export function OnboardingFlow({
                 </fieldset>
               ) : null}
 
-              {step === 6 ? <GoalStep interests={selectedConcepts.map((concept) => concept.name)} onDone={() => setStep(7)} /> : null}
-              {step === 7 ? <FirstSession preferredDuration={flow.preferredDuration} /> : null}
+              {step === 6 ? (
+                <GoalStep
+                  interests={selectedConcepts.map((concept) => concept.name)}
+                  onDone={() => {
+                    if (nextPath) {
+                      router.replace(nextPath);
+                    } else {
+                      setStep(7);
+                    }
+                  }}
+                />
+              ) : null}
+              {step === 7 && !nextPath ? <FirstSession preferredDuration={flow.preferredDuration} /> : null}
 
               {saveError ? <p className="onboarding-inline-error" role="status">{saveError}</p> : null}
               {submitError ? <p className="onboarding-inline-error" role="alert">{submitError}</p> : null}

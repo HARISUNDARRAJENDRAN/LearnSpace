@@ -91,7 +91,7 @@ export function VerifyEmailClient({
         </button>
       </form>
       <p className="auth-switch">
-        Ready to continue? <a href="/login">Go to login</a>
+        Ready to continue? <a href={`/login?next=${encodeURIComponent(next)}`}>Go to login</a>
       </p>
     </>
   );

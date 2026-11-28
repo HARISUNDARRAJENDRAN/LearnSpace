@@ -32,6 +32,12 @@ export const resetPasswordInputSchema = z.object({
   password: passwordSchema,
 });
 
+const sharedFolderPathPattern = /^\/share\/[A-Za-z0-9_-]{32,128}$/;
+
+export function isSharedFolderPath(pathname: string): boolean {
+  return sharedFolderPathPattern.test(pathname);
+}
+
 export function safeRedirectPath(value: string | undefined, fallback = "/app"): string {
   if (
     !value ||
@@ -45,7 +51,16 @@ export function safeRedirectPath(value: string | undefined, fallback = "/app"): 
 
   const target = new URL(value, "http://localhost");
   const pathname = target.pathname;
-  if (target.origin !== "http://localhost" || (pathname !== "/onboarding" && pathname !== "/app" && !pathname.startsWith("/app/"))) {
+  if (target.origin !== "http://localhost") {
+    return fallback;
+  }
+
+  if (isSharedFolderPath(pathname)) {
+    if (target.search || target.hash) return fallback;
+    return pathname;
+  }
+
+  if (pathname !== "/onboarding" && pathname !== "/app" && !pathname.startsWith("/app/")) {
     return fallback;
   }
 

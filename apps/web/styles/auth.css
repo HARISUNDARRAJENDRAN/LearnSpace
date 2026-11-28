@@ -336,3 +336,6 @@
 		transition: none !important;
 	}
 }
+
+.share-import-spinner { animation: share-import-spin 0.9s linear infinite; }
+@keyframes share-import-spin { to { transform: rotate(360deg); } }

@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Share2, X } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { ShareFolderDialog } from "./ShareFolderDialog";
 import { useSessionFolders } from "./state";
 
 export function FolderDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -103,7 +104,7 @@ export function FolderOptions({ folder, onClose, onDeleted }: {
   onDeleted?: () => void;
 }) {
   const { folders, change, remove, pending } = useSessionFolders();
-  const [view, setView] = useState<"options" | "edit" | "delete">("options");
+  const [view, setView] = useState<"options" | "edit" | "share" | "delete">("options");
   const [error, setError] = useState("");
   const index = folders.findIndex(({ id }) => id === folder.id);
   async function run(action: () => Promise<unknown>, after?: () => void) {
@@ -112,6 +113,7 @@ export function FolderOptions({ folder, onClose, onDeleted }: {
     catch (cause) { setError(cause instanceof Error ? cause.message : "The folder could not be updated."); }
   }
   if (view === "edit") return <FolderEditor folder={folder} onClose={onClose} />;
+  if (view === "share") return <ShareFolderDialog folder={folder} onClose={onClose} />;
   return <FolderDialog title={view === "delete" ? "Delete folder?" : `Options for ${folder.title}`} onClose={onClose}>
     {view === "delete" ? <>
       <p>Delete “{folder.title}”? Its sessions will become unfiled. Their progress, notes, and conversations will still be available.</p>
@@ -120,6 +122,7 @@ export function FolderOptions({ folder, onClose, onDeleted }: {
         <button type="button" className="is-danger" disabled={pending} onClick={() => void run(() => remove(folder.id), () => { onClose(); onDeleted?.(); })}>Delete folder</button>
       </div>
     </> : <div className="session-folder-options">
+      <button type="button" disabled={pending} onClick={() => setView("share")}><Share2 aria-hidden="true" />Share folder link…</button>
       <button type="button" disabled={pending} onClick={() => setView("edit")}>Edit name and description</button>
       <button type="button" disabled={pending || index < 1} onClick={() => void run(() => change(folder.id, { action: "reorder-folder", direction: "up" }))}><ArrowUp aria-hidden="true" />Move folder up</button>
       <button type="button" disabled={pending || index < 0 || index === folders.length - 1} onClick={() => void run(() => change(folder.id, { action: "reorder-folder", direction: "down" }))}><ArrowDown aria-hidden="true" />Move folder down</button>

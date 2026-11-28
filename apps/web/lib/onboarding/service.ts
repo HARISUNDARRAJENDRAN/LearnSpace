@@ -414,9 +414,14 @@ export async function getAuthenticatedDestination(
 ): Promise<string> {
   return withUserTransaction(userId, async (tx) => {
     const settings = await loadSettings(tx, userId);
-    if (!settings.onboardingCompletedAt) return "/onboarding";
+    const target = requestedPath === "/onboarding" ? "/app" : requestedPath;
+    const isSharedFolder = target.startsWith("/share/");
+    if (!settings.onboardingCompletedAt) {
+      return isSharedFolder ? `/onboarding?next=${encodeURIComponent(target)}` : "/onboarding";
+    }
+    if (isSharedFolder) return target;
     if (!settings.firstApplicationVisitAt) return "/app/discover";
-    return requestedPath === "/onboarding" ? "/app" : requestedPath;
+    return target;
   });
 }
 

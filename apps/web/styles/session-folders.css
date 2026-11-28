@@ -162,3 +162,25 @@
 .application-ended-sessions .session-folder-row svg { width: 14px; height: 14px; }
 .application-ended-sessions .session-folder-item-actions { grid-column: 2; }
 .application-ended-sessions .session-folder-item-actions button { min-height: 26px; padding-inline: 6px; }
+
+.session-folder-share { display: grid; gap: 13px; }
+.session-folder-share-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--sf-line);
+  border-radius: 9px;
+  background: var(--sf-surface);
+  color: var(--sf-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.session-folder-share-note svg { margin-top: 2px; color: #3f9a64; }
+.session-folder-share-status { color: var(--sf-muted); }
+.session-folder-share-field { display: grid; gap: 5px; font-weight: 550; }
+.session-folder-share-field > span { color: var(--sf-muted); font-size: 12px; }
+.session-folder-share-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.session-folder-share-row > .session-folder-button.is-primary { border-color: var(--sf-accent); background: var(--sf-accent); color: #fff; }
+.session-folder-share-row > .session-folder-button.is-primary:hover { background: #111; }
+.session-folder-share-controls { justify-content: space-between; }

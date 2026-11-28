@@ -21,7 +21,8 @@ export default async function ApplicationLayout({ children }: Readonly<{ childre
   }
   if (!prefetch
     && await recordFirstApplicationVisit(currentSession.user.id)
-    && pathname !== "/app/discover") redirect("/app/discover");
+    && pathname !== "/app/discover"
+    && !pathname.startsWith("/app/sessions/folders/")) redirect("/app/discover");
   const [sessions, folders] = await Promise.all([
     listStudySessions(currentSession.user.id),
     listSessionFolders(currentSession.user.id),

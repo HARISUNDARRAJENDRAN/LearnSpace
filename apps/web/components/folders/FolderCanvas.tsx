@@ -1,7 +1,7 @@
 "use client";
 
 import type { SourcePreview, StudyAnchor } from "@learnspace/shared";
-import { FolderClosed, ListChecks, MoreHorizontal, NotebookPen, Play, Plus, Sparkles } from "lucide-react";
+import { FolderClosed, ListChecks, MoreHorizontal, NotebookPen, Play, Plus, Share2, Sparkles } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -16,6 +16,7 @@ import { postStudyAction } from "../study/session-api";
 import { useTranscriptCapture } from "../study/useTranscriptCapture";
 import { AddFolderContent } from "./AddFolderContent";
 import { FolderDialog, FolderOptions, SessionFolderItemOptions } from "./FolderDialogs";
+import { ShareFolderDialog } from "./ShareFolderDialog";
 import { takeFolderQuestion } from "./StudyFolderAction";
 import { folderRequest, FolderRequestError, folderSessionHref, useSessionFolders } from "./state";
 
@@ -107,6 +108,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
   const [error, setError] = useState("");
   const [add, setAdd] = useState<"discovery" | "library" | null>(null);
   const addTrigger = useRef<HTMLButtonElement>(null);
+  const [shareOpen, setShareOpen] = useState(false);
   const [options, setOptions] = useState(false);
   const [itemOptions, setItemOptions] = useState<FolderMaterial | null>(null);
   const [opening, setOpening] = useState(false);
@@ -195,6 +197,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
           <legend className="sr-only">Folder tools</legend>
           {tools.map(({ id, label, Icon }) => <button key={id} className={tool === id ? "is-active" : ""} type="button" aria-pressed={tool === id} title={label} onClick={() => (tool === id ? collapse() : selectTool(id))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
         </fieldset>
+        <button className="session-icon-button" type="button" aria-label="Share folder" title="Share folder" onClick={() => setShareOpen(true)}><Share2 aria-hidden="true" /></button>
         <button className="session-icon-button" type="button" ref={addTrigger} aria-label="Add content" title="Add content" onClick={() => setAdd("discovery")}><Plus aria-hidden="true" /></button>
         <button className="session-icon-button" type="button" aria-label="Folder options" title="Folder options" onClick={() => setOptions(true)}><MoreHorizontal aria-hidden="true" /></button>
       </div> : null}
@@ -223,6 +226,7 @@ export function FolderCanvas({ folderId, mode }: { folderId: string; mode: "lear
           {tool === "practice" ? <MasteryCheck sessionId={folderId} resourceId={folderId} folder readySources={readySources} next={{ course: null, nextTitle: null }} place={place} onGo={noAction} onCollapse={collapse} /> : null}
         </aside> : null}
       </div> : !loadError ? <p role="status">Opening folder…</p> : null}
+    {shareOpen && folder ? <ShareFolderDialog folder={folder} onClose={() => setShareOpen(false)} /> : null}
     {options && folder ? <FolderOptions folder={folder} onClose={() => setOptions(false)} onDeleted={() => router.push(studyHomeHref(mode))} /> : null}
     {add === "discovery" ? <SourceDiscoveryModal mode={mode} isOpen onClose={() => setAdd(null)} triggerRef={addTrigger}
       onBrowseLibrary={() => setAdd("library")} onSaveSource={async ({ resourceId, sourceUrl }, sourceMode) => {

@@ -349,5 +349,18 @@ export const changeSessionFolderSchema = z.discriminatedUnion("action", [
 ]);
 export const studySessionsQuerySchema = z.object({ shelf: z.enum(["open", "ended"]).default("open") }).strict();
 export const folderSessionCandidatesQuerySchema = z.object({ q: z.string().trim().max(120).default("") }).strict();
+export const folderShareTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/, "This share link is invalid.");
+export const folderShareMutationSchema = z.object({ rotate: z.boolean().default(false) }).strict();
 export type CreateSessionFolder = z.infer<typeof createSessionFolderSchema>;
 export type ChangeSessionFolder = z.infer<typeof changeSessionFolderSchema>;
+export type FolderShareMutation = z.infer<typeof folderShareMutationSchema>;
+export type FolderShareState = {
+  enabled: boolean;
+  shareUrl: string | null;
+  createdAt: string | null;
+};
+export type ImportSharedFolderResponse = {
+  folderId: string;
+  href: string;
+  status: "imported" | "existing" | "owned";
+};

@@ -38,6 +38,13 @@ test("redirect targets remain local application paths", () => {
   assert.equal(safeRedirectPath("/\t/example.com/app"), "/app");
   assert.equal(safeRedirectPath("/app/./discover"), "/app/discover");
   assert.equal(safeRedirectPath("/onboarding"), "/onboarding");
+  const validShare = `/share/${"a".repeat(43)}`;
+  assert.equal(safeRedirectPath(validShare), validShare);
+  assert.equal(safeRedirectPath("/share/too-short"), "/app");
+  assert.equal(safeRedirectPath(`${validShare}?evil=1`), "/app");
+  assert.equal(safeRedirectPath(`${validShare}#hash`), "/app");
+  assert.equal(safeRedirectPath(`${validShare}/nested`), "/app");
+  assert.equal(safeRedirectPath(`/share/${"a".repeat(43)}/../login`), "/app");
 });
 
 test("Google's callback must share the public application origin", () => {
