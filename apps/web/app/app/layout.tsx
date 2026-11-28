@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { ApplicationShell } from "../../components/application/ApplicationShell";
 import { getCurrentSession, publicUser } from "../../lib/auth/session";
+import { listSessionFolders } from "../../lib/folders/service";
 import { getAuthenticatedDestination, getOnboardingState, isApplicationPrefetch, recordFirstApplicationVisit } from "../../lib/onboarding/service";
 import { listStudySessions } from "../../lib/study/service";
 
@@ -21,6 +22,9 @@ export default async function ApplicationLayout({ children }: Readonly<{ childre
   if (!prefetch
     && await recordFirstApplicationVisit(currentSession.user.id)
     && pathname !== "/app/discover") redirect("/app/discover");
-  const sessions = await listStudySessions(currentSession.user.id);
-  return <ApplicationShell user={publicUser(currentSession.user)} sessions={sessions}>{children}</ApplicationShell>;
+  const [sessions, folders] = await Promise.all([
+    listStudySessions(currentSession.user.id),
+    listSessionFolders(currentSession.user.id),
+  ]);
+  return <ApplicationShell user={publicUser(currentSession.user)} sessions={sessions} folders={folders}>{children}</ApplicationShell>;
 }

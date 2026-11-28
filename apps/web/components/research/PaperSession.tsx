@@ -246,11 +246,11 @@ export function PaperSession({ session, active }: { session: StudySessionView; a
               <legend className="sr-only">Study tools</legend>
               {tools.filter(({ view: tool }) => tool !== "code" || codingEligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
-            <StudyFolderAction session={session} />
+            {folderReturn ? null : <StudyFolderAction session={session} />}
             {course ? <span className="session-course-count" title="Papers read">{doneCount}/{papers.length} read</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={focusMode} aria-label="Focus mode" title="Focus mode: the paper re-typeset for reading" onClick={() => setFocusMode(true)}><BookOpenText aria-hidden="true" /></button>
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => (document.fullscreenElement ? void document.exitFullscreen() : void sessionRef.current?.requestFullscreen())}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
-            {session.status === "completed" ? null : <EndSession sessionId={session.id} mode="research" />}
+            {folderReturn || session.status === "completed" ? null : <EndSession sessionId={session.id} mode="research" />}
           </div>
         </header>
         <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers} style={{ backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`, backgroundPosition: `calc(50% + ${view.x}px) calc(50% + ${view.y}px)` }}>

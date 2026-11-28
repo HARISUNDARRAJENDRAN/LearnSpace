@@ -38,6 +38,17 @@ export function listSessionFolders(userId: string) {
   });
 }
 
+export function folderIdForSession(userId: string, sessionId: string): Promise<string | null> {
+  return withUserTransaction(userId, async (tx) => {
+    const [row] = await tx
+      .select({ folderId: memberships.folderId })
+      .from(memberships)
+      .where(and(eq(memberships.userId, userId), eq(memberships.studySessionId, sessionId)))
+      .limit(1);
+    return row?.folderId ?? null;
+  });
+}
+
 async function touch(tx: Transaction, userId: string, folderIds: string[]) {
   await tx.update(folders).set({ updatedAt: new Date() }).where(and(eq(folders.userId, userId), inArray(folders.id, folderIds)));
 }
@@ -133,7 +144,7 @@ export async function changeSessionFolder(userId: string, folderId: string, inpu
             throw new AuthError("FOLDER_SESSION_CHANGED", "The session to resume changed. Open the material again to review it.", 409);
           }
           await moveSession(tx, userId, folderId, sessionId, input.moveFrom?.folderId ?? null);
-        });
+        }, { folderId: input.moveFrom ? input.moveFrom.folderId : folderId });
       }
       case "reorder-folder": {
         const rows = await tx.select({ id: folders.id, position: folders.position }).from(folders)

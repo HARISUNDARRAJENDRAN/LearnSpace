@@ -101,14 +101,14 @@ export function SidebarSessions({ mode, onClose, onExpand }: { mode: "learn" | "
   const menuAnchor = useRef<HTMLButtonElement | null>(null);
   const menuContent = useRef<HTMLDivElement | null>(null);
   const visible = sessions.filter((session) => !folderBySession.has(session.id) && sessionMatchesMode(session, mode));
-  const recent = recentSessions(sessions.filter((session) => sessionMatchesMode(session, mode))).slice(0, 3);
+  const recent = recentSessions(visible).slice(0, 3);
   const activeFolder = activeId ? folderBySession.get(activeId) : null;
   const selectedFolder = options;
   const listed = showAll ? visible : visible.filter((session, index) => index < VISIBLE_SESSIONS || session.id === activeId);
   const hidden = visible.length - listed.length;
 
-  // Entering a session opens it in the tree, so its parts are one click away.
-  useEffect(() => { if (activeId) setOpen(activeId, true); }, [activeId, setOpen]);
+  // Entering an unfiled single session opens it in the tree, so its parts are one click away.
+  useEffect(() => { if (activeId && !activeFolder) setOpen(activeId, true); }, [activeId, activeFolder, setOpen]);
 
   useEffect(() => {
     if (!menu) return;

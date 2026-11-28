@@ -4,7 +4,8 @@ import type { ChangeSessionFolder, CreateSessionFolder, StartStudySessionRespons
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { listSessionFolders } from "../../lib/folders/service";
 
-type Folders = Awaited<ReturnType<typeof listSessionFolders>>;
+export type SessionFolderList = Awaited<ReturnType<typeof listSessionFolders>>;
+type Folders = SessionFolderList;
 const base = "/api/v1/session-folders";
 
 export function folderHref(id: string, mode: "learn" | "research") {
@@ -85,9 +86,9 @@ export function useSessionFolders() {
   return folders;
 }
 
-export function SessionFoldersProvider({ children }: { children: ReactNode }) {
-  const [folders, setFolders] = useState<Folders>([]);
-  const [loading, setLoading] = useState(true);
+export function SessionFoldersProvider({ initial, children }: { initial?: Folders; children: ReactNode }) {
+  const [folders, setFolders] = useState<Folders>(initial ?? []);
+  const [loading, setLoading] = useState(!initial);
   const [failed, setFailed] = useState(false);
   const [pending, setPending] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -151,10 +152,25 @@ export function SessionFoldersProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const create = useCallback((input: CreateSessionFolder) => mutate(() => folderRequest<{ id: string }>(base, json("POST", input))), [mutate]);
-  const change = useCallback((id: string, input: ChangeSessionFolder) => mutate(
-    () => folderRequest<StartStudySessionResponse | null>(`${base}/${id}`, json("PATCH", input)),
-    (items) => optimistic(items, id, input),
-  ), [mutate]);
+  const change = useCallback(async (id: string, input: ChangeSessionFolder) => {
+    const result = await mutate(
+      () => folderRequest<StartStudySessionResponse | null>(`${base}/${id}`, json("PATCH", input)),
+      (items) => optimistic(items, id, input),
+    );
+    if (input.action === "start-resource" && result?.sessionId) {
+      const startedId = result.sessionId;
+      setFolders((items) => {
+        const next = items.map((folder) => (
+          folder.id === id && !folder.sessionIds.includes(startedId)
+            ? { ...folder, sessionIds: [...folder.sessionIds, startedId] }
+            : folder
+        ));
+        current.current = next;
+        return next;
+      });
+    }
+    return result;
+  }, [mutate]);
   const remove = useCallback((id: string) => mutate(
     () => folderRequest<null>(`${base}/${id}`, { method: "DELETE" }),
     (items) => items.filter((folder) => folder.id !== id),

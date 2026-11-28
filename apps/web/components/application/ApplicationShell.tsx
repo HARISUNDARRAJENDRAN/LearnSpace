@@ -4,7 +4,7 @@ import type { StudySessionSummary } from "@learnspace/shared";
 import type { ReactNode } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
-import { SessionFoldersProvider } from "../folders/state";
+import { SessionFoldersProvider, type SessionFolderList } from "../folders/state";
 import { prefetchSpeechModels } from "../study/voice/prefetch";
 import { AppHeader, type ApplicationViewMode } from "./AppHeader";
 import { AppSidebar, modeFromUrl } from "./AppSidebar";
@@ -20,7 +20,7 @@ type ApplicationUser = {
   displayName: string | null;
 };
 
-export function ApplicationShell({ user, sessions, children }: { user: ApplicationUser; sessions: StudySessionSummary[]; children: ReactNode }) {
+export function ApplicationShell({ user, sessions, folders, children }: { user: ApplicationUser; sessions: StudySessionSummary[]; folders: SessionFolderList; children: ReactNode }) {
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -36,7 +36,7 @@ export function ApplicationShell({ user, sessions, children }: { user: Applicati
 
   return (
     <SessionsProvider initial={sessions}>
-    <SessionFoldersProvider>
+    <SessionFoldersProvider initial={folders}>
     <div className={`application-page${sidebarCollapsed ? " is-sidebar-collapsed" : ""}${pathname.startsWith("/app/discover") ? " application-page--discover" : ""}`} data-view={viewMode}>
       <AppSidebar
         user={user}

@@ -459,11 +459,11 @@ export function VideoSession({ session, active }: { session: StudySessionView; a
               <legend className="sr-only">Study tools</legend>
               {tools.filter(({ view: tool }) => tool !== "code" || codingEligible === true).map(({ view: tool, label, Icon }) => <button key={tool} className={`${panel === tool ? "is-active" : ""}${tool === "notes" && lunyOn && panel !== "notes" ? " is-live" : ""}`} type="button" aria-pressed={panel === tool} title={tool === "notes" && lunyOn && panel !== "notes" ? "Notes · Luny is listening" : label} onClick={() => (panel === tool ? collapse() : openPanel(tool, tool === "ai" ? "study-question" : undefined))}><Icon aria-hidden="true" /><span>{label}</span></button>)}
             </fieldset>
-            <StudyFolderAction session={session} />
+            {folderReturn ? null : <StudyFolderAction session={session} />}
             {course ? <span className="session-course-count" title="Lessons completed">{completedCount}/{lessons.length} done</span> : null}
             <button className="session-icon-button" type="button" aria-pressed={fullscreen} aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={toggleFullscreen}>{fullscreen ? <Shrink aria-hidden="true" /> : <Expand aria-hidden="true" />}</button>
-            {/* A finished session lives in the Library; there is nothing to end. */}
-            {session.status === "completed" ? null : <EndSession sessionId={session.id} mode="learn" />}
+            {/* A finished or folder-owned session lives in its Library or folder; there is no standalone session to end. */}
+            {folderReturn || session.status === "completed" ? null : <EndSession sessionId={session.id} mode="learn" />}
           </div>
         </header>
         <div className="session-canvas" ref={canvas.viewportRef} data-lenis-prevent {...canvas.handlers} style={{ backgroundSize: `${24 * view.zoom}px ${24 * view.zoom}px`, backgroundPosition: `calc(50% + ${view.x}px) calc(50% + ${view.y}px)` }}>

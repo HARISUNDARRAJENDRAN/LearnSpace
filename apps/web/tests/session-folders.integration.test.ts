@@ -92,7 +92,9 @@ test("folders preserve mixed-mode histories and enforce ownership, idempotency, 
     ]);
     assert.ok(video);
     assert.deepEqual(retry, video);
-    assert.equal((await study.listStudySessions(owner)).length, 3);
+    // Folder sessions stay strictly inside their folder and never appear in the unfiled single-session list.
+    assert.equal((await study.listStudySessions(owner)).length, 0);
+    assert.equal(await folders.folderIdForSession(owner, video.sessionId), folder.id);
     assert.match(video.route, /\/study\/video\//);
     assert.match(first.route, /\/study\/paper\//);
     assert.equal((await getSessionFolderDetails(owner, folder.id)).materials.filter((item) => item.saved && !item.sessionId).length, 0);
@@ -109,13 +111,18 @@ test("folders preserve mixed-mode histories and enforce ownership, idempotency, 
     await folders.changeSessionFolder(owner, destination.id, { action: "reorder-resource", resourceId: paperId, direction: "up" });
     assert.deepEqual((await getSessionFolderDetails(owner, destination.id)).materials.filter((item) => item.saved && !item.sessionId).map((item) => item.id), [paperId, videoId]);
     await folders.changeSessionFolder(owner, destination.id, { action: "remove-resource", resourceId: paperId });
-    await assert.rejects(folders.changeSessionFolder(owner, destination.id, start), status(409));
-    const moved = await folders.changeSessionFolder(owner, destination.id, { ...start, moveFrom: { sessionId: video.sessionId, folderId: folder.id } });
-    assert.equal(moved?.sessionId, video.sessionId);
-    await folders.changeSessionFolder(owner, destination.id, { action: "unfile-session", sessionId: video.sessionId });
+    // Starting the same material in another folder creates a folder-scoped session there without hijacking the first folder's session.
+    const isolated = await folders.changeSessionFolder(owner, destination.id, start);
+    assert.ok(isolated);
+    assert.notEqual(isolated.sessionId, video.sessionId);
+    assert.equal(await folders.folderIdForSession(owner, video.sessionId), folder.id);
+    assert.equal(await folders.folderIdForSession(owner, isolated.sessionId), destination.id);
+    assert.equal((await study.listStudySessions(owner)).length, 0);
+    await folders.changeSessionFolder(owner, destination.id, { action: "unfile-session", sessionId: isolated.sessionId });
+    assert.equal((await study.listStudySessions(owner)).map((item) => item.id).includes(isolated.sessionId), true);
+    await study.endStudySession(owner, isolated.sessionId);
     await folders.changeSessionFolder(owner, destination.id, start);
     assert.equal((await folders.listSessionFolders(owner))[0]?.sessionIds.length, 0, "a replay does not refile the session");
-    await move(folder.id, video.sessionId);
 
     const threadIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
     const materialSessions = [[first.sessionId, paperId], [second.sessionId, secondPaperId], [video.sessionId, videoId], [first.sessionId, paperId]] as const;
@@ -197,7 +204,7 @@ test("folders preserve mixed-mode histories and enforce ownership, idempotency, 
     assert.match(calls[1]!, /What does the paper predict/u);
     assert.equal((await tutor.getTutorThread(owner, folder.id)).messages.length, 4);
     assert.equal((await tutor.getTutorThread(owner, video.sessionId)).messages.length, 0);
-    assert.equal((await study.listStudySessions(owner)).length, 3);
+    assert.equal((await study.listStudySessions(owner)).length, 0);
     const check = await mastery.startMastery(owner, folder.id, { model });
     assert.equal(check.state, "open");
     assert.equal(check.check?.questions.length, 5);

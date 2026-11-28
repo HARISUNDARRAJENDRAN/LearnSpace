@@ -47,7 +47,7 @@ export async function searchWorkspace(userId: string, rawQuery: string, mode: Se
         tx.select({ id: studySessions.id, title: studySessions.title, activeResourceId: studySessions.activeResourceId, resourceTitle: resources.title, resourceType: resources.type })
           .from(studySessions)
           .innerJoin(resources, eq(resources.id, studySessions.activeResourceId))
-          .where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"), eq(resources.type, "video"), or(ilike(studySessions.title, pattern), ilike(resources.title, pattern))))
+          .where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`, sql`NOT EXISTS (SELECT 1 FROM study.session_folder_memberships m WHERE m.study_session_id = ${studySessions.id} AND m.user_id = ${userId})`, eq(resources.type, "video"), or(ilike(studySessions.title, pattern), ilike(resources.title, pattern))))
           .orderBy(desc(studySessions.lastActiveAt))
           .limit(6),
         tx.select({ id: libraryItems.resourceId, title: resources.title, description: resources.description, type: resources.type })
@@ -101,7 +101,7 @@ export async function searchWorkspace(userId: string, rawQuery: string, mode: Se
         .from(studySessions)
         .innerJoin(resources, eq(resources.id, studySessions.activeResourceId))
         .innerJoin(paperDetails, eq(paperDetails.resourceId, resources.id))
-        .where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"), eq(resources.type, "paper"), or(ilike(studySessions.title, pattern), ilike(resources.title, pattern), ilike(paperDetails.abstract, pattern))))
+        .where(and(eq(studySessions.userId, userId), ne(studySessions.status, "abandoned"), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`, sql`NOT EXISTS (SELECT 1 FROM study.session_folder_memberships m WHERE m.study_session_id = ${studySessions.id} AND m.user_id = ${userId})`, eq(resources.type, "paper"), or(ilike(studySessions.title, pattern), ilike(resources.title, pattern), ilike(paperDetails.abstract, pattern))))
         .orderBy(desc(studySessions.lastActiveAt))
         .limit(6),
       tx.select({ id: libraryItems.resourceId, title: resources.title, description: resources.description, type: resources.type })

@@ -21,6 +21,7 @@ import {
   resourceVersions,
   resources,
   sessionCheckpoints,
+  sessionFolderMemberships,
   sessionResources,
   studySessions,
   userResourceProgress,
@@ -358,15 +359,21 @@ async function pinReadyVersions(tx: Transaction, sessionId: string): Promise<voi
   }
 }
 
-async function findResumableSession(tx: Transaction, userId: string, resourceId: string): Promise<SessionRow | null> {
+async function findResumableSession(tx: Transaction, userId: string, resourceId: string, folderId: string | null = null): Promise<SessionRow | null> {
   const rows = await tx
     .select({ session: studySessions })
     .from(studySessions)
     .innerJoin(sessionResources, eq(sessionResources.studySessionId, studySessions.id))
+    .leftJoin(
+      sessionFolderMemberships,
+      and(eq(sessionFolderMemberships.studySessionId, studySessions.id), eq(sessionFolderMemberships.userId, userId)),
+    )
     .where(and(
       eq(studySessions.userId, userId),
       inArray(studySessions.status, ["active", "paused"]),
       eq(sessionResources.resourceId, resourceId),
+      sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`,
+      folderId ? eq(sessionFolderMemberships.folderId, folderId) : isNull(sessionFolderMemberships.folderId),
     ))
     .orderBy(desc(studySessions.lastActiveAt))
     .limit(1);
@@ -609,6 +616,7 @@ export async function startOrResumeInTransaction(
   userId: string,
   input: StartStudySessionRequest,
   onStart?: (result: StartStudySessionResponse) => Promise<void>,
+  options?: { folderId?: string | null },
 ): Promise<StartStudySessionResponse> {
   const normalized = startStudySessionRequestSchema.parse(input);
   const scope = `study.start:${userId}`;
@@ -659,8 +667,9 @@ export async function startOrResumeInTransaction(
     if (!run[0] || !candidate[0]) throw new AuthError("INVALID_RECOMMENDATION_CONTEXT", "That recommendation is no longer available.", 422);
   }
 
-  // Material the learner is already studying reopens its session; anything new becomes a session of its own beside the others.
-  let session = await findResumableSession(tx, userId, normalized.resourceId);
+  // Material the learner is already studying in the same scope reopens its session; folder sessions stay inside their folder and single sessions stay standalone.
+  const folderId = options?.folderId ?? null;
+  let session = await findResumableSession(tx, userId, normalized.resourceId, folderId);
   const resumedCourse = session ? courseOf(session) : null;
   if (resumedCourse) await assertCourseLessonUnlocked(tx, userId, resumedCourse.collectionId, normalized.resourceId);
   const resumed = Boolean(session);
@@ -1186,8 +1195,9 @@ export async function recordStudyQuestion(tx: Transaction, input: { userId: stri
  */
 export async function listStudySessions(userId: string, shelf: "open" | "library" | "ended" = "open"): Promise<StudySessionSummary[]> {
   return withUserTransaction(userId, async (tx) => {
+    const unfiledOnly = sql`NOT EXISTS (SELECT 1 FROM study.session_folder_memberships m WHERE m.study_session_id = ${studySessions.id} AND m.user_id = ${userId})`;
     const sessions = shelf === "open"
-      ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`))
+      ? await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), inArray(studySessions.status, ["active", "paused"]), sql`${studySessions.metadata}->>'folderWorkspace' IS DISTINCT FROM 'true'`, unfiledOnly))
         .orderBy(sql`${studySessions.position} ASC NULLS FIRST`, desc(studySessions.createdAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS)
       : await tx.select().from(studySessions).where(and(eq(studySessions.userId, userId), eq(studySessions.status, shelf === "library" ? "completed" : "abandoned")))
         .orderBy(desc(studySessions.endedAt), desc(studySessions.id)).limit(MAX_LISTED_SESSIONS);
