@@ -18,8 +18,6 @@ function usesTransactionPooler(connectionString: string): boolean {
   }
 }
 
-type PostgresOptions = Parameters<typeof postgres>[1] & { max_pipeline?: number };
-
 const databaseEnv = z.object({
   DATABASE_URL: z.string().url(),
   DATABASE_AUTH_URL: z.string().url(),
@@ -75,27 +73,24 @@ function getRuntime(): DatabaseRuntime {
   const sqlClient = postgres(env.DATABASE_URL, {
     ...baseOptions,
     max: env.DB_POOL_MAX,
-    // Supavisor transaction mode (:6543) does not support session-level prepared statements
-    // and stalls when postgres.js pipelines concurrent parameterless unnamed queries.
+    // Supavisor transaction mode (:6543) does not support session-level prepared statements.
     prepare: env.DB_PREPARED_STATEMENTS ?? !appTxPooler,
-    ...(appTxPooler ? { max_pipeline: 0 } : {}),
     connection: {
       application_name: "learnspace-web",
       statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
       lock_timeout: env.DB_LOCK_TIMEOUT_MS,
     },
-  } as PostgresOptions);
+  });
   const authSqlClient = postgres(env.DATABASE_AUTH_URL, {
     ...baseOptions,
     max: env.DB_AUTH_POOL_MAX,
     prepare: env.DB_PREPARED_STATEMENTS ?? !authTxPooler,
-    ...(authTxPooler ? { max_pipeline: 0 } : {}),
     connection: {
       application_name: "learnspace-auth",
       statement_timeout: env.DB_STATEMENT_TIMEOUT_MS,
       lock_timeout: env.DB_LOCK_TIMEOUT_MS,
     },
-  } as PostgresOptions);
+  });
 
   runtime = {
     env,

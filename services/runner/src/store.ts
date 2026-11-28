@@ -6,7 +6,7 @@ import type { ProblemRecord, ProblemStore } from "./problems.js";
  * can mark a problem verified (and then only one that is verifying).
  */
 export function createDatabaseStore(url: string): ProblemStore & { close(): Promise<void> } {
-  const sql = postgres(url, { max: 2, idle_timeout: 20, prepare: false, max_pipeline: 0 } as Parameters<typeof postgres>[1]);
+  const sql = postgres(url, { max: 2, idle_timeout: 20, prepare: false });
   return {
     async load(id) {
       const rows = await sql<Array<{ id: string; status: ProblemRecord["status"]; spec: unknown; verification: unknown; authored: unknown; tests: unknown; perf_limit_ms: number | null }>>`

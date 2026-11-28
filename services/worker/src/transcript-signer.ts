@@ -25,11 +25,10 @@ if (!process.env.DATABASE_WORKER_URL) throw new Error("DATABASE_WORKER_URL is re
 const sql = postgres(process.env.DATABASE_WORKER_URL, {
   max: 2,
   prepare: false,
-  max_pipeline: 0,
   connect_timeout: 8,
   idle_timeout: 20,
   keep_alive: 5,
-} as Parameters<typeof postgres>[1]);
+});
 const stop = new AbortController();
 process.once("SIGINT", () => stop.abort());
 process.once("SIGTERM", () => stop.abort());
